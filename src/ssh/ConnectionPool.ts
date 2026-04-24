@@ -4,6 +4,8 @@ import type { SshProfile } from '../types';
 import { SftpSession } from './SftpSession';
 import { AuthResolver } from './AuthResolver';
 import { HostKeyStore } from './HostKeyStore';
+import { createJumpTunnel } from './JumpHostTunnel';
+import type { LicenseGate } from '../license/LicenseGate';
 import { logger } from '../util/logger';
 import { withRetry } from '../util/retry';
 
@@ -14,11 +16,17 @@ export class ConnectionPool {
   constructor(
     private authResolver: AuthResolver,
     private hostKeyStore: HostKeyStore,
+    private gate: LicenseGate,
   ) {}
 
   async getOrCreate(profile: SshProfile): Promise<SftpSession> {
     const existing = this.sessions.get(profile.id);
     if (existing && existing.isAlive) return existing;
+
+    // Pro gate: jump host requires Pro license
+    if (profile.jumpHost) {
+      this.gate.requirePro('Jump host');
+    }
 
     logger.info(`Connecting to ${profile.host}:${profile.port} as ${profile.username}`);
     const session = await withRetry(
@@ -36,7 +44,26 @@ export class ConnectionPool {
     return new SftpSession(sftp, client);
   }
 
-  private connectClient(profile: SshProfile): Promise<Client> {
+  private async connectClient(profile: SshProfile): Promise<Client> {
+    // Pro gate: SSH agent requires Pro license
+    if (profile.authMethod === 'agent') {
+      this.gate.requirePro('SSH agent authentication');
+    }
+
+    const authConfig = this.authResolver.buildAuthConfig(profile);
+
+    // Jump host tunnel (Pro): open the channel first, pass as `sock`
+    let sock: import('stream').Duplex | undefined;
+    if (profile.jumpHost) {
+      logger.info(`Opening jump tunnel via ${profile.jumpHost.host}`);
+      sock = await createJumpTunnel(
+        profile.jumpHost,
+        profile.host,
+        profile.port,
+        this.authResolver,
+      );
+    }
+
     return new Promise((resolve, reject) => {
       const client = new Client();
 
@@ -62,7 +89,6 @@ export class ConnectionPool {
         logger.warn(`SSH connection to ${profile.host} closed`);
       });
 
-      const authConfig = this.authResolver.buildAuthConfig(profile);
       const config: ConnectConfig = {
         host: profile.host,
         port: profile.port,
@@ -74,6 +100,7 @@ export class ConnectionPool {
           const keyBuf = Buffer.isBuffer(key) ? key : Buffer.from(key as string, 'base64');
           return this.hostKeyStore.verify(profile.host, profile.port, keyBuf);
         },
+        ...(sock ? { sock } : {}),
         ...authConfig,
       };
 

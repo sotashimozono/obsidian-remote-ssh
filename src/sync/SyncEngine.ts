@@ -12,6 +12,8 @@ import { IgnoreFilter } from './IgnoreFilter';
 import { WatcherBridge } from './WatcherBridge';
 import { toLocalPath, toRemotePath } from '../util/pathUtils';
 import { logger } from '../util/logger';
+import type { LicenseGate } from '../license/LicenseGate';
+import { FREE_POLL_INTERVAL_SEC } from '../constants';
 
 type StateListener = (state: SyncState) => void;
 
@@ -31,6 +33,7 @@ export class SyncEngine {
     private pool: ConnectionPool,
     private app: App,
     private plugin: Plugin,
+    private gate: LicenseGate,
   ) {
     this.filter = new IgnoreFilter([]);
     this.watcher = new WatcherBridge(this.queue, this.index);
@@ -77,7 +80,12 @@ export class SyncEngine {
     this.registerVaultEvents(profile);
 
     if (profile.autoSync && profile.pollIntervalSec > 0) {
-      this.startPolling(profile);
+      // Pro gate: auto-sync polling is a Pro feature
+      if (this.gate.isPro) {
+        this.startPolling(profile);
+      } else {
+        logger.info('Auto-sync requires Pro license — skipping poll timer');
+      }
     }
 
     this.setState(SyncState.WATCHING);
@@ -276,6 +284,10 @@ export class SyncEngine {
   }
 
   private startPolling(profile: SshProfile) {
+    const intervalSec = this.gate.effectivePollInterval(profile.pollIntervalSec);
+    if (intervalSec !== profile.pollIntervalSec) {
+      logger.info(`Poll interval clamped to ${intervalSec}s (Free tier minimum)`);
+    }
     this.pollTimer = setInterval(async () => {
       if (this.state !== SyncState.WATCHING) return;
       this.setState(SyncState.SYNCING);
@@ -286,7 +298,7 @@ export class SyncEngine {
       } finally {
         if ((this.state as SyncState) === SyncState.SYNCING) this.setState(SyncState.WATCHING);
       }
-    }, profile.pollIntervalSec * 1000);
+    }, intervalSec * 1000);
   }
 
   private stopPolling() {
