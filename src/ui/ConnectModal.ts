@@ -86,7 +86,8 @@ export class ConnectModal extends Modal {
       if (needsPassword && !secret) { new Notice('Password is required'); return false; }
       if (secret) {
         const ref = `${profile.id}:${needsPassword ? 'password' : 'passphrase'}`;
-        this.authResolver.storeSecret(ref, secret);
+        // persistSecret encrypts and saves to disk so the next session skips this prompt
+        this.authResolver.persistSecret(ref, secret);
         if (needsPassword) profile.passwordRef = ref;
         else profile.passphraseRef = ref;
       }

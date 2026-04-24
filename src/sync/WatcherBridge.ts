@@ -58,12 +58,13 @@ export class WatcherBridge {
     const stat = this.statSync(newLocalAbs);
     this.index.updateLocal(newRel, { mtime: stat?.mtime ?? Date.now(), size: stat?.size ?? 0 });
 
-    // Upload the new path (simple approach; remote rename is v0.4)
+    // Use sftp.rename (atomic single op) instead of delete + upload
     this.queue.enqueue({
-      direction: 'upload',
+      direction: 'rename',
       relativePath: newRel,
       localAbsPath: newLocalAbs,
       remoteAbsPath: toRemotePath(profile.remotePath, newRel),
+      remoteSrcPath: toRemotePath(profile.remotePath, oldRel),
       priority: UPLOAD_PRIORITY,
       retryCount: 0,
     });
