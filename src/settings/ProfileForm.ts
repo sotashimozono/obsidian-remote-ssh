@@ -2,6 +2,7 @@ import { Modal, App, Setting, Notice } from 'obsidian';
 import type { SshProfile, AuthMethod } from '../types';
 import { DEFAULT_PROFILE } from '../constants';
 import { expandHome } from '../util/pathUtils';
+import { readSshConfig, type SshConfigEntry } from '../ssh/SshConfigReader';
 import * as crypto from 'crypto';
 import * as os from 'os';
 import * as path from 'path';
@@ -31,6 +32,25 @@ export class ProfileForm extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl('h2', { text: this.isNew ? 'Add SSH Profile' : 'Edit Profile' });
+
+    // Import from ~/.ssh/config
+    const sshEntries = readSshConfig();
+    if (sshEntries.length > 0) {
+      new Setting(contentEl)
+        .setName('Import from SSH config')
+        .setDesc('Pre-fill fields from ~/.ssh/config')
+        .addDropdown(d => {
+          d.addOption('', '— select host —');
+          for (const e of sshEntries) d.addOption(e.alias, e.alias);
+          d.onChange(alias => {
+            if (!alias) return;
+            const e = sshEntries.find(x => x.alias === alias)!;
+            this.applyConfigEntry(e);
+            this.close();
+            new ProfileForm(this.app, this.profile, this.onSave).open();
+          });
+        });
+    }
 
     new Setting(contentEl)
       .setName('Profile name')
@@ -107,6 +127,21 @@ export class ProfileForm extends Modal {
       this.onSave(this.profile);
       this.close();
     };
+  }
+
+  private applyConfigEntry(e: SshConfigEntry) {
+    this.profile.name            = e.alias;
+    this.profile.host            = e.hostname;
+    this.profile.port            = e.port;
+    this.profile.username        = e.user;
+    if (e.identityFile) {
+      this.profile.authMethod    = 'privateKey';
+      this.profile.privateKeyPath = e.identityFile;
+    }
+    if (e.proxyJump) {
+      this.profile.jumpHost = { host: e.proxyJump, port: 22, username: e.user, authMethod: 'privateKey' };
+    }
+    this.profile.localCachePath  = path.join(os.homedir(), '.obsidian-remote', e.alias);
   }
 
   private validate(): boolean {
