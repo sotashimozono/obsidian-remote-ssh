@@ -1,0 +1,34 @@
+.remote-ssh-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.remote-ssh-status.is-connected { color: var(--color-green); }
+.remote-ssh-status.is-syncing   { color: var(--color-yellow); }
+.remote-ssh-status.is-error     { color: var(--color-red); }
+
+/* Conflict Modal */
+.conflict-list { max-height: 400px; overflow-y: auto; }
+.conflict-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.conflict-path { font-weight: 600; font-family: var(--font-monospace); display: block; margin-bottom: 4px; }
+.conflict-btn-row { display: flex; gap: 8px; margin-top: 6px; }
+.conflict-bulk-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.conflict-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+/* Sync Log View */
+.sync-log-container {
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  padding: 8px;
+  height: 100%;
+  overflow-y: auto;
+}
+.sync-log-line { padding: 1px 0; }
+.sync-log-line.level-error { color: var(--color-red); }
+.sync-log-line.level-warn  { color: var(--color-yellow); }
+.sync-log-line.level-debug { color: var(--text-muted); }
