@@ -23,7 +23,10 @@ export class DiffCalculator {
       const knownLocal  = this.index.getLocal(rel);
 
       const remoteChanged = !knownRemote || Math.abs(remote.mtime - knownRemote.mtime) > MTIME_TOLERANCE_MS;
-      const localChanged  = knownLocal !== undefined;
+      // "local changed" = local mtime diverged from the last-known remote mtime
+      // (i.e. user edited the file after the last sync)
+      const localChanged  = !!knownLocal && !!knownRemote &&
+        Math.abs(knownLocal.mtime - knownRemote.mtime) > MTIME_TOLERANCE_MS;
 
       if (!knownLocal && !knownRemote) {
         // New file on remote

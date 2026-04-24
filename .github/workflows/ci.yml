@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── Lint + type-check ───────────────────────────────────────────────────────
+  lint:
+    name: Lint & type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: TypeScript type-check
+        run: node node_modules/typescript/bin/tsc --noEmit
+      # ESLint is wired up but config is optional; skip if no config file
+      - name: Lint (if eslint config present)
+        run: |
+          if [ -f "eslint.config.mjs" ] || [ -f ".eslintrc*" ] || [ -f ".eslintrc.json" ]; then
+            node node_modules/.bin/eslint src --ext .ts
+          else
+            echo "No ESLint config found — skipping"
+          fi
+
+  # ─── Unit tests + coverage ───────────────────────────────────────────────────
+  test:
+    name: Test & coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Run tests with coverage
+        run: node node_modules/vitest/vitest.mjs run --coverage
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage/lcov.info
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # ─── Production build + bundle size guard ────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Production build
+        run: node esbuild.config.mjs production
+      - name: Bundle size guard (< 600 KB)
+        run: |
+          SIZE=$(stat -c%s main.js)
+          KB=$(( SIZE / 1024 ))
+          echo "Bundle: ${KB} KB"
+          if [ $SIZE -gt 614400 ]; then
+            echo "::error::Bundle ${KB} KB exceeds 600 KB limit — check for unwanted large deps"
+            exit 1
+          fi
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-build
+          path: |
+            main.js
+            manifest.json
+            styles.css
+          retention-days: 7

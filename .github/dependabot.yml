@@ -1,0 +1,38 @@
+version: 2
+
+updates:
+  # npm — weekly, grouped into a single PR per ecosystem
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 3
+    groups:
+      dev-deps:
+        dependency-type: development
+        update-types: [minor, patch]
+      prod-deps:
+        dependency-type: production
+        update-types: [minor, patch]
+    labels:
+      - dependencies
+    ignore:
+      # obsidian API: pin manually to match target Obsidian version
+      - dependency-name: obsidian
+        update-types: [version-update:semver-major, version-update:semver-minor]
+
+  # GitHub Actions — monthly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions

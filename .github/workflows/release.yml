@@ -1,27 +1,102 @@
 name: Release
+
 on:
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
 
+permissions:
+  contents: write
+
 jobs:
-  release:
+  # ─── Gate: must pass tests before releasing ───────────────────────────────────
+  test:
+    name: Test gate
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
       - run: npm ci
-      - run: npm run build
+      - run: node node_modules/typescript/bin/tsc --noEmit
+      - run: node node_modules/vitest/vitest.mjs run
+
+  # ─── Build + publish release ─────────────────────────────────────────────────
+  release:
+    name: Publish release
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for changelog generation
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Production build
+        run: node esbuild.config.mjs production
+
+      - name: Verify bundle size
+        run: |
+          SIZE=$(stat -c%s main.js)
+          KB=$(( SIZE / 1024 ))
+          echo "Bundle: ${KB} KB"
+          if [ $SIZE -gt 614400 ]; then
+            echo "::error::Bundle ${KB} KB exceeds 600 KB limit"
+            exit 1
+          fi
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog from commits
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${PREV_TAG}..HEAD"
+          fi
+
+          CHANGELOG=$(git log $RANGE --pretty=format:"- %s" \
+            --no-merges \
+            | grep -v '^- chore(deps' \
+            || true)
+
+          # Escape for GitHub output (multiline)
+          echo "changelog<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CHANGELOG" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          body: |
+            ## What's changed
+
+            ${{ steps.changelog.outputs.changelog }}
+
+            ---
+
+            **Installation**
+            1. Download `main.js`, `manifest.json`, and `styles.css`
+            2. Place in `{vault}/.obsidian/plugins/remote-ssh/`
+            3. Enable the plugin in Obsidian → Settings → Community Plugins
           files: |
             main.js
             manifest.json
             styles.css
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          make_latest: true

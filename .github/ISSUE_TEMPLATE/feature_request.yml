@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest a new feature
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to do that you can't do now?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Expected tier
+      options:
+        - Free
+        - Pro
+        - Either
+    validations:
+      required: true

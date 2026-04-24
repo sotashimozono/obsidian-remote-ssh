@@ -1,0 +1,63 @@
+name: Bug report
+description: Something isn't working
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please fill out as much as possible.
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: obsidian-version
+    attributes:
+      label: Obsidian version
+      placeholder: "1.6.0"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "macOS 14 / Windows 11 / Ubuntu 22.04"
+    validations:
+      required: true
+
+  - type: input
+    id: server-os
+    attributes:
+      label: Remote server OS / sshd version
+      placeholder: "Ubuntu 22.04, OpenSSH_8.9"
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: What happened vs. what you expected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open plugin settings
+        2. Add profile with ...
+        3. Click Connect
+        4. See error
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sync log output
+      description: Open the sync log panel (command palette → "Open sync log") and paste relevant lines here.
+      render: text
