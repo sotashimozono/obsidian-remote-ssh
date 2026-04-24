@@ -39,9 +39,14 @@ export class SftpSession {
     });
   }
 
-  async listRecursive(remoteDir: string, filter?: (rel: string) => boolean): Promise<FileEntry[]> {
+  async listRecursive(
+    remoteDir: string,
+    filter?: (rel: string) => boolean,
+    followSymlinks = false,
+  ): Promise<FileEntry[]> {
     const results: FileEntry[] = [];
     const queue: string[] = [remoteDir];
+    const visited = new Set<string>(); // guard against symlink cycles
 
     while (queue.length > 0) {
       const dir = queue.shift()!;
@@ -59,11 +64,25 @@ export class SftpSession {
         const rel = fullPath.slice(remoteDir.length + 1);
         if (filter && !filter(rel)) continue;
 
-        if (entry.attrs.isDirectory()) {
-          results.push({ relativePath: rel, mtime: entry.attrs.mtime * 1000, size: 0, isDirectory: true });
+        // Resolve symlinks when followSymlinks is enabled (Pro)
+        let attrs = entry.attrs;
+        if (followSymlinks) {
+          try {
+            attrs = await this.stat(fullPath) as SftpAttrs;
+          } catch {
+            // Dangling symlink — skip
+            logger.warn(`listRecursive: dangling symlink at "${fullPath}", skipping`);
+            continue;
+          }
+        }
+
+        if (attrs.isDirectory()) {
+          if (visited.has(fullPath)) continue; // cycle guard
+          visited.add(fullPath);
+          results.push({ relativePath: rel, mtime: attrs.mtime * 1000, size: 0, isDirectory: true });
           queue.push(fullPath);
         } else {
-          results.push({ relativePath: rel, mtime: entry.attrs.mtime * 1000, size: entry.attrs.size, isDirectory: false });
+          results.push({ relativePath: rel, mtime: attrs.mtime * 1000, size: attrs.size, isDirectory: false });
         }
       }
     }

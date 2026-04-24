@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS, PLUGIN_ID } from './constants';
 import { ConnectionPool } from './ssh/ConnectionPool';
 import { AuthResolver } from './ssh/AuthResolver';
 import { HostKeyStore } from './ssh/HostKeyStore';
+import { SecretStore } from './ssh/SecretStore';
 import { SyncEngine } from './sync/SyncEngine';
 import { StatusBar } from './ui/StatusBar';
 import { ConnectModal } from './ui/ConnectModal';
@@ -19,7 +20,8 @@ export default class RemoteSshPlugin extends Plugin {
   settings: PluginSettings = DEFAULT_SETTINGS;
   gate = new LicenseGate();
 
-  private authResolver = new AuthResolver();
+  private secretStore  = new SecretStore();
+  private authResolver = new AuthResolver(this.secretStore);
   private hostKeyStore = new HostKeyStore();
   private pool: ConnectionPool;
   private engine: SyncEngine;
@@ -95,7 +97,10 @@ export default class RemoteSshPlugin extends Plugin {
     const saved = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved ?? {});
     if (saved?.hostKeyStore) {
-      this.hostKeyStore?.load(saved.hostKeyStore);
+      this.hostKeyStore.load(saved.hostKeyStore);
+    }
+    if (saved?.secrets) {
+      this.secretStore.load(saved.secrets);
     }
   }
 
@@ -103,6 +108,7 @@ export default class RemoteSshPlugin extends Plugin {
     await this.saveData({
       ...this.settings,
       hostKeyStore: this.hostKeyStore.serialize(),
+      secrets: this.secretStore.serialize(),
     });
   }
 

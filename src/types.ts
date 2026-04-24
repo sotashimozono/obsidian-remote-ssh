@@ -83,10 +83,12 @@ export interface ConflictEntry {
 }
 
 export interface TransferJob {
-  direction: 'upload' | 'download';
+  direction: 'upload' | 'download' | 'rename';
   relativePath: string;
   localAbsPath: string;
   remoteAbsPath: string;
+  /** Only for direction === 'rename': the old remote path to rename from */
+  remoteSrcPath?: string;
   priority: number;
   retryCount: number;
 }

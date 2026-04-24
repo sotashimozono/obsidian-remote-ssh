@@ -121,6 +121,7 @@ export class SyncEngine {
       remoteEntries = await session.listRecursive(
         profile.remotePath,
         rel => !this.filter.shouldIgnore(rel),
+        profile.followSymlinks && this.gate.isPro,
       );
     } catch (e) {
       logger.error(`Initial pull: listRecursive failed: ${(e as Error).message}`);
@@ -174,6 +175,7 @@ export class SyncEngine {
     const remoteEntries = await session.listRecursive(
       profile.remotePath,
       rel => !this.filter.shouldIgnore(rel),
+      profile.followSymlinks && this.gate.isPro,
     );
 
     const diff = new DiffCalculator(this.index);
@@ -257,6 +259,18 @@ export class SyncEngine {
 
   private async executeTransfer(job: TransferJob) {
     const session = await this.pool.getOrCreate(this.profile!);
+
+    if (job.direction === 'rename') {
+      // Atomic server-side rename: single SFTP op, no data transfer
+      logger.debug_(`↔ rename ${job.remoteSrcPath} → ${job.relativePath}`);
+      await session.rename(job.remoteSrcPath!, job.remoteAbsPath);
+      const s = await fs.promises.stat(job.localAbsPath).catch(() => null);
+      const entry = { mtime: s?.mtimeMs ?? Date.now(), size: s?.size ?? 0 };
+      this.index.updateLocal(job.relativePath, entry);
+      this.index.updateRemote(job.relativePath, entry);
+      return;
+    }
+
     if (job.direction === 'download') {
       logger.debug_(`↓ ${job.relativePath}`);
       await session.fastGet(job.remoteAbsPath, job.localAbsPath);
