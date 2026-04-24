@@ -23,9 +23,9 @@ export default class RemoteSshPlugin extends Plugin {
   private secretStore  = new SecretStore();
   private authResolver = new AuthResolver(this.secretStore);
   private hostKeyStore = new HostKeyStore();
-  private pool: ConnectionPool;
-  private engine: SyncEngine;
-  private statusBar: StatusBar;
+  private pool!: ConnectionPool;
+  private engine!: SyncEngine;
+  private statusBar!: StatusBar;
 
   async onload() {
     await this.loadSettings();
