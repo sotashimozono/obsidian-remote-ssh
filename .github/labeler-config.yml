@@ -1,0 +1,37 @@
+ssh:
+  - changed-files:
+    - any-glob-to-any-file: src/ssh/**
+
+sync:
+  - changed-files:
+    - any-glob-to-any-file: src/sync/**
+
+ui:
+  - changed-files:
+    - any-glob-to-any-file: src/ui/**
+
+settings:
+  - changed-files:
+    - any-glob-to-any-file: src/settings/**
+
+license:
+  - changed-files:
+    - any-glob-to-any-file: src/license/**
+
+tests:
+  - changed-files:
+    - any-glob-to-any-file: tests/**
+
+dependencies:
+  - changed-files:
+    - any-glob-to-any-file: package.json
+    - any-glob-to-any-file: package-lock.json
+
+ci:
+  - changed-files:
+    - any-glob-to-any-file: .github/**
+
+build:
+  - changed-files:
+    - any-glob-to-any-file: esbuild.config.mjs
+    - any-glob-to-any-file: tsconfig.json
