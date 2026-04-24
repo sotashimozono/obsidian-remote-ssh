@@ -28,8 +28,8 @@ export default class RemoteSshPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
-    this.pool   = new ConnectionPool(this.authResolver, this.hostKeyStore);
-    this.engine = new SyncEngine(this.pool, this.app, this);
+    this.pool   = new ConnectionPool(this.authResolver, this.hostKeyStore, this.gate);
+    this.engine = new SyncEngine(this.pool, this.app, this, this.gate);
 
     logger.setDebug(this.settings.enableDebugLog);
     logger.setMaxLines(this.settings.maxLogLines);
@@ -128,7 +128,7 @@ export default class RemoteSshPlugin extends Plugin {
     );
 
     if (needsInteractive) {
-      new ConnectModal(this.app, profile, this.authResolver, doConnect).open();
+      new ConnectModal(this.app, [profile], this.authResolver, doConnect).open();
     } else {
       await doConnect().catch(e => new Notice(`Connect failed: ${e.message}`));
     }
@@ -157,13 +157,14 @@ export default class RemoteSshPlugin extends Plugin {
       new Notice('Remote SSH: No profiles configured. Add one in Settings → Remote SSH.');
       return;
     }
-    if (profiles.length === 1) {
-      this.connectProfile(profiles[0]);
-    } else {
-      // Multiple profiles — show picker (simple: use ConnectModal extended)
-      // For v0.1, just connect the first one; multi-profile picker is v0.3
-      this.connectProfile(profiles[0]);
-    }
+    // Show ConnectModal for both single and multi-profile cases
+    // Single profile: skips picker and goes straight to auth step
+    new ConnectModal(
+      this.app,
+      profiles,
+      this.authResolver,
+      profile => this.connectProfile(profile),
+    ).open();
   }
 
   private onStatusBarClick() {
