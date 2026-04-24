@@ -22,10 +22,10 @@
     "@types/ssh2": "^1.11.19",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.28.0",
     "eslint": "^9.0.0",
     "obsidian": "latest",
-    "typescript": "^5.4.0",
+    "typescript": "^6.0.3",
     "vitest": "^2.0.0",
     "@vitest/coverage-v8": "^4.1.5"
   }
