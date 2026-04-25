@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -19,11 +21,12 @@ import (
 )
 
 // testServer spins up a listening Server on 127.0.0.1:<random>, wires
-// the auth + server.info handlers, and tears everything down on
-// Cleanup. It returns a helper that dials fresh framed connections.
+// the full handler set (matching main.go), and tears everything down
+// on Cleanup. It returns a helper that dials fresh framed connections.
 type testServer struct {
-	addr  string
-	token auth.Token
+	addr      string
+	token     auth.Token
+	vaultRoot string
 }
 
 func startTestServer(t *testing.T) *testServer {
@@ -39,14 +42,20 @@ func startTestServer(t *testing.T) *testServer {
 		t.Fatalf("generate: %v", err)
 	}
 
+	vaultRoot := t.TempDir()
 	srv := server.New(server.Options{
 		Token:     tk,
-		VaultRoot: t.TempDir(),
+		VaultRoot: vaultRoot,
 		Version:   "test",
 	})
 	disp := srv.Dispatcher()
 	disp.Handle("auth", handlers.Auth(tk))
-	disp.Handle("server.info", handlers.ServerInfo(disp, "test", srv.Options().VaultRoot))
+	disp.Handle("server.info", handlers.ServerInfo(disp, "test", vaultRoot))
+	disp.Handle("fs.stat", handlers.RequireAuth(handlers.FsStat(vaultRoot)))
+	disp.Handle("fs.exists", handlers.RequireAuth(handlers.FsExists(vaultRoot)))
+	disp.Handle("fs.list", handlers.RequireAuth(handlers.FsList(vaultRoot)))
+	disp.Handle("fs.readText", handlers.RequireAuth(handlers.FsReadText(vaultRoot)))
+	disp.Handle("fs.readBinary", handlers.RequireAuth(handlers.FsReadBinary(vaultRoot)))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -61,7 +70,7 @@ func startTestServer(t *testing.T) *testServer {
 		wg.Wait()
 	})
 
-	return &testServer{addr: listener.Addr().String(), token: tk}
+	return &testServer{addr: listener.Addr().String(), token: tk, vaultRoot: vaultRoot}
 }
 
 // client represents one JSON-RPC session over a TCP loopback.
@@ -140,6 +149,105 @@ func TestServer_MethodNotFound(t *testing.T) {
 	}
 }
 
+func TestServer_FsOpsRequireAuth(t *testing.T) {
+	ts := startTestServer(t)
+	c := ts.dial(t)
+
+	// Pre-auth: fs.list should be rejected with AuthRequired, not
+	// silently return the vault contents.
+	_, errObj := c.call(t, "fs.list", map[string]string{"path": ""})
+	if errObj == nil || errObj.Code != proto.ErrorAuthRequired {
+		t.Fatalf("want AuthRequired before auth, got %+v", errObj)
+	}
+}
+
+func TestServer_ReadPipeline(t *testing.T) {
+	ts := startTestServer(t)
+
+	// Seed a small vault so fs.list / fs.readText have something
+	// concrete to observe.
+	mustWrite(t, filepath.Join(ts.vaultRoot, "note.md"), []byte("# hello"))
+	mustWrite(t, filepath.Join(ts.vaultRoot, "docs", "a.md"), []byte("alpha"))
+
+	c := ts.dial(t)
+
+	// Step 1: auth.
+	if _, errObj := c.call(t, "auth", map[string]string{"token": string(ts.token)}); errObj != nil {
+		t.Fatalf("auth: %+v", errObj)
+	}
+
+	// Step 2: fs.stat root.
+	result, errObj := c.call(t, "fs.stat", map[string]string{"path": ""})
+	if errObj != nil {
+		t.Fatalf("fs.stat(root): %+v", errObj)
+	}
+	var stat proto.Stat
+	if err := json.Unmarshal(result, &stat); err != nil {
+		t.Fatalf("unmarshal stat: %v", err)
+	}
+	if stat.Type != proto.EntryTypeFolder {
+		t.Errorf("root stat type = %q, want folder", stat.Type)
+	}
+
+	// Step 3: fs.list root — expect our seeded file + dir.
+	result, errObj = c.call(t, "fs.list", map[string]string{"path": ""})
+	if errObj != nil {
+		t.Fatalf("fs.list: %+v", errObj)
+	}
+	var list proto.ListResult
+	if err := json.Unmarshal(result, &list); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	names := map[string]proto.EntryType{}
+	for _, e := range list.Entries {
+		names[e.Name] = e.Type
+	}
+	if names["note.md"] != proto.EntryTypeFile {
+		t.Errorf("note.md missing or wrong type; got map = %v", names)
+	}
+	if names["docs"] != proto.EntryTypeFolder {
+		t.Errorf("docs missing or wrong type; got map = %v", names)
+	}
+
+	// Step 4: fs.readText.
+	result, errObj = c.call(t, "fs.readText", map[string]string{"path": "note.md"})
+	if errObj != nil {
+		t.Fatalf("fs.readText: %+v", errObj)
+	}
+	var readText proto.ReadTextResult
+	if err := json.Unmarshal(result, &readText); err != nil {
+		t.Fatalf("unmarshal readText: %v", err)
+	}
+	if readText.Content != "# hello" {
+		t.Errorf("content = %q, want %q", readText.Content, "# hello")
+	}
+	if readText.Encoding != "utf8" {
+		t.Errorf("encoding = %q, want utf8", readText.Encoding)
+	}
+
+	// Step 5: fs.readText on a missing file should fail cleanly.
+	_, errObj = c.call(t, "fs.readText", map[string]string{"path": "missing.md"})
+	if errObj == nil || errObj.Code != proto.ErrorFileNotFound {
+		t.Fatalf("missing read: want FileNotFound, got %+v", errObj)
+	}
+
+	// Step 6: path escape is refused with PathOutsideVault.
+	_, errObj = c.call(t, "fs.stat", map[string]string{"path": "../../etc/passwd"})
+	if errObj == nil || errObj.Code != proto.ErrorPathOutsideVault {
+		t.Fatalf("escape: want PathOutsideVault, got %+v", errObj)
+	}
+}
+
+func mustWrite(t *testing.T, abs string, data []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(abs, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestServer_AuthThenServerInfo(t *testing.T) {
 	ts := startTestServer(t)
 	c := ts.dial(t)
@@ -172,7 +280,10 @@ func TestServer_AuthThenServerInfo(t *testing.T) {
 	if info.ProtocolVersion != proto.ProtocolVersion {
 		t.Errorf("ProtocolVersion = %d, want %d", info.ProtocolVersion, proto.ProtocolVersion)
 	}
-	wantCaps := []string{"auth", "server.info"}
+	wantCaps := []string{
+		"auth", "fs.exists", "fs.list", "fs.readBinary",
+		"fs.readText", "fs.stat", "server.info",
+	}
 	got := append([]string(nil), info.Capabilities...)
 	sort.Strings(got)
 	if strings.Join(got, ",") != strings.Join(wantCaps, ",") {
