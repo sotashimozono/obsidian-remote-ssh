@@ -1,31 +1,46 @@
+plugin:
+  - changed-files:
+    - any-glob-to-any-file: plugin/**
+
+server:
+  - changed-files:
+    - any-glob-to-any-file: server/**
+
+proto:
+  - changed-files:
+    - any-glob-to-any-file: proto/**
+
 ssh:
   - changed-files:
-    - any-glob-to-any-file: src/ssh/**
-
-sync:
-  - changed-files:
-    - any-glob-to-any-file: src/sync/**
+    - any-glob-to-any-file: plugin/src/ssh/**
 
 ui:
   - changed-files:
-    - any-glob-to-any-file: src/ui/**
+    - any-glob-to-any-file: plugin/src/ui/**
 
 settings:
   - changed-files:
-    - any-glob-to-any-file: src/settings/**
+    - any-glob-to-any-file: plugin/src/settings/**
 
-license:
+adapter:
   - changed-files:
-    - any-glob-to-any-file: src/license/**
+    - any-glob-to-any-file: plugin/src/adapter/**
+
+cache:
+  - changed-files:
+    - any-glob-to-any-file: plugin/src/cache/**
 
 tests:
   - changed-files:
-    - any-glob-to-any-file: tests/**
+    - any-glob-to-any-file: plugin/tests/**
+    - any-glob-to-any-file: server/**/*_test.go
 
 dependencies:
   - changed-files:
-    - any-glob-to-any-file: package.json
-    - any-glob-to-any-file: package-lock.json
+    - any-glob-to-any-file: plugin/package.json
+    - any-glob-to-any-file: plugin/package-lock.json
+    - any-glob-to-any-file: server/go.mod
+    - any-glob-to-any-file: server/go.sum
 
 ci:
   - changed-files:
@@ -33,5 +48,6 @@ ci:
 
 build:
   - changed-files:
-    - any-glob-to-any-file: esbuild.config.mjs
-    - any-glob-to-any-file: tsconfig.json
+    - any-glob-to-any-file: plugin/esbuild.config.mjs
+    - any-glob-to-any-file: plugin/tsconfig.json
+    - any-glob-to-any-file: server/Makefile

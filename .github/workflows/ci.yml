@@ -15,12 +15,16 @@ jobs:
   lint:
     name: Lint & type-check
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '20'
           cache: npm
+          cache-dependency-path: plugin/package-lock.json
       - run: npm ci
       - name: TypeScript type-check
         run: node node_modules/typescript/bin/tsc --noEmit
@@ -37,19 +41,23 @@ jobs:
   test:
     name: Test & coverage
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '20'
           cache: npm
+          cache-dependency-path: plugin/package-lock.json
       - run: npm ci
       - name: Run tests with coverage
         run: node node_modules/vitest/vitest.mjs run --coverage
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v6
         with:
-          files: coverage/lcov.info
+          files: plugin/coverage/lcov.info
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -58,12 +66,16 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '20'
           cache: npm
+          cache-dependency-path: plugin/package-lock.json
       - run: npm ci
       - name: Production build
         run: node esbuild.config.mjs production
@@ -81,7 +93,27 @@ jobs:
         with:
           name: plugin-build
           path: |
-            main.js
-            manifest.json
-            styles.css
+            plugin/main.js
+            plugin/manifest.json
+            plugin/styles.css
           retention-days: 7
+
+  # ─── Server: build + test ────────────────────────────────────────────────────
+  server:
+    name: Server build & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.22'
+          # Cache enables once server/go.sum exists (added when external deps
+          # are introduced). Until then, the module has only stdlib references.
+          cache: false
+      - name: Build
+        run: make build
+      - name: Test
+        run: make test

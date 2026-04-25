@@ -13,12 +13,16 @@ jobs:
   test:
     name: Test gate
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: '20'
           cache: npm
+          cache-dependency-path: plugin/package-lock.json
       - run: npm ci
       - run: node node_modules/typescript/bin/tsc --noEmit
       - run: node node_modules/vitest/vitest.mjs run
@@ -37,13 +41,18 @@ jobs:
         with:
           node-version: '20'
           cache: npm
+          cache-dependency-path: plugin/package-lock.json
 
-      - run: npm ci
+      - name: Install plugin deps
+        working-directory: plugin
+        run: npm ci
 
       - name: Production build
+        working-directory: plugin
         run: node esbuild.config.mjs production
 
       - name: Verify bundle size
+        working-directory: plugin
         run: |
           SIZE=$(stat -c%s main.js)
           KB=$(( SIZE / 1024 ))
@@ -94,9 +103,9 @@ jobs:
             2. Place in `{vault}/.obsidian/plugins/remote-ssh/`
             3. Enable the plugin in Obsidian → Settings → Community Plugins
           files: |
-            main.js
-            manifest.json
-            styles.css
+            plugin/main.js
+            plugin/manifest.json
+            plugin/styles.css
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
           make_latest: true

@@ -2,3 +2,5 @@ node_modules/
 main.js
 *.js.map
 .DS_Store
+coverage/
+cdp-console.log
