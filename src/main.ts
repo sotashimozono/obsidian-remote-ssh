@@ -6,6 +6,10 @@ import { SftpClient } from './ssh/SftpClient';
 import { AuthResolver } from './ssh/AuthResolver';
 import { HostKeyStore } from './ssh/HostKeyStore';
 import { SecretStore } from './ssh/SecretStore';
+import { ReadCache } from './cache/ReadCache';
+import { DirCache } from './cache/DirCache';
+import { SftpDataAdapter } from './adapter/SftpDataAdapter';
+import { AdapterPatcher } from './adapter/AdapterPatcher';
 import { StatusBar } from './ui/StatusBar';
 import { ConnectModal } from './ui/ConnectModal';
 import { SettingsTab } from './settings/SettingsTab';
@@ -13,6 +17,8 @@ import { logger } from './util/logger';
 import { installErrorHook, uninstallErrorHook } from './util/errorHook';
 import { normalizeRemotePath } from './util/pathUtils';
 import * as path from 'path';
+
+const PATCHED_METHODS = ['exists', 'stat', 'list', 'read', 'readBinary', 'getName'] as const;
 
 export default class RemoteSshPlugin extends Plugin {
   settings: PluginSettings = DEFAULT_SETTINGS;
@@ -23,6 +29,11 @@ export default class RemoteSshPlugin extends Plugin {
   private client!: SftpClient;
   private statusBar!: StatusBar;
   private state: SyncState = SyncState.IDLE;
+  private patcher: AdapterPatcher<object> | null = null;
+  private dataAdapter: SftpDataAdapter | null = null;
+  private readCache: ReadCache | null = null;
+  private dirCache: DirCache | null = null;
+  private activeRemoteBasePath: string | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -34,10 +45,12 @@ export default class RemoteSshPlugin extends Plugin {
     this.client = new SftpClient(this.authResolver, this.hostKeyStore);
     this.client.onClose(({ unexpected }) => {
       if (unexpected) {
+        this.restoreAdapter();
         this.setState(SyncState.ERROR);
         new Notice('Remote SSH: Connection lost');
       }
     });
+    this.activeRemoteBasePath = null;
 
     this.addSettingTab(new SettingsTab(this.app, this));
 
@@ -55,9 +68,30 @@ export default class RemoteSshPlugin extends Plugin {
       name: 'Disconnect from remote vault',
       callback: () => this.disconnect(),
     });
+
+    this.addCommand({
+      id: 'debug-patch-adapter',
+      name: 'Debug: patch app.vault.adapter onto SFTP (read-side only)',
+      callback: () => this.debugPatchAdapter(),
+    });
+
+    this.addCommand({
+      id: 'debug-restore-adapter',
+      name: 'Debug: restore app.vault.adapter to its original',
+      callback: () => this.debugRestoreAdapter(),
+    });
+
+    this.addCommand({
+      id: 'debug-list-root',
+      name: 'Debug: list vault root via current adapter',
+      callback: () => this.debugListRoot(),
+    });
   }
 
   async onunload() {
+    // Restore adapter first so any in-flight Obsidian read calls see the
+    // original FileSystemAdapter again before we tear down the SSH session.
+    this.restoreAdapter();
     await this.disconnect().catch(() => {});
     this.statusBar?.remove();
     this.uninstallObservability();
@@ -119,7 +153,6 @@ export default class RemoteSshPlugin extends Plugin {
     }
     try {
       await this.client.connect(profile);
-      // Smoke test: list the remote vault path so we surface auth/path errors immediately.
       const entries = await this.client.list(effectivePath);
       logger.info(`Smoke test: list ${effectivePath} returned ${entries.length} entries`);
     } catch (e) {
@@ -130,14 +163,22 @@ export default class RemoteSshPlugin extends Plugin {
       try { await this.client.disconnect(); } catch { /* ignore */ }
       return;
     }
+
+    // Adapter is NOT patched on connect: Obsidian still has paths it expects
+    // to read locally (`.obsidian/workspace.json`, plugin data, etc.) until
+    // PathMapper (Phase 4-J0) can redirect those to a per-client subtree.
+    // Use the "Debug: patch adapter" command to opt in for now.
+    this.activeRemoteBasePath = effectivePath;
     this.setState(SyncState.CONNECTED);
     this.settings.activeProfileId = profile.id;
     await this.saveSettings();
-    new Notice(`Remote SSH: Connected to ${profile.name} (adapter wiring pending — Phase 4-E onward)`);
+    new Notice(`Remote SSH: Connected to ${profile.name} (adapter NOT patched — use "Debug: patch adapter" to opt in)`);
   }
 
   async disconnect() {
     if (this.state === SyncState.IDLE) return;
+    this.restoreAdapter();
+    this.activeRemoteBasePath = null;
     try {
       await this.client.disconnect();
     } catch (e) {
@@ -147,6 +188,78 @@ export default class RemoteSshPlugin extends Plugin {
     this.settings.activeProfileId = null;
     await this.saveSettings();
     new Notice('Remote SSH: Disconnected');
+  }
+
+  private debugPatchAdapter(): void {
+    if (this.state !== SyncState.CONNECTED || !this.activeRemoteBasePath) {
+      new Notice('Remote SSH: connect first');
+      return;
+    }
+    if (this.patcher?.isPatched()) {
+      new Notice('Remote SSH: adapter already patched');
+      return;
+    }
+    const targetAdapter = this.app.vault.adapter as unknown as object;
+    this.readCache = new ReadCache();
+    this.dirCache = new DirCache();
+    this.dataAdapter = new SftpDataAdapter(
+      this.client,
+      this.activeRemoteBasePath,
+      this.readCache,
+      this.dirCache,
+      this.app.vault.getName(),
+    );
+    this.patcher = new AdapterPatcher(targetAdapter, this.dataAdapter);
+    try {
+      this.patcher.patch(PATCHED_METHODS as unknown as ReadonlyArray<keyof object & string>);
+      logger.info(`Adapter patched: [${PATCHED_METHODS.join(', ')}]`);
+      new Notice(`Remote SSH: adapter patched (${PATCHED_METHODS.join(', ')})`);
+    } catch (e) {
+      logger.error(`Adapter patch failed: ${(e as Error).message}`);
+      this.patcher = null;
+      this.dataAdapter = null;
+      this.readCache = null;
+      this.dirCache = null;
+      new Notice(`Adapter patch failed: ${(e as Error).message}`);
+    }
+  }
+
+  private debugRestoreAdapter(): void {
+    if (!this.patcher?.isPatched()) {
+      new Notice('Remote SSH: adapter is not patched');
+      return;
+    }
+    this.restoreAdapter();
+    new Notice('Remote SSH: adapter restored');
+  }
+
+  private restoreAdapter(): void {
+    if (this.patcher?.isPatched()) {
+      try {
+        this.patcher.restore();
+        logger.info('Adapter restored');
+      } catch (e) {
+        logger.error(`Adapter restore failed: ${(e as Error).message}`);
+      }
+    }
+    this.patcher = null;
+    this.dataAdapter = null;
+    this.readCache = null;
+    this.dirCache = null;
+  }
+
+  private async debugListRoot(): Promise<void> {
+    try {
+      const out = await this.app.vault.adapter.list('');
+      const via = this.patcher?.isPatched() ? 'PATCHED (SFTP)' : 'ORIGINAL (local)';
+      logger.info(`debugListRoot via ${via}: ${out.files.length} files, ${out.folders.length} folders`);
+      logger.info(`  files (first 5): ${out.files.slice(0, 5).join(', ')}`);
+      logger.info(`  folders (first 5): ${out.folders.slice(0, 5).join(', ')}`);
+      new Notice(`List via ${via}: ${out.files.length} files, ${out.folders.length} folders (see console.log)`);
+    } catch (e) {
+      logger.error(`debugListRoot failed: ${(e as Error).message}`);
+      new Notice(`debugListRoot failed: ${(e as Error).message}`);
+    }
   }
 
   private setState(s: SyncState) {
