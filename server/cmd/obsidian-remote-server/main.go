@@ -113,11 +113,23 @@ func run(args []string) (int, error) {
 	disp.Handle("auth", handlers.Auth(token))
 	disp.Handle("server.info", handlers.ServerInfo(disp, Version, absRoot))
 	// fs.* handlers are gated behind session auth.
+	// Read side.
 	disp.Handle("fs.stat", handlers.RequireAuth(handlers.FsStat(absRoot)))
 	disp.Handle("fs.exists", handlers.RequireAuth(handlers.FsExists(absRoot)))
 	disp.Handle("fs.list", handlers.RequireAuth(handlers.FsList(absRoot)))
 	disp.Handle("fs.readText", handlers.RequireAuth(handlers.FsReadText(absRoot)))
 	disp.Handle("fs.readBinary", handlers.RequireAuth(handlers.FsReadBinary(absRoot)))
+	// Write side.
+	disp.Handle("fs.write", handlers.RequireAuth(handlers.FsWrite(absRoot)))
+	disp.Handle("fs.writeBinary", handlers.RequireAuth(handlers.FsWriteBinary(absRoot)))
+	disp.Handle("fs.append", handlers.RequireAuth(handlers.FsAppend(absRoot)))
+	disp.Handle("fs.appendBinary", handlers.RequireAuth(handlers.FsAppendBinary(absRoot)))
+	disp.Handle("fs.mkdir", handlers.RequireAuth(handlers.FsMkdir(absRoot)))
+	disp.Handle("fs.remove", handlers.RequireAuth(handlers.FsRemove(absRoot)))
+	disp.Handle("fs.rmdir", handlers.RequireAuth(handlers.FsRmdir(absRoot)))
+	disp.Handle("fs.rename", handlers.RequireAuth(handlers.FsRename(absRoot)))
+	disp.Handle("fs.copy", handlers.RequireAuth(handlers.FsCopy(absRoot)))
+	disp.Handle("fs.trashLocal", handlers.RequireAuth(handlers.FsTrashLocal(absRoot)))
 
 	// Wire signal-driven shutdown: closing the listener unwinds Serve.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

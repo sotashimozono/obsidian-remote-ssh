@@ -56,6 +56,16 @@ func startTestServer(t *testing.T) *testServer {
 	disp.Handle("fs.list", handlers.RequireAuth(handlers.FsList(vaultRoot)))
 	disp.Handle("fs.readText", handlers.RequireAuth(handlers.FsReadText(vaultRoot)))
 	disp.Handle("fs.readBinary", handlers.RequireAuth(handlers.FsReadBinary(vaultRoot)))
+	disp.Handle("fs.write", handlers.RequireAuth(handlers.FsWrite(vaultRoot)))
+	disp.Handle("fs.writeBinary", handlers.RequireAuth(handlers.FsWriteBinary(vaultRoot)))
+	disp.Handle("fs.append", handlers.RequireAuth(handlers.FsAppend(vaultRoot)))
+	disp.Handle("fs.appendBinary", handlers.RequireAuth(handlers.FsAppendBinary(vaultRoot)))
+	disp.Handle("fs.mkdir", handlers.RequireAuth(handlers.FsMkdir(vaultRoot)))
+	disp.Handle("fs.remove", handlers.RequireAuth(handlers.FsRemove(vaultRoot)))
+	disp.Handle("fs.rmdir", handlers.RequireAuth(handlers.FsRmdir(vaultRoot)))
+	disp.Handle("fs.rename", handlers.RequireAuth(handlers.FsRename(vaultRoot)))
+	disp.Handle("fs.copy", handlers.RequireAuth(handlers.FsCopy(vaultRoot)))
+	disp.Handle("fs.trashLocal", handlers.RequireAuth(handlers.FsTrashLocal(vaultRoot)))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -248,6 +258,140 @@ func mustWrite(t *testing.T, abs string, data []byte) {
 	}
 }
 
+func TestServer_WritePipeline(t *testing.T) {
+	ts := startTestServer(t)
+	c := ts.dial(t)
+
+	// Authenticate.
+	if _, errObj := c.call(t, "auth", map[string]string{"token": string(ts.token)}); errObj != nil {
+		t.Fatalf("auth: %+v", errObj)
+	}
+
+	// Step 1: fs.write creates a note (parents auto-created).
+	_, errObj := c.call(t, "fs.write", map[string]string{
+		"path":    "docs/note.md",
+		"content": "first",
+	})
+	if errObj != nil {
+		t.Fatalf("fs.write: %+v", errObj)
+	}
+	if data, err := os.ReadFile(filepath.Join(ts.vaultRoot, "docs", "note.md")); err != nil || string(data) != "first" {
+		t.Fatalf("disk after write: data=%q err=%v", data, err)
+	}
+
+	// Step 2: fs.append adds more bytes.
+	_, errObj = c.call(t, "fs.append", map[string]string{
+		"path":    "docs/note.md",
+		"content": "-second",
+	})
+	if errObj != nil {
+		t.Fatalf("fs.append: %+v", errObj)
+	}
+	data, _ := os.ReadFile(filepath.Join(ts.vaultRoot, "docs", "note.md"))
+	if string(data) != "first-second" {
+		t.Errorf("after append disk = %q, want %q", data, "first-second")
+	}
+
+	// Step 3: fs.rename into a nested directory (auto-create parent).
+	_, errObj = c.call(t, "fs.rename", map[string]string{
+		"oldPath": "docs/note.md",
+		"newPath": "archive/2026/note.md",
+	})
+	if errObj != nil {
+		t.Fatalf("fs.rename: %+v", errObj)
+	}
+	if _, err := os.Stat(filepath.Join(ts.vaultRoot, "archive", "2026", "note.md")); err != nil {
+		t.Fatalf("renamed target missing: %v", err)
+	}
+
+	// Step 4: fs.copy → fs.trashLocal on the copy.
+	_, errObj = c.call(t, "fs.copy", map[string]string{
+		"srcPath":  "archive/2026/note.md",
+		"destPath": "latest.md",
+	})
+	if errObj != nil {
+		t.Fatalf("fs.copy: %+v", errObj)
+	}
+	_, errObj = c.call(t, "fs.trashLocal", map[string]string{"path": "latest.md"})
+	if errObj != nil {
+		t.Fatalf("fs.trashLocal: %+v", errObj)
+	}
+	if _, err := os.Stat(filepath.Join(ts.vaultRoot, "latest.md")); !os.IsNotExist(err) {
+		t.Error("latest.md should be gone after trashLocal")
+	}
+	if _, err := os.Stat(filepath.Join(ts.vaultRoot, ".trash", "latest.md")); err != nil {
+		t.Errorf(".trash/latest.md missing: %v", err)
+	}
+
+	// Step 5: fs.mkdir (recursive) then fs.rmdir (recursive) round trip.
+	if _, errObj := c.call(t, "fs.mkdir", map[string]any{
+		"path": "scratch/a/b", "recursive": true,
+	}); errObj != nil {
+		t.Fatalf("fs.mkdir: %+v", errObj)
+	}
+	if _, errObj := c.call(t, "fs.rmdir", map[string]any{
+		"path": "scratch", "recursive": true,
+	}); errObj != nil {
+		t.Fatalf("fs.rmdir: %+v", errObj)
+	}
+	if _, err := os.Stat(filepath.Join(ts.vaultRoot, "scratch")); !os.IsNotExist(err) {
+		t.Error("scratch should be gone")
+	}
+
+	// Step 6: fs.remove on a file, then confirm missing.
+	mustWrite(t, filepath.Join(ts.vaultRoot, "doomed.md"), []byte("bye"))
+	if _, errObj := c.call(t, "fs.remove", map[string]string{"path": "doomed.md"}); errObj != nil {
+		t.Fatalf("fs.remove: %+v", errObj)
+	}
+	if _, err := os.Stat(filepath.Join(ts.vaultRoot, "doomed.md")); !os.IsNotExist(err) {
+		t.Error("doomed.md should be gone")
+	}
+}
+
+func TestServer_WritePreconditionGuard(t *testing.T) {
+	ts := startTestServer(t)
+	c := ts.dial(t)
+	if _, errObj := c.call(t, "auth", map[string]string{"token": string(ts.token)}); errObj != nil {
+		t.Fatalf("auth: %+v", errObj)
+	}
+
+	// Seed a file and capture its mtime.
+	mustWrite(t, filepath.Join(ts.vaultRoot, "note.md"), []byte("seed"))
+	statRes, errObj := c.call(t, "fs.stat", map[string]string{"path": "note.md"})
+	if errObj != nil {
+		t.Fatalf("fs.stat: %+v", errObj)
+	}
+	var s proto.Stat
+	if err := json.Unmarshal(statRes, &s); err != nil {
+		t.Fatalf("unmarshal stat: %v", err)
+	}
+
+	// Matching expectedMtime: write succeeds.
+	if _, errObj := c.call(t, "fs.write", map[string]any{
+		"path":          "note.md",
+		"content":       "ok",
+		"expectedMtime": s.Mtime,
+	}); errObj != nil {
+		t.Fatalf("fs.write (matching precondition): %+v", errObj)
+	}
+	if data, _ := os.ReadFile(filepath.Join(ts.vaultRoot, "note.md")); string(data) != "ok" {
+		t.Errorf("disk = %q, want %q", data, "ok")
+	}
+
+	// Mismatched expectedMtime: write rejected, disk unchanged.
+	_, errObj = c.call(t, "fs.write", map[string]any{
+		"path":          "note.md",
+		"content":       "clobber",
+		"expectedMtime": 1, // deliberately stale
+	})
+	if errObj == nil || errObj.Code != proto.ErrorPreconditionFailed {
+		t.Fatalf("want PreconditionFailed, got %+v", errObj)
+	}
+	if data, _ := os.ReadFile(filepath.Join(ts.vaultRoot, "note.md")); string(data) != "ok" {
+		t.Errorf("disk was clobbered despite precondition: %q", data)
+	}
+}
+
 func TestServer_AuthThenServerInfo(t *testing.T) {
 	ts := startTestServer(t)
 	c := ts.dial(t)
@@ -281,8 +425,14 @@ func TestServer_AuthThenServerInfo(t *testing.T) {
 		t.Errorf("ProtocolVersion = %d, want %d", info.ProtocolVersion, proto.ProtocolVersion)
 	}
 	wantCaps := []string{
-		"auth", "fs.exists", "fs.list", "fs.readBinary",
-		"fs.readText", "fs.stat", "server.info",
+		"auth",
+		"fs.append", "fs.appendBinary", "fs.copy",
+		"fs.exists", "fs.list", "fs.mkdir",
+		"fs.readBinary", "fs.readText",
+		"fs.remove", "fs.rename", "fs.rmdir",
+		"fs.stat", "fs.trashLocal",
+		"fs.write", "fs.writeBinary",
+		"server.info",
 	}
 	got := append([]string(nil), info.Capabilities...)
 	sort.Strings(got)
