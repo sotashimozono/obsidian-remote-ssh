@@ -43,6 +43,38 @@ func ErrFileNotFound(p string) *Error {
 	return Err(proto.ErrorFileNotFound, "no such file: "+p, nil)
 }
 
+// ErrNotADirectory signals that the target of a dir-only op (list,
+// rmdir, …) points to a regular file.
+func ErrNotADirectory(p string) *Error {
+	return Err(proto.ErrorNotADirectory, "not a directory: "+p, nil)
+}
+
+// ErrIsADirectory signals that the target of a file-only op (read,
+// remove) points to a directory.
+func ErrIsADirectory(p string) *Error {
+	return Err(proto.ErrorIsADirectory, "is a directory: "+p, nil)
+}
+
+// ErrExists signals that a create-like op found the path already present.
+func ErrExists(p string) *Error {
+	return Err(proto.ErrorExists, "already exists: "+p, nil)
+}
+
+// ErrPermissionDenied signals that the OS refused the operation.
+func ErrPermissionDenied(p string) *Error {
+	return Err(proto.ErrorPermissionDenied, "permission denied: "+p, nil)
+}
+
+// ErrPathOutsideVault signals that the resolved path escapes the vault.
+func ErrPathOutsideVault(p string) *Error {
+	return Err(proto.ErrorPathOutsideVault, "path outside vault: "+p, nil)
+}
+
+// ErrPreconditionFailed signals that an expectedMtime did not match.
+func ErrPreconditionFailed(msg string) *Error {
+	return Err(proto.ErrorPreconditionFailed, msg, nil)
+}
+
 // encodeResult marshals a result value for WriteSuccess. Centralised
 // here so the dispatcher and tests agree on JSON shape (omit null,
 // preserve zero values, etc).

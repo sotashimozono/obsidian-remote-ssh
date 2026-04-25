@@ -112,6 +112,12 @@ func run(args []string) (int, error) {
 	disp := srv.Dispatcher()
 	disp.Handle("auth", handlers.Auth(token))
 	disp.Handle("server.info", handlers.ServerInfo(disp, Version, absRoot))
+	// fs.* handlers are gated behind session auth.
+	disp.Handle("fs.stat", handlers.RequireAuth(handlers.FsStat(absRoot)))
+	disp.Handle("fs.exists", handlers.RequireAuth(handlers.FsExists(absRoot)))
+	disp.Handle("fs.list", handlers.RequireAuth(handlers.FsList(absRoot)))
+	disp.Handle("fs.readText", handlers.RequireAuth(handlers.FsReadText(absRoot)))
+	disp.Handle("fs.readBinary", handlers.RequireAuth(handlers.FsReadBinary(absRoot)))
 
 	// Wire signal-driven shutdown: closing the listener unwinds Serve.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
