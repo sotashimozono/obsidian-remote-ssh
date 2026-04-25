@@ -20,6 +20,7 @@ import (
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/auth"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/handlers"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/server"
+	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/watcher"
 )
 
 // Version is replaced at link time via -ldflags "-X main.Version=...".
@@ -103,11 +104,22 @@ func run(args []string) (int, error) {
 		logger.Warn("chmod socket", "err", err.Error())
 	}
 
+	// Vault watcher: a single fsnotify watcher subscribes to the
+	// whole tree and dispatches events to per-session callbacks.
+	// Built before the Server so the SubscriptionCleaner can drop
+	// orphan subscriptions when connections close.
+	vaultWatcher, err := watcher.New(absRoot)
+	if err != nil {
+		return 1, fmt.Errorf("watcher: %w", err)
+	}
+	defer func() { _ = vaultWatcher.Close() }()
+
 	srv := server.New(server.Options{
-		Token:     token,
-		VaultRoot: absRoot,
-		Version:   Version,
-		Logger:    logger,
+		Token:               token,
+		VaultRoot:           absRoot,
+		Version:             Version,
+		Logger:              logger,
+		SubscriptionCleaner: watcherCleaner{vaultWatcher},
 	})
 	disp := srv.Dispatcher()
 	disp.Handle("auth", handlers.Auth(token))
@@ -130,6 +142,9 @@ func run(args []string) (int, error) {
 	disp.Handle("fs.rename", handlers.RequireAuth(handlers.FsRename(absRoot)))
 	disp.Handle("fs.copy", handlers.RequireAuth(handlers.FsCopy(absRoot)))
 	disp.Handle("fs.trashLocal", handlers.RequireAuth(handlers.FsTrashLocal(absRoot)))
+	// Watch side.
+	disp.Handle("fs.watch", handlers.RequireAuth(handlers.FsWatch(vaultWatcher)))
+	disp.Handle("fs.unwatch", handlers.RequireAuth(handlers.FsUnwatch(vaultWatcher)))
 
 	// Wire signal-driven shutdown: closing the listener unwinds Serve.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -157,4 +172,19 @@ func defaultStateDir() (string, error) {
 		return "", fmt.Errorf("home dir: %w", err)
 	}
 	return filepath.Join(home, ".obsidian-remote"), nil
+}
+
+// watcherCleaner adapts watcher.Watcher to server.SubscriptionCleaner
+// so the server can drop a session's watcher subscriptions when its
+// connection closes. The wrapper is needed because the server module
+// must not import watcher (the dependency direction goes the other
+// way: handlers + main wire watcher into the server's options).
+type watcherCleaner struct {
+	w *watcher.Watcher
+}
+
+func (c watcherCleaner) CleanupSubscriptions(ids []string) {
+	for _, id := range ids {
+		c.w.Unsubscribe(id)
+	}
 }
