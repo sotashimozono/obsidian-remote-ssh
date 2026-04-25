@@ -11,6 +11,7 @@ export const DEFAULT_PROFILE: Omit<SshProfile, 'id' | 'name'> = {
   connectTimeoutMs: 15000,
   keepaliveIntervalMs: 10000,
   keepaliveCountMax: 3,
+  transport: 'sftp',
 };
 
 export const DEFAULT_SETTINGS: PluginSettings = {
