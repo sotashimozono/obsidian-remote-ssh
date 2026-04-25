@@ -8,7 +8,9 @@
  *   node scripts/dev-install.mjs <vault-root>
  *
  * The default vault root is read from the `REMOTE_SSH_DEV_VAULT` env var
- * or falls back to `../SelfArchive-dev` relative to this script.
+ * or falls back to `../../SelfArchive-dev` relative to this script
+ * (i.e. a sibling of the repo root, since the plugin lives under
+ * `<repo>/plugin/`).
  */
 
 import * as fs from 'node:fs';
@@ -16,13 +18,14 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, '..');
+const pluginRoot = path.resolve(__dirname, '..');     // <repo>/plugin
+const repoRoot   = path.resolve(pluginRoot, '..');    // <repo>
 
 const vaultRoot = process.argv[2]
   ?? process.env.REMOTE_SSH_DEV_VAULT
   ?? path.resolve(repoRoot, '..', 'SelfArchive-dev');
 
-const manifestPath = path.join(repoRoot, 'manifest.json');
+const manifestPath = path.join(pluginRoot, 'manifest.json');
 if (!fs.existsSync(manifestPath)) {
   console.error(`manifest.json not found at ${manifestPath}`);
   process.exit(1);
@@ -40,7 +43,7 @@ fs.mkdirSync(targetDir, { recursive: true });
 
 const files = ['main.js', 'manifest.json', 'styles.css'];
 for (const f of files) {
-  const src = path.join(repoRoot, f);
+  const src = path.join(pluginRoot, f);
   if (!fs.existsSync(src)) {
     console.error(`missing build artifact: ${src} (run npm run build first)`);
     process.exit(1);

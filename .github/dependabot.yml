@@ -3,7 +3,7 @@ version: 2
 updates:
   # npm — weekly, grouped into a single PR per ecosystem
   - package-ecosystem: npm
-    directory: /
+    directory: /plugin
     schedule:
       interval: weekly
       day: monday
@@ -36,3 +36,16 @@ updates:
     labels:
       - dependencies
       - github-actions
+
+  # Go modules — weekly
+  - package-ecosystem: gomod
+    directory: /server
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - go
