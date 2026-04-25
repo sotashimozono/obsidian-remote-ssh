@@ -134,6 +134,9 @@ export default class RemoteSshPlugin extends Plugin {
   async loadSettings() {
     const saved = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved ?? {});
+    // We never come back online already connected; activeProfileId from disk
+    // is stale on startup and only confuses the settings UI.
+    this.settings.activeProfileId = null;
     if (saved?.hostKeyStore) {
       this.hostKeyStore.load(saved.hostKeyStore);
     }
@@ -184,19 +187,31 @@ export default class RemoteSshPlugin extends Plugin {
     new Notice(`Remote SSH: Connected to ${profile.name} (adapter NOT patched — use "Debug: patch adapter" to opt in)`);
   }
 
+  /**
+   * Idempotent: it always restores the adapter, drops the active SSH
+   * client, clears `activeProfileId`, and parks the state machine on
+   * IDLE. Calling it from a stale UI button (where state was already
+   * IDLE because the plugin had just reloaded) is a supported flow.
+   */
   async disconnect() {
-    if (this.state === SyncState.IDLE) return;
+    const wasActive = this.state !== SyncState.IDLE
+      || this.client?.isAlive()
+      || this.settings.activeProfileId !== null;
     this.restoreAdapter();
     this.activeRemoteBasePath = null;
-    try {
-      await this.client.disconnect();
-    } catch (e) {
-      logger.warn(`disconnect: ${(e as Error).message}`);
+    if (this.client?.isAlive()) {
+      try {
+        await this.client.disconnect();
+      } catch (e) {
+        logger.warn(`disconnect: ${(e as Error).message}`);
+      }
     }
     this.setState(SyncState.IDLE);
-    this.settings.activeProfileId = null;
-    await this.saveSettings();
-    new Notice('Remote SSH: Disconnected');
+    if (this.settings.activeProfileId !== null) {
+      this.settings.activeProfileId = null;
+      await this.saveSettings();
+    }
+    if (wasActive) new Notice('Remote SSH: Disconnected');
   }
 
   private debugPatchAdapter(): void {
@@ -269,6 +284,10 @@ export default class RemoteSshPlugin extends Plugin {
       logger.error(`debugListRoot failed: ${(e as Error).message}`);
       new Notice(`debugListRoot failed: ${(e as Error).message}`);
     }
+  }
+
+  isConnected(): boolean {
+    return this.state === SyncState.CONNECTED;
   }
 
   private setState(s: SyncState) {

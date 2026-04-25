@@ -44,7 +44,8 @@ export class SettingsTab extends PluginSettingTab {
   }
 
   private renderProfileRow(containerEl: HTMLElement, profile: SshProfile) {
-    const isActive = this.plugin.settings.activeProfileId === profile.id;
+    const isActive = this.plugin.isConnected()
+      && this.plugin.settings.activeProfileId === profile.id;
 
     new Setting(containerEl)
       .setName(`${profile.name}`)
