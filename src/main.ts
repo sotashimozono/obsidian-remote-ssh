@@ -1,4 +1,4 @@
-import { Plugin, Notice, WorkspaceLeaf } from 'obsidian';
+import { Plugin, Notice, WorkspaceLeaf, FileSystemAdapter } from 'obsidian';
 import type { PluginSettings, SshProfile } from './types';
 import { DEFAULT_SETTINGS, PLUGIN_ID } from './constants';
 import { ConnectionPool } from './ssh/ConnectionPool';
@@ -13,6 +13,7 @@ import { SyncLogView, SYNC_LOG_VIEW_TYPE } from './ui/SyncLogView';
 import { SettingsTab } from './settings/SettingsTab';
 import { LicenseGate } from './license/LicenseGate';
 import { logger } from './util/logger';
+import { installErrorHook, uninstallErrorHook } from './util/errorHook';
 import * as path from 'path';
 import * as os from 'os';
 
@@ -30,11 +31,12 @@ export default class RemoteSshPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
-    this.pool   = new ConnectionPool(this.authResolver, this.hostKeyStore, this.gate);
-    this.engine = new SyncEngine(this.pool, this.app, this, this.gate);
-
     logger.setDebug(this.settings.enableDebugLog);
     logger.setMaxLines(this.settings.maxLogLines);
+    this.installObservability();
+
+    this.pool   = new ConnectionPool(this.authResolver, this.hostKeyStore, this.gate);
+    this.engine = new SyncEngine(this.pool, this.app, this, this.gate);
 
     await this.gate.initialize(this.settings.licenseKey);
 
@@ -91,6 +93,32 @@ export default class RemoteSshPlugin extends Plugin {
     await this.engine.disconnect().catch(() => {});
     this.pool.destroyAll();
     this.statusBar.remove();
+    this.uninstallObservability();
+  }
+
+  private installObservability(): void {
+    try {
+      const adapter = this.app.vault.adapter;
+      if (adapter instanceof FileSystemAdapter) {
+        const base = adapter.getBasePath();
+        const logPath = path.join(base, '.obsidian', 'plugins', this.manifest.id, 'console.log');
+        logger.installFileSink(logPath);
+      } else {
+        logger.warn('vault.adapter is not FileSystemAdapter; file sink disabled');
+      }
+    } catch (e) {
+      logger.warn(`installFileSink failed: ${(e as Error).message}`);
+    }
+    logger.wrapConsole();
+    installErrorHook();
+    logger.info(`Plugin ${this.manifest.id} v${this.manifest.version} loaded`);
+  }
+
+  private uninstallObservability(): void {
+    logger.info(`Plugin ${this.manifest.id} unloading`);
+    uninstallErrorHook();
+    logger.unwrapConsole();
+    logger.uninstallFileSink();
   }
 
   async loadSettings() {

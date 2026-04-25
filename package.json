@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "node esbuild.config.mjs production",
+    "dev:install": "node scripts/dev-install.mjs",
+    "build:install": "node esbuild.config.mjs production && node scripts/dev-install.mjs",
+    "cdp:tail": "node scripts/cdp-tail.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts",
