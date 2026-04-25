@@ -47,9 +47,13 @@ export class SettingsTab extends PluginSettingTab {
     const isActive = this.plugin.isConnected()
       && this.plugin.settings.activeProfileId === profile.id;
 
+    const transport = (profile.transport ?? 'sftp').toUpperCase();
     new Setting(containerEl)
       .setName(`${profile.name}`)
-      .setDesc(`${profile.username}@${profile.host}:${profile.port}  →  ${profile.remotePath}`)
+      .setDesc(
+        `${profile.username}@${profile.host}:${profile.port}  →  ${profile.remotePath}  ` +
+        `[${transport}]`,
+      )
       .addButton(btn => btn
         .setButtonText(isActive ? 'Disconnect' : 'Connect')
         .setCta()

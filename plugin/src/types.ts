@@ -1,5 +1,14 @@
 export type AuthMethod = 'password' | 'privateKey' | 'agent';
 
+/**
+ * Wire choice between the legacy direct-SFTP path and the α path
+ * (`obsidian-remote-server` daemon over a JSON-RPC tunnel). Default
+ * `'sftp'` matches what every existing profile already does; users
+ * opt in to `'rpc'` per profile when they want auto-deploy of the
+ * daemon at connect time.
+ */
+export type RemoteTransport = 'sftp' | 'rpc';
+
 export enum SyncState {
   IDLE       = 'idle',
   CONNECTING = 'connecting',
@@ -35,17 +44,20 @@ export interface SshProfile {
   jumpHost?: JumpHostConfig;
 
   /**
-   * α-path daemon socket on the remote host
-   * (e.g. `~/.obsidian-remote/server.sock`). When unset, the plugin's
-   * RPC debug command cannot run and the adapter stays on the direct
-   * SFTP path. Auto-populated by the upcoming server auto-deploy
-   * phase; for now the user fills it in by hand after starting
-   * `obsidian-remote-server` on the remote.
+   * Picks between the legacy direct-SFTP transport and the α path
+   * where the plugin auto-deploys `obsidian-remote-server` on
+   * connect and routes filesystem operations through it. Default
+   * `'sftp'` for backwards compatibility with existing profiles.
+   */
+  transport?: RemoteTransport;
+  /**
+   * α-path daemon socket on the remote host. Default
+   * `.obsidian-remote/server.sock` (home-relative).
    */
   rpcSocketPath?: string;
   /**
-   * Path on the remote host holding the session token the daemon
-   * writes at startup (default `~/.obsidian-remote/token`).
+   * α-path token file written by the daemon at startup. Default
+   * `.obsidian-remote/token`.
    */
   rpcTokenPath?: string;
 }

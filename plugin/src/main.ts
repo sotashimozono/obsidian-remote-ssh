@@ -48,6 +48,10 @@ export default class RemoteSshPlugin extends Plugin {
   private readCache: ReadCache | null = null;
   private dirCache: DirCache | null = null;
   private activeRemoteBasePath: string | null = null;
+  /** Authenticated daemon session, populated when the active profile uses transport='rpc'. */
+  private rpcConnection: Awaited<ReturnType<typeof establishRpcConnection>> | null = null;
+  /** ServerDeployer that owns the daemon process; invoked on disconnect to tear it down. */
+  private daemonDeployer: ServerDeployer | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -187,6 +191,26 @@ export default class RemoteSshPlugin extends Plugin {
       return;
     }
 
+    const transport = profile.transport ?? 'sftp';
+    let rpcSummary = '';
+    if (transport === 'rpc') {
+      try {
+        await this.startRpcSession(profile, effectivePath);
+        const caps = this.rpcConnection?.info.capabilities.length ?? 0;
+        const ver  = this.rpcConnection?.info.version ?? '?';
+        rpcSummary = ` — daemon ${ver}, ${caps} capabilities`;
+      } catch (e) {
+        // RPC startup failed; tear the SFTP session back down so the user
+        // can retry from a clean state instead of half-connected.
+        this.setState(SyncState.ERROR);
+        const msg = (e as Error).message;
+        logger.error(`RPC startup failed: ${msg}`);
+        new Notice(`Remote SSH: RPC startup failed — ${msg}`);
+        try { await this.client.disconnect(); } catch { /* ignore */ }
+        return;
+      }
+    }
+
     // Adapter is NOT patched on connect: Obsidian still has paths it expects
     // to read locally (`.obsidian/workspace.json`, plugin data, etc.) until
     // PathMapper (Phase 4-J0) can redirect those to a per-client subtree.
@@ -195,7 +219,50 @@ export default class RemoteSshPlugin extends Plugin {
     this.setState(SyncState.CONNECTED);
     this.settings.activeProfileId = profile.id;
     await this.saveSettings();
-    new Notice(`Remote SSH: Connected to ${profile.name} (adapter NOT patched — use "Debug: patch adapter" to opt in)`);
+    new Notice(
+      `Remote SSH: Connected to ${profile.name} via ${transport.toUpperCase()}${rpcSummary} ` +
+      `(adapter NOT patched — use "Debug: patch adapter" to opt in)`,
+    );
+  }
+
+  /**
+   * Auto-deploy the daemon binary, open a unix-socket Duplex, and run
+   * the framed `auth` + `server.info` handshake. On success
+   * `this.rpcConnection` and `this.daemonDeployer` are populated and
+   * the adapter patch flow can switch to the RPC transport.
+   *
+   * Throws on any step so callers can roll the SFTP session back.
+   */
+  private async startRpcSession(profile: SshProfile, effectivePath: string): Promise<void> {
+    const localBinaryPath = this.locateDaemonBinary();
+    if (!localBinaryPath) {
+      throw new Error(
+        'daemon binary not staged. Run `npm run build:server` (or `build:full`) and reload the plugin.',
+      );
+    }
+
+    const remoteBinaryPath = '.obsidian-remote/server';
+    const remoteSocketPath = profile.rpcSocketPath?.trim() || '.obsidian-remote/server.sock';
+    const remoteTokenPath  = profile.rpcTokenPath?.trim()  || '.obsidian-remote/token';
+
+    logger.info(`startRpcSession: deploying daemon to serve ${effectivePath}`);
+    const deployer = new ServerDeployer(this.client);
+    const deploy = await deployer.deploy({
+      localBinaryPath,
+      remoteBinaryPath,
+      remoteVaultRoot: effectivePath,
+      remoteSocketPath,
+      remoteTokenPath,
+    });
+    this.daemonDeployer = deployer;
+    logger.info(`startRpcSession: daemon up; token len=${deploy.token.length}`);
+
+    const stream = await this.client.openUnixStream(deploy.remoteSocketPath);
+    this.rpcConnection = await establishRpcConnection({ stream, token: deploy.token });
+    logger.info(
+      `startRpcSession: handshake complete; daemon ${this.rpcConnection.info.version} ` +
+      `(protocol v${this.rpcConnection.info.protocolVersion})`,
+    );
   }
 
   /**
@@ -210,6 +277,20 @@ export default class RemoteSshPlugin extends Plugin {
       || this.settings.activeProfileId !== null;
     this.restoreAdapter();
     this.activeRemoteBasePath = null;
+
+    // Close the RPC tunnel before stopping the daemon so the daemon
+    // sees a clean disconnect rather than a half-open socket.
+    if (this.rpcConnection) {
+      try { this.rpcConnection.close(); }
+      catch (e) { logger.warn(`rpcConnection.close: ${(e as Error).message}`); }
+      this.rpcConnection = null;
+    }
+    if (this.daemonDeployer && this.client?.isAlive()) {
+      try { await this.daemonDeployer.stop(); }
+      catch (e) { logger.warn(`daemon stop: ${(e as Error).message}`); }
+    }
+    this.daemonDeployer = null;
+
     if (this.client?.isAlive()) {
       try {
         await this.client.disconnect();
@@ -237,11 +318,14 @@ export default class RemoteSshPlugin extends Plugin {
     const targetAdapter = this.app.vault.adapter as unknown as object;
     this.readCache = new ReadCache();
     this.dirCache = new DirCache();
-    // Wrap the raw SftpClient in the RemoteFsClient adapter so the
-    // adapter itself stays transport-agnostic (Phase 5-D.2). The α
-    // path (RpcRemoteFsClient) will be plugged in here once
-    // SshTunnel lands.
-    const fsClient = new SftpRemoteFsClient(this.client);
+    // Pick the transport that matches the active session: when an
+    // RPC tunnel is up, route everything through the daemon; otherwise
+    // fall back to the direct-SFTP wrapper. The adapter itself is
+    // unaware of the choice — both clients implement RemoteFsClient.
+    const fsClient = this.rpcConnection
+      ? new RpcRemoteFsClient(this.rpcConnection.rpc)
+      : new SftpRemoteFsClient(this.client);
+    const transportLabel = this.rpcConnection ? 'RPC' : 'SFTP';
     this.dataAdapter = new SftpDataAdapter(
       fsClient,
       this.activeRemoteBasePath,
@@ -252,8 +336,8 @@ export default class RemoteSshPlugin extends Plugin {
     this.patcher = new AdapterPatcher(targetAdapter, this.dataAdapter);
     try {
       this.patcher.patch(PATCHED_METHODS as unknown as ReadonlyArray<keyof object & string>);
-      logger.info(`Adapter patched: [${PATCHED_METHODS.join(', ')}]`);
-      new Notice(`Remote SSH: adapter patched (${PATCHED_METHODS.join(', ')})`);
+      logger.info(`Adapter patched via ${transportLabel}: [${PATCHED_METHODS.join(', ')}]`);
+      new Notice(`Remote SSH: adapter patched via ${transportLabel} (${PATCHED_METHODS.length} methods)`);
     } catch (e) {
       logger.error(`Adapter patch failed: ${(e as Error).message}`);
       this.patcher = null;
