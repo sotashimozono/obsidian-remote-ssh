@@ -14,6 +14,7 @@ import { SftpRemoteFsClient } from './adapter/SftpRemoteFsClient';
 import { RpcRemoteFsClient } from './adapter/RpcRemoteFsClient';
 import { establishRpcConnection } from './transport/RpcConnection';
 import { ServerDeployer } from './transport/ServerDeployer';
+import { PathMapper, defaultClientId } from './path/PathMapper';
 import * as fs from 'fs';
 import { StatusBar } from './ui/StatusBar';
 import { ConnectModal } from './ui/ConnectModal';
@@ -326,12 +327,20 @@ export default class RemoteSshPlugin extends Plugin {
       ? new RpcRemoteFsClient(this.rpcConnection.rpc)
       : new SftpRemoteFsClient(this.client);
     const transportLabel = this.rpcConnection ? 'RPC' : 'SFTP';
+    // Per-client path remapping: client-private files like
+    // .obsidian/workspace.json get redirected into a per-client subtree
+    // on the remote so two machines on the same vault don't trample
+    // each other's UI state. Phase 4-J0.
+    const clientId = defaultClientId();
+    const mapper = new PathMapper(clientId);
+    logger.info(`PathMapper: clientId="${clientId}"`);
     this.dataAdapter = new SftpDataAdapter(
       fsClient,
       this.activeRemoteBasePath,
       this.readCache,
       this.dirCache,
       this.app.vault.getName(),
+      mapper,
     );
     this.patcher = new AdapterPatcher(targetAdapter, this.dataAdapter);
     try {

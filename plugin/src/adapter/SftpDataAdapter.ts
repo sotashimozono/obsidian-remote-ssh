@@ -2,6 +2,8 @@ import type { DataWriteOptions, ListedFiles, Stat } from 'obsidian';
 import type { RemoteFsClient } from './RemoteFsClient';
 import type { ReadCache } from '../cache/ReadCache';
 import type { DirCache } from '../cache/DirCache';
+import type { PathMapper } from '../path/PathMapper';
+import type { RemoteEntry } from '../types';
 import { logger } from '../util/logger';
 
 /**
@@ -35,6 +37,14 @@ export class SftpDataAdapter {
     private readCache: ReadCache,
     private dirCache: DirCache,
     private vaultName: string,
+    /**
+     * Optional per-client path remapping. When supplied, paths matching
+     * the mapper's "private" patterns (e.g. `.obsidian/workspace.json`)
+     * are redirected into a per-client subtree on the remote so two
+     * machines on the same vault don't clobber each other's UI state.
+     * Phase 4-J0.
+     */
+    private pathMapper: PathMapper | null = null,
   ) {}
 
   // ─── DataAdapter (read-side) ─────────────────────────────────────────────
@@ -64,21 +74,69 @@ export class SftpDataAdapter {
   }
 
   async list(normalizedPath: string): Promise<ListedFiles> {
-    const remote = this.toRemote(normalizedPath);
-    let entries = this.dirCache.get(remote);
-    if (!entries) {
-      entries = await this.client.list(remote);
-      this.dirCache.put(remote, entries);
+    const plan = this.planList(normalizedPath);
+    const primaryRemote = this.joinRemote(plan.primary);
+
+    let primaryEntries = this.dirCache.get(primaryRemote);
+    if (!primaryEntries) {
+      primaryEntries = await this.client.list(primaryRemote);
+      this.dirCache.put(primaryRemote, primaryEntries);
     }
+    if (plan.hideUserDirName) {
+      primaryEntries = primaryEntries.filter(e => e.name !== plan.hideUserDirName);
+    }
+
+    let userEntries: RemoteEntry[] = [];
+    if (plan.mergeFromUser && plan.userSubtree) {
+      const userRemote = this.joinRemote(plan.userSubtree);
+      let cached = this.dirCache.get(userRemote);
+      if (!cached) {
+        try {
+          cached = await this.client.list(userRemote);
+          this.dirCache.put(userRemote, cached);
+        } catch {
+          // The per-client subtree doesn't exist yet — that's fine on
+          // first connect, no entries to merge.
+          cached = [];
+        }
+      }
+      userEntries = cached;
+    }
+
     const files: string[] = [];
     const folders: string[] = [];
     const prefix = normalizedPath ? normalizedPath + '/' : '';
-    for (const e of entries) {
-      const childPath = prefix + e.name;
-      if (e.isDirectory) folders.push(childPath);
+    const seen = new Set<string>();
+    const emit = (entry: RemoteEntry) => {
+      if (seen.has(entry.name)) return;
+      seen.add(entry.name);
+      const childPath = prefix + entry.name;
+      if (entry.isDirectory) folders.push(childPath);
       else files.push(childPath);
-    }
+    };
+    // The user-subtree entries take precedence — their names always
+    // appear in the merged listing, even if a same-named placeholder
+    // somehow exists in the primary listing.
+    for (const e of userEntries) emit(e);
+    for (const e of primaryEntries) emit(e);
     return { files, folders };
+  }
+
+  /**
+   * Wrapper that lets the test suite see what the path mapper
+   * decided about a given list request without going through a real
+   * RemoteFsClient.
+   */
+  planList(normalizedPath: string): {
+    primary: string;
+    mergeFromUser: boolean;
+    userSubtree?: string;
+    hideUserDirName?: string;
+  } {
+    if (this.pathMapper) {
+      return this.pathMapper.resolveListing(normalizedPath);
+    }
+    return { primary: normalizedPath, mergeFromUser: false };
   }
 
   async read(normalizedPath: string): Promise<string> {
@@ -265,11 +323,28 @@ export class SftpDataAdapter {
     this.dirCache.invalidate(parent);
   }
 
+  /**
+   * Resolve a vault-relative path to the absolute path on the remote.
+   *
+   * If a PathMapper is attached, private vault paths are first
+   * redirected into the per-client subtree (`.obsidian/workspace.json`
+   * → `.obsidian/user/<id>/workspace.json`) so two machines on the
+   * same vault don't trample each other's UI state. The mapped result
+   * is then joined with `remoteBasePath` to form the full path the
+   * `RemoteFsClient` sees.
+   */
   toRemote(normalizedPath: string): string {
-    if (!normalizedPath || normalizedPath === '/') return this.remoteBasePath;
-    if (this.remoteBasePath === '') return normalizedPath;
-    if (this.remoteBasePath === '/') return '/' + normalizedPath;
-    return `${this.remoteBasePath}/${normalizedPath}`;
+    const mapped = this.pathMapper
+      ? this.pathMapper.toRemote(normalizedPath)
+      : normalizedPath;
+    return this.joinRemote(mapped);
+  }
+
+  private joinRemote(vaultRelative: string): string {
+    if (!vaultRelative || vaultRelative === '/') return this.remoteBasePath;
+    if (this.remoteBasePath === '') return vaultRelative;
+    if (this.remoteBasePath === '/') return '/' + vaultRelative;
+    return `${this.remoteBasePath}/${vaultRelative}`;
   }
 }
 
