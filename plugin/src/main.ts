@@ -10,6 +10,7 @@ import { ReadCache } from './cache/ReadCache';
 import { DirCache } from './cache/DirCache';
 import { SftpDataAdapter } from './adapter/SftpDataAdapter';
 import { AdapterPatcher } from './adapter/AdapterPatcher';
+import { SftpRemoteFsClient } from './adapter/SftpRemoteFsClient';
 import { StatusBar } from './ui/StatusBar';
 import { ConnectModal } from './ui/ConnectModal';
 import { SettingsTab } from './settings/SettingsTab';
@@ -226,8 +227,13 @@ export default class RemoteSshPlugin extends Plugin {
     const targetAdapter = this.app.vault.adapter as unknown as object;
     this.readCache = new ReadCache();
     this.dirCache = new DirCache();
+    // Wrap the raw SftpClient in the RemoteFsClient adapter so the
+    // adapter itself stays transport-agnostic (Phase 5-D.2). The α
+    // path (RpcRemoteFsClient) will be plugged in here once
+    // SshTunnel lands.
+    const fsClient = new SftpRemoteFsClient(this.client);
     this.dataAdapter = new SftpDataAdapter(
-      this.client,
+      fsClient,
       this.activeRemoteBasePath,
       this.readCache,
       this.dirCache,
