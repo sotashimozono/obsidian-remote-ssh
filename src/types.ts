@@ -47,3 +47,24 @@ export interface LogLine {
   timestamp: number;
   message: string;
 }
+
+export interface RemoteStat {
+  isDirectory: boolean;
+  isFile: boolean;
+  isSymbolicLink: boolean;
+  /** Modification time in unix milliseconds. */
+  mtime: number;
+  size: number;
+  mode: number;
+}
+
+export interface RemoteEntry {
+  /** Basename only (no slashes). */
+  name: string;
+  isDirectory: boolean;
+  isFile: boolean;
+  isSymbolicLink: boolean;
+  /** Modification time in unix milliseconds. */
+  mtime: number;
+  size: number;
+}
