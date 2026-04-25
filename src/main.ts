@@ -2,7 +2,7 @@ import { Plugin, Notice, FileSystemAdapter } from 'obsidian';
 import type { PluginSettings, SshProfile } from './types';
 import { SyncState } from './types';
 import { DEFAULT_SETTINGS } from './constants';
-import { ConnectionPool } from './ssh/ConnectionPool';
+import { SftpClient } from './ssh/SftpClient';
 import { AuthResolver } from './ssh/AuthResolver';
 import { HostKeyStore } from './ssh/HostKeyStore';
 import { SecretStore } from './ssh/SecretStore';
@@ -19,7 +19,7 @@ export default class RemoteSshPlugin extends Plugin {
   private secretStore  = new SecretStore();
   private authResolver = new AuthResolver(this.secretStore);
   private hostKeyStore = new HostKeyStore();
-  private pool!: ConnectionPool;
+  private client!: SftpClient;
   private statusBar!: StatusBar;
   private state: SyncState = SyncState.IDLE;
 
@@ -30,7 +30,13 @@ export default class RemoteSshPlugin extends Plugin {
     logger.setMaxLines(this.settings.maxLogLines);
     this.installObservability();
 
-    this.pool = new ConnectionPool(this.authResolver, this.hostKeyStore);
+    this.client = new SftpClient(this.authResolver, this.hostKeyStore);
+    this.client.onClose(({ unexpected }) => {
+      if (unexpected) {
+        this.setState(SyncState.ERROR);
+        new Notice('Remote SSH: Connection lost');
+      }
+    });
 
     this.addSettingTab(new SettingsTab(this.app, this));
 
@@ -52,7 +58,6 @@ export default class RemoteSshPlugin extends Plugin {
 
   async onunload() {
     await this.disconnect().catch(() => {});
-    this.pool?.destroyAll();
     this.statusBar?.remove();
     this.uninstallObservability();
   }
@@ -102,13 +107,37 @@ export default class RemoteSshPlugin extends Plugin {
   }
 
   async connectProfile(profile: SshProfile) {
-    // TODO(Phase 4-K): wire up to SftpDataAdapter / AdapterPatcher
-    new Notice(`Remote SSH: connect to ${profile.name} — not implemented yet (Phase 4-K)`);
-    logger.info(`connectProfile(${profile.name}) — adapter wiring is pending`);
+    if (this.client.isAlive()) {
+      new Notice('Remote SSH: Already connected. Disconnect first.');
+      return;
+    }
+    this.setState(SyncState.CONNECTING);
+    try {
+      await this.client.connect(profile);
+      // Smoke test: list the remote vault path so we surface auth/path errors immediately.
+      const entries = await this.client.list(profile.remotePath);
+      logger.info(`Smoke test: list ${profile.remotePath} returned ${entries.length} entries`);
+    } catch (e) {
+      this.setState(SyncState.ERROR);
+      const msg = (e as Error).message;
+      logger.error(`Connect failed: ${msg}`);
+      new Notice(`Remote SSH: Connect failed — ${msg}`);
+      try { await this.client.disconnect(); } catch { /* ignore */ }
+      return;
+    }
+    this.setState(SyncState.CONNECTED);
+    this.settings.activeProfileId = profile.id;
+    await this.saveSettings();
+    new Notice(`Remote SSH: Connected to ${profile.name} (adapter wiring pending — Phase 4-E onward)`);
   }
 
   async disconnect() {
     if (this.state === SyncState.IDLE) return;
+    try {
+      await this.client.disconnect();
+    } catch (e) {
+      logger.warn(`disconnect: ${(e as Error).message}`);
+    }
     this.setState(SyncState.IDLE);
     this.settings.activeProfileId = null;
     await this.saveSettings();
@@ -137,6 +166,8 @@ export default class RemoteSshPlugin extends Plugin {
   private onStatusBarClick() {
     if (this.state === SyncState.IDLE || this.state === SyncState.ERROR) {
       this.promptConnect();
+    } else if (this.state === SyncState.CONNECTED) {
+      this.disconnect();
     }
   }
 }
