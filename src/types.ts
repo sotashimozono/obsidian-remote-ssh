@@ -1,20 +1,10 @@
 export type AuthMethod = 'password' | 'privateKey' | 'agent';
 
-export type ConflictResolution = 'ask' | 'keepLocal' | 'keepRemote';
-
-export type ConflictDecision = 'keepLocal' | 'keepRemote' | 'keepBoth';
-
-export type Tier = 'free' | 'pro';
-
 export enum SyncState {
-  IDLE          = 'idle',
-  CONNECTING    = 'connecting',
-  INITIAL_PULL  = 'initial_pull',
-  WATCHING      = 'watching',
-  SYNCING       = 'syncing',
-  CONFLICTED    = 'conflicted',
-  DISCONNECTING = 'disconnecting',
-  ERROR         = 'error',
+  IDLE       = 'idle',
+  CONNECTING = 'connecting',
+  CONNECTED  = 'connected',
+  ERROR      = 'error',
 }
 
 export interface JumpHostConfig {
@@ -38,16 +28,9 @@ export interface SshProfile {
   passphraseRef?: string;
   agentSocket?: string;
   remotePath: string;
-  localCachePath: string;
   connectTimeoutMs: number;
   keepaliveIntervalMs: number;
   keepaliveCountMax: number;
-  uploadOnSave: boolean;
-  autoSync: boolean;
-  pollIntervalSec: number;
-  followSymlinks: boolean;
-  ignorePatterns: string[];
-  conflictResolution: ConflictResolution;
   hostKeyFingerprint?: string;
   jumpHost?: JumpHostConfig;
 }
@@ -55,42 +38,8 @@ export interface SshProfile {
 export interface PluginSettings {
   profiles: SshProfile[];
   activeProfileId: string | null;
-  licenseKey: string;
   enableDebugLog: boolean;
   maxLogLines: number;
-}
-
-export interface FileEntry {
-  relativePath: string;
-  mtime: number;
-  size: number;
-  isDirectory: boolean;
-}
-
-export interface ChangeSet {
-  toDownload: FileEntry[];
-  toUpload: string[];
-  toDeleteLocal: string[];
-  conflicts: ConflictEntry[];
-}
-
-export interface ConflictEntry {
-  relativePath: string;
-  localMtime: number;
-  remoteMtime: number;
-  localSize: number;
-  remoteSize: number;
-}
-
-export interface TransferJob {
-  direction: 'upload' | 'download' | 'rename';
-  relativePath: string;
-  localAbsPath: string;
-  remoteAbsPath: string;
-  /** Only for direction === 'rename': the old remote path to rename from */
-  remoteSrcPath?: string;
-  priority: number;
-  retryCount: number;
 }
 
 export interface LogLine {

@@ -5,7 +5,6 @@ import { SftpSession } from './SftpSession';
 import { AuthResolver } from './AuthResolver';
 import { HostKeyStore } from './HostKeyStore';
 import { createJumpTunnel } from './JumpHostTunnel';
-import type { LicenseGate } from '../license/LicenseGate';
 import { logger } from '../util/logger';
 import { withRetry } from '../util/retry';
 
@@ -16,17 +15,11 @@ export class ConnectionPool {
   constructor(
     private authResolver: AuthResolver,
     private hostKeyStore: HostKeyStore,
-    private gate: LicenseGate,
   ) {}
 
   async getOrCreate(profile: SshProfile): Promise<SftpSession> {
     const existing = this.sessions.get(profile.id);
     if (existing && existing.isAlive) return existing;
-
-    // Pro gate: jump host requires Pro license
-    if (profile.jumpHost) {
-      this.gate.requirePro('Jump host');
-    }
 
     logger.info(`Connecting to ${profile.host}:${profile.port} as ${profile.username}`);
     const session = await withRetry(
@@ -45,14 +38,9 @@ export class ConnectionPool {
   }
 
   private async connectClient(profile: SshProfile): Promise<Client> {
-    // Pro gate: SSH agent requires Pro license
-    if (profile.authMethod === 'agent') {
-      this.gate.requirePro('SSH agent authentication');
-    }
-
     const authConfig = this.authResolver.buildAuthConfig(profile);
 
-    // Jump host tunnel (Pro): open the channel first, pass as `sock`
+    // Jump host tunnel: open the channel first, pass as `sock`
     let sock: import('stream').Duplex | undefined;
     if (profile.jumpHost) {
       logger.info(`Opening jump tunnel via ${profile.jumpHost.host}`);

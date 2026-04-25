@@ -64,7 +64,6 @@ export class SftpSession {
         const rel = fullPath.slice(remoteDir.length + 1);
         if (filter && !filter(rel)) continue;
 
-        // Resolve symlinks when followSymlinks is enabled (Pro)
         let attrs = entry.attrs;
         if (followSymlinks) {
           try {
