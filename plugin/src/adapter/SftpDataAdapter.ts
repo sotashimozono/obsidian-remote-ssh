@@ -1,27 +1,35 @@
 import type { DataWriteOptions, ListedFiles, Stat } from 'obsidian';
-import type { SftpClient } from '../ssh/SftpClient';
+import type { RemoteFsClient } from './RemoteFsClient';
 import type { ReadCache } from '../cache/ReadCache';
 import type { DirCache } from '../cache/DirCache';
 import { logger } from '../util/logger';
 
 /**
- * Implementation of Obsidian's `DataAdapter` over SFTP.
+ * Implementation of Obsidian's `DataAdapter` over a `RemoteFsClient`.
  *
- * The class is constructed in Phase 4-E, patched onto `app.vault.adapter`
- * in Phase 4-F, and grew its write surface (write/writeBinary/append/
- * process/mkdir/remove/rmdir/rename/copy/trashSystem/trashLocal) in
- * Phase 4-G.
+ * The client can be either the direct-SFTP path (`SftpRemoteFsClient`
+ * wrapping the existing `SftpClient`) or the α path
+ * (`RpcRemoteFsClient` talking to `obsidian-remote-server`). The
+ * adapter itself stays transport-agnostic.
  *
- * `getResourcePath` is intentionally not implemented yet; Phase 4-I will
- * add a localhost HTTP bridge for binary serving.
+ * The class is constructed in Phase 4-E, patched onto
+ * `app.vault.adapter` in Phase 4-F, and grew its write surface
+ * (write/writeBinary/append/process/mkdir/remove/rmdir/rename/copy/
+ * trashSystem/trashLocal) in Phase 4-G. Phase 5-D.2 flips the client
+ * dependency from the concrete `SftpClient` to the narrow
+ * `RemoteFsClient` interface.
  *
- * Path translation is currently a straight join of `remoteBasePath` and
- * the vault-relative `normalizedPath`. The per-client user-cache rewrite
- * (Phase 4-J0 / `PathMapper`) will be inserted at this boundary later.
+ * `getResourcePath` is intentionally not implemented yet; Phase 4-I
+ * will add a localhost HTTP bridge for binary serving.
+ *
+ * Path translation is currently a straight join of `remoteBasePath`
+ * and the vault-relative `normalizedPath`. The per-client user-cache
+ * rewrite (Phase 4-J0 / `PathMapper`) will be inserted at this
+ * boundary later.
  */
 export class SftpDataAdapter {
   constructor(
-    private client: SftpClient,
+    private client: RemoteFsClient,
     /** Normalized remote base path (no trailing slash, no leading "~/"). */
     private remoteBasePath: string,
     private readCache: ReadCache,
