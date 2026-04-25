@@ -11,6 +11,7 @@ import { ConnectModal } from './ui/ConnectModal';
 import { SettingsTab } from './settings/SettingsTab';
 import { logger } from './util/logger';
 import { installErrorHook, uninstallErrorHook } from './util/errorHook';
+import { normalizeRemotePath } from './util/pathUtils';
 import * as path from 'path';
 
 export default class RemoteSshPlugin extends Plugin {
@@ -112,11 +113,15 @@ export default class RemoteSshPlugin extends Plugin {
       return;
     }
     this.setState(SyncState.CONNECTING);
+    const effectivePath = normalizeRemotePath(profile.remotePath);
+    if (effectivePath !== profile.remotePath) {
+      logger.info(`remotePath normalized: "${profile.remotePath}" → "${effectivePath}"`);
+    }
     try {
       await this.client.connect(profile);
       // Smoke test: list the remote vault path so we surface auth/path errors immediately.
-      const entries = await this.client.list(profile.remotePath);
-      logger.info(`Smoke test: list ${profile.remotePath} returned ${entries.length} entries`);
+      const entries = await this.client.list(effectivePath);
+      logger.info(`Smoke test: list ${effectivePath} returned ${entries.length} entries`);
     } catch (e) {
       this.setState(SyncState.ERROR);
       const msg = (e as Error).message;
