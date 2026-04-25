@@ -18,7 +18,16 @@ import { installErrorHook, uninstallErrorHook } from './util/errorHook';
 import { normalizeRemotePath } from './util/pathUtils';
 import * as path from 'path';
 
-const PATCHED_METHODS = ['exists', 'stat', 'list', 'read', 'readBinary', 'getName'] as const;
+const PATCHED_METHODS = [
+  // read-side
+  'getName', 'exists', 'stat', 'list', 'read', 'readBinary',
+  // write-side
+  'write', 'writeBinary', 'append', 'appendBinary', 'process',
+  // fs ops
+  'mkdir', 'remove', 'rmdir', 'rename', 'copy',
+  // trash
+  'trashSystem', 'trashLocal',
+] as const;
 
 export default class RemoteSshPlugin extends Plugin {
   settings: PluginSettings = DEFAULT_SETTINGS;
