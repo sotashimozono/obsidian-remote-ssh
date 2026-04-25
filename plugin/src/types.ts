@@ -33,6 +33,21 @@ export interface SshProfile {
   keepaliveCountMax: number;
   hostKeyFingerprint?: string;
   jumpHost?: JumpHostConfig;
+
+  /**
+   * α-path daemon socket on the remote host
+   * (e.g. `~/.obsidian-remote/server.sock`). When unset, the plugin's
+   * RPC debug command cannot run and the adapter stays on the direct
+   * SFTP path. Auto-populated by the upcoming server auto-deploy
+   * phase; for now the user fills it in by hand after starting
+   * `obsidian-remote-server` on the remote.
+   */
+  rpcSocketPath?: string;
+  /**
+   * Path on the remote host holding the session token the daemon
+   * writes at startup (default `~/.obsidian-remote/token`).
+   */
+  rpcTokenPath?: string;
 }
 
 export interface PluginSettings {

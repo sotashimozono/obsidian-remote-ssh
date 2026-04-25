@@ -92,6 +92,28 @@ export class ProfileForm extends Modal {
       .addText(t => t.setPlaceholder('/home/user/vault').setValue(this.profile.remotePath)
         .onChange(v => { this.profile.remotePath = v; }));
 
+    contentEl.createEl('h3', { text: 'Remote daemon (experimental)' });
+    contentEl.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'Optional: when obsidian-remote-server is running on the remote, fill these in to enable ' +
+        'the "Debug: test RPC tunnel" command. Auto-deploy of the binary lands in a later phase.',
+    });
+
+    new Setting(contentEl)
+      .setName('Daemon socket path')
+      .setDesc('e.g. .obsidian-remote/server.sock (home-relative is fine)')
+      .addText(t => t.setPlaceholder('.obsidian-remote/server.sock')
+        .setValue(this.profile.rpcSocketPath ?? '')
+        .onChange(v => { this.profile.rpcSocketPath = v.trim() || undefined; }));
+
+    new Setting(contentEl)
+      .setName('Daemon token path')
+      .setDesc('Default: .obsidian-remote/token (home-relative)')
+      .addText(t => t.setPlaceholder('.obsidian-remote/token')
+        .setValue(this.profile.rpcTokenPath ?? '')
+        .onChange(v => { this.profile.rpcTokenPath = v.trim() || undefined; }));
+
     const footer = contentEl.createDiv('conflict-footer');
     footer.createEl('button', { text: 'Cancel' }).onclick = () => this.close();
     footer.createEl('button', { text: 'Save', cls: 'mod-cta' }).onclick = () => {

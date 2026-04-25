@@ -11,6 +11,8 @@ import { DirCache } from './cache/DirCache';
 import { SftpDataAdapter } from './adapter/SftpDataAdapter';
 import { AdapterPatcher } from './adapter/AdapterPatcher';
 import { SftpRemoteFsClient } from './adapter/SftpRemoteFsClient';
+import { RpcRemoteFsClient } from './adapter/RpcRemoteFsClient';
+import { establishRpcConnection } from './transport/RpcConnection';
 import { StatusBar } from './ui/StatusBar';
 import { ConnectModal } from './ui/ConnectModal';
 import { SettingsTab } from './settings/SettingsTab';
@@ -95,6 +97,12 @@ export default class RemoteSshPlugin extends Plugin {
       id: 'debug-list-root',
       name: 'Debug: list vault root via current adapter',
       callback: () => this.debugListRoot(),
+    });
+
+    this.addCommand({
+      id: 'debug-test-rpc-tunnel',
+      name: 'Debug: test RPC tunnel against obsidian-remote-server',
+      callback: () => this.debugTestRpcTunnel(),
     });
   }
 
@@ -289,6 +297,67 @@ export default class RemoteSshPlugin extends Plugin {
     } catch (e) {
       logger.error(`debugListRoot failed: ${(e as Error).message}`);
       new Notice(`debugListRoot failed: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * Round-trips a JSON-RPC session against `obsidian-remote-server` running
+   * on the remote: reads the daemon's token via SFTP, opens a Duplex through
+   * the same SSH connection, runs the framed `auth` + `server.info`
+   * handshake, then lists the configured remote vault root via the new
+   * `RpcRemoteFsClient`. Logs every step so the daemon and plugin can be
+   * debugged together from `console.log`.
+   *
+   * Pre-requisites that the user has to set up by hand for now (auto-deploy
+   * lands in a later phase): start `obsidian-remote-server --vault-root=…`
+   * on the remote, then fill in `rpcSocketPath` and (optionally)
+   * `rpcTokenPath` on the active profile.
+   */
+  private async debugTestRpcTunnel(): Promise<void> {
+    if (this.state !== SyncState.CONNECTED || !this.client.isAlive()) {
+      new Notice('Remote SSH: connect first (the RPC tunnel rides the SFTP session)');
+      return;
+    }
+    const activeId = this.settings.activeProfileId;
+    const profile = this.settings.profiles.find(p => p.id === activeId);
+    if (!profile) {
+      new Notice('Remote SSH: no active profile');
+      return;
+    }
+    const socketPath = profile.rpcSocketPath?.trim();
+    if (!socketPath) {
+      new Notice('Remote SSH: profile.rpcSocketPath is empty (set it in Settings)');
+      return;
+    }
+    const tokenPath = profile.rpcTokenPath?.trim() || '.obsidian-remote/token';
+
+    logger.info(`debugTestRpcTunnel: token <- ${tokenPath}, socket -> ${socketPath}`);
+    let connection: Awaited<ReturnType<typeof establishRpcConnection>> | null = null;
+    try {
+      const tokenBuf = await this.client.readRemoteFile(tokenPath);
+      const token = tokenBuf.toString('utf8').trim();
+      if (!token) throw new Error(`token file at ${tokenPath} is empty`);
+
+      const stream = await this.client.openUnixStream(socketPath);
+      connection = await establishRpcConnection({ stream, token });
+
+      const fs = new RpcRemoteFsClient(connection.rpc);
+      const effectiveRoot = this.activeRemoteBasePath ?? '';
+      const entries = await fs.list(effectiveRoot);
+      logger.info(`debugTestRpcTunnel: list("${effectiveRoot}") returned ${entries.length} entries`);
+      for (const e of entries.slice(0, 5)) {
+        logger.info(`  - ${e.name} (${e.isDirectory ? 'dir' : 'file'}, ${e.size}B, mtime ${e.mtime})`);
+      }
+      new Notice(
+        `RPC OK: daemon ${connection.info.version}, ${entries.length} entries at "${effectiveRoot}" ` +
+        `(see console.log)`,
+      );
+    } catch (e) {
+      const msg = (e as Error).message;
+      logger.error(`debugTestRpcTunnel failed: ${msg}`);
+      new Notice(`RPC test failed: ${msg}`);
+    } finally {
+      try { connection?.close(); } catch { /* ignore */ }
     }
   }
 
