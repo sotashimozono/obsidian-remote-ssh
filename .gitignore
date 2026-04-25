@@ -4,3 +4,4 @@ main.js
 .DS_Store
 coverage/
 cdp-console.log
+plugin/server-bin/

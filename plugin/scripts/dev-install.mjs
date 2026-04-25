@@ -53,5 +53,24 @@ for (const f of files) {
   console.log(`copied ${f} -> ${dst}`);
 }
 
+// Stage the obsidian-remote-server binaries (if any) so the plugin
+// can ship one to the remote at connect time. Built by
+// `npm run build:server`; missing means "no auto-deploy this run",
+// not an error.
+const serverBinDir = path.join(pluginRoot, 'server-bin');
+if (fs.existsSync(serverBinDir)) {
+  const binTarget = path.join(targetDir, 'server-bin');
+  fs.mkdirSync(binTarget, { recursive: true });
+  for (const f of fs.readdirSync(serverBinDir)) {
+    const src = path.join(serverBinDir, f);
+    if (!fs.statSync(src).isFile()) continue;
+    const dst = path.join(binTarget, f);
+    fs.copyFileSync(src, dst);
+    console.log(`copied server-bin/${f} -> ${dst}`);
+  }
+} else {
+  console.log('server-bin/ not present — skipping daemon staging (run `npm run build:server` to build it)');
+}
+
 console.log(`\nplugin '${manifest.id}' v${manifest.version} installed to ${targetDir}`);
 console.log('Reload the plugin in Obsidian (Settings → Community plugins → toggle off/on).');

@@ -8,6 +8,8 @@
     "build": "node esbuild.config.mjs production",
     "dev:install": "node scripts/dev-install.mjs",
     "build:install": "node esbuild.config.mjs production && node scripts/dev-install.mjs",
+    "build:server": "node scripts/build-server.mjs",
+    "build:full": "node scripts/build-server.mjs && node esbuild.config.mjs production && node scripts/dev-install.mjs",
     "cdp:tail": "node scripts/cdp-tail.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

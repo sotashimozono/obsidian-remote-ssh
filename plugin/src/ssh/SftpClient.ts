@@ -152,6 +152,41 @@ export class SftpClient {
     });
   }
 
+  /**
+   * Upload a local file to the remote via SFTP, like scp. Used by the
+   * auto-deploy flow to ship `obsidian-remote-server` on connect. The
+   * destination directory must already exist; create it via `exec`
+   * first if you can't be sure.
+   */
+  async uploadFile(localPath: string, remotePath: string): Promise<void> {
+    const sftp = this.requireSftp();
+    return new Promise((resolve, reject) => {
+      sftp.fastPut(localPath, remotePath, { concurrency: 4 }, err => err ? reject(err) : resolve());
+    });
+  }
+
+  /**
+   * Run a one-shot command on the remote and collect its stdout, stderr,
+   * and exit code. Long-running streams (interactive shells, the daemon
+   * process itself) should not go through here — they'd never close.
+   */
+  async exec(cmd: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    const client = this.requireClient();
+    return new Promise((resolve, reject) => {
+      client.exec(cmd, (err, stream) => {
+        if (err) { reject(err); return; }
+        let stdout = '';
+        let stderr = '';
+        let exitCode = -1;
+        stream.on('data', (d: Buffer) => { stdout += d.toString('utf8'); });
+        stream.stderr.on('data', (d: Buffer) => { stderr += d.toString('utf8'); });
+        stream.on('exit', (code: number) => { exitCode = code; });
+        stream.on('close', () => resolve({ stdout, stderr, exitCode }));
+        stream.on('error', (e: Error) => reject(e));
+      });
+    });
+  }
+
   async disconnect(): Promise<void> {
     this.intentionalDisconnect = true;
     const client = this.client;

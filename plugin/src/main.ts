@@ -13,6 +13,8 @@ import { AdapterPatcher } from './adapter/AdapterPatcher';
 import { SftpRemoteFsClient } from './adapter/SftpRemoteFsClient';
 import { RpcRemoteFsClient } from './adapter/RpcRemoteFsClient';
 import { establishRpcConnection } from './transport/RpcConnection';
+import { ServerDeployer } from './transport/ServerDeployer';
+import * as fs from 'fs';
 import { StatusBar } from './ui/StatusBar';
 import { ConnectModal } from './ui/ConnectModal';
 import { SettingsTab } from './settings/SettingsTab';
@@ -301,17 +303,19 @@ export default class RemoteSshPlugin extends Plugin {
   }
 
   /**
-   * Round-trips a JSON-RPC session against `obsidian-remote-server` running
-   * on the remote: reads the daemon's token via SFTP, opens a Duplex through
-   * the same SSH connection, runs the framed `auth` + `server.info`
-   * handshake, then lists the configured remote vault root via the new
-   * `RpcRemoteFsClient`. Logs every step so the daemon and plugin can be
-   * debugged together from `console.log`.
+   * Full α-path round-trip with auto-deploy:
+   *   1. Locate the staged daemon binary inside the plugin folder.
+   *   2. Upload it over the existing SFTP session, kill any prior
+   *      daemon, start the new one with `nohup`, wait for the token
+   *      to land on disk.
+   *   3. Open a unix-socket Duplex through the same SSH connection.
+   *   4. Run `auth` + `server.info`.
+   *   5. Smoke-list `activeRemoteBasePath` via `RpcRemoteFsClient`.
    *
-   * Pre-requisites that the user has to set up by hand for now (auto-deploy
-   * lands in a later phase): start `obsidian-remote-server --vault-root=…`
-   * on the remote, then fill in `rpcSocketPath` and (optionally)
-   * `rpcTokenPath` on the active profile.
+   * Each step logs to `console.log` so the daemon and plugin can be
+   * debugged in tandem. Optional overrides on the active profile
+   * (`rpcSocketPath`, `rpcTokenPath`) are honoured; both default to
+   * `.obsidian-remote/{server.sock,token}` (home-relative).
    */
   private async debugTestRpcTunnel(): Promise<void> {
     if (this.state !== SyncState.CONNECTED || !this.client.isAlive()) {
@@ -324,32 +328,48 @@ export default class RemoteSshPlugin extends Plugin {
       new Notice('Remote SSH: no active profile');
       return;
     }
-    const socketPath = profile.rpcSocketPath?.trim();
-    if (!socketPath) {
-      new Notice('Remote SSH: profile.rpcSocketPath is empty (set it in Settings)');
+
+    const localBinaryPath = this.locateDaemonBinary();
+    if (!localBinaryPath) {
+      new Notice(
+        'Remote SSH: daemon binary not staged. ' +
+        'Run `npm run build:server` (or `build:full`) and reload the plugin.',
+      );
       return;
     }
-    const tokenPath = profile.rpcTokenPath?.trim() || '.obsidian-remote/token';
 
-    logger.info(`debugTestRpcTunnel: token <- ${tokenPath}, socket -> ${socketPath}`);
+    const remoteVaultRoot = normalizeRemotePath(profile.remotePath);
+    const remoteBinaryPath = '.obsidian-remote/server';
+    const remoteSocketPath = profile.rpcSocketPath?.trim() || '.obsidian-remote/server.sock';
+    const remoteTokenPath  = profile.rpcTokenPath?.trim()  || '.obsidian-remote/token';
+
+    logger.info(`debugTestRpcTunnel: local binary = ${localBinaryPath}`);
+    logger.info(`debugTestRpcTunnel: remote vault = ${remoteVaultRoot}`);
+    logger.info(`debugTestRpcTunnel: remote socket = ${remoteSocketPath}`);
+
     let connection: Awaited<ReturnType<typeof establishRpcConnection>> | null = null;
     try {
-      const tokenBuf = await this.client.readRemoteFile(tokenPath);
-      const token = tokenBuf.toString('utf8').trim();
-      if (!token) throw new Error(`token file at ${tokenPath} is empty`);
+      const deployer = new ServerDeployer(this.client);
+      const deploy = await deployer.deploy({
+        localBinaryPath,
+        remoteBinaryPath,
+        remoteVaultRoot,
+        remoteSocketPath,
+        remoteTokenPath,
+      });
+      logger.info(`debugTestRpcTunnel: daemon up; token len=${deploy.token.length}`);
 
-      const stream = await this.client.openUnixStream(socketPath);
-      connection = await establishRpcConnection({ stream, token });
+      const stream = await this.client.openUnixStream(deploy.remoteSocketPath);
+      connection = await establishRpcConnection({ stream, token: deploy.token });
 
-      const fs = new RpcRemoteFsClient(connection.rpc);
-      const effectiveRoot = this.activeRemoteBasePath ?? '';
-      const entries = await fs.list(effectiveRoot);
-      logger.info(`debugTestRpcTunnel: list("${effectiveRoot}") returned ${entries.length} entries`);
+      const rpcFs = new RpcRemoteFsClient(connection.rpc);
+      const entries = await rpcFs.list(remoteVaultRoot);
+      logger.info(`debugTestRpcTunnel: list("${remoteVaultRoot}") returned ${entries.length} entries`);
       for (const e of entries.slice(0, 5)) {
         logger.info(`  - ${e.name} (${e.isDirectory ? 'dir' : 'file'}, ${e.size}B, mtime ${e.mtime})`);
       }
       new Notice(
-        `RPC OK: daemon ${connection.info.version}, ${entries.length} entries at "${effectiveRoot}" ` +
+        `RPC OK: daemon ${connection.info.version}, ${entries.length} entries at "${remoteVaultRoot}" ` +
         `(see console.log)`,
       );
     } catch (e) {
@@ -359,6 +379,24 @@ export default class RemoteSshPlugin extends Plugin {
     } finally {
       try { connection?.close(); } catch { /* ignore */ }
     }
+  }
+
+  /**
+   * Resolve the staged Linux/amd64 daemon binary that lives next to
+   * `main.js` in the plugin's vault folder. Returns the absolute path
+   * or `null` if the binary hasn't been built (run `npm run
+   * build:server` to populate it). Other architectures land in
+   * follow-up phases.
+   */
+  private locateDaemonBinary(): string | null {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) return null;
+    const candidate = path.join(
+      adapter.getBasePath(),
+      '.obsidian', 'plugins', this.manifest.id,
+      'server-bin', 'obsidian-remote-server-linux-amd64',
+    );
+    return fs.existsSync(candidate) ? candidate : null;
   }
 
   isConnected(): boolean {
