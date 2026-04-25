@@ -5,13 +5,23 @@ Shared JSON-RPC protocol between the obsidian-remote-ssh plugin
 
 ## Transport
 
-- JSON-RPC 2.0 messages over a single WebSocket frame per message.
-- The WebSocket rides an SSH-forwarded local TCP port → remote unix
-  socket. The plugin opens the SSH session using its existing
-  credentials; nothing here is exposed to the network.
-- Text frames only. Binary payloads (file bytes) are base64-encoded
-  inside the JSON body. MVP trade-off: +33% wire overhead for a much
-  simpler client.
+- **Length-prefixed JSON messages** (LSP-style framing) over a unix
+  socket. One message per frame; no WebSocket or HTTP on this channel.
+    ```
+    Content-Length: <bytes>\r\n
+    \r\n
+    <JSON body>
+    ```
+- The plugin opens a local TCP connection that SSH forwards to the
+  daemon's unix socket (`ssh -L <port>:<sockpath> …`). Nothing is
+  exposed to the network.
+- The framing handles multi-MB payloads cleanly and lets both sides
+  reject oversized messages up front (future limit, configurable).
+- Binary payloads (file bytes) are base64-encoded inside the JSON
+  body. MVP trade-off: +33% wire overhead for a much simpler client.
+  Attachment serving for `getResourcePath` lives on a separate HTTP
+  channel on a second forwarded port (Phase 5-F); this channel is
+  always framed JSON.
 
 ## Handshake
 
