@@ -3,8 +3,10 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"syscall"
 
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/proto"
@@ -100,4 +102,75 @@ func isIsDirectoryErr(err error) bool {
 		return errno == syscall.EISDIR
 	}
 	return false
+}
+
+// writeFilePerm is the mode used for newly-written files. Matches the
+// default Obsidian produces on desktop (umask-applied 0644).
+const writeFilePerm = 0o644
+
+// atomicWriteFile writes data to abs via a sibling tmp file + rename,
+// so a crashed or partial write never leaves the destination in a
+// half-written state. Parent directories are created as needed.
+//
+// If expectedMtime is non-zero, the existing file (when present) must
+// have exactly that mtime in unix milliseconds, otherwise the function
+// returns PreconditionFailed without touching disk. A target that
+// does not exist at all is accepted unconditionally, even when
+// expectedMtime is set — this matches the Obsidian semantics of
+// "write the file, asserting it didn't change out from under me".
+//
+// The returned int64 is the post-write mtime in unix milliseconds.
+// relativePath is used solely to tag error messages with a path the
+// client recognises.
+func atomicWriteFile(abs, relativePath string, data []byte, expectedMtime int64) (int64, *rpc.Error) {
+	if expectedMtime != 0 {
+		if info, err := os.Stat(abs); err == nil {
+			got := info.ModTime().UnixMilli()
+			if got != expectedMtime {
+				return 0, rpc.ErrPreconditionFailed(
+					fmt.Sprintf("%s: expected mtime %d, found %d", relativePath, expectedMtime, got),
+				)
+			}
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return 0, mapFsError(err, relativePath)
+		}
+	}
+
+	parent := filepath.Dir(abs)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return 0, mapFsError(err, relativePath)
+	}
+
+	tmp, err := os.CreateTemp(parent, ".rsh-write-*.tmp")
+	if err != nil {
+		return 0, mapFsError(err, relativePath)
+	}
+	tmpPath := tmp.Name()
+	// Best-effort cleanup in every non-success path below.
+	cleanup := func() { _ = os.Remove(tmpPath) }
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return 0, mapFsError(err, relativePath)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return 0, mapFsError(err, relativePath)
+	}
+	if err := os.Chmod(tmpPath, writeFilePerm); err != nil {
+		// Non-fatal on platforms that don't fully support chmod (e.g.
+		// some Windows filesystems): keep going.
+		_ = err
+	}
+	if err := os.Rename(tmpPath, abs); err != nil {
+		cleanup()
+		return 0, mapFsError(err, relativePath)
+	}
+
+	info, err := os.Stat(abs)
+	if err != nil {
+		return 0, mapFsError(err, relativePath)
+	}
+	return info.ModTime().UnixMilli(), nil
 }
