@@ -15,6 +15,8 @@ import { RpcRemoteFsClient } from './adapter/RpcRemoteFsClient';
 import { establishRpcConnection } from './transport/RpcConnection';
 import { ServerDeployer } from './transport/ServerDeployer';
 import { PathMapper, defaultClientId } from './path/PathMapper';
+import { interpretWatchEvent } from './path/WatchEventFilter';
+import type { FsChangedParams } from './proto/types';
 import * as fs from 'fs';
 import { StatusBar } from './ui/StatusBar';
 import { ConnectModal } from './ui/ConnectModal';
@@ -53,6 +55,12 @@ export default class RemoteSshPlugin extends Plugin {
   private rpcConnection: Awaited<ReturnType<typeof establishRpcConnection>> | null = null;
   /** ServerDeployer that owns the daemon process; invoked on disconnect to tear it down. */
   private daemonDeployer: ServerDeployer | null = null;
+  /** Active daemon-side fs.watch subscription id (set after debugPatchAdapter). */
+  private rpcWatchSubscriptionId: string | null = null;
+  /** Disposer returned by RpcClient.onNotification('fs.changed', ...). */
+  private rpcWatchHandlerDisposer: (() => void) | null = null;
+  /** PathMapper used by the active patched adapter; needed to interpret fs.changed paths. */
+  private activePathMapper: PathMapper | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -345,6 +353,7 @@ export default class RemoteSshPlugin extends Plugin {
     this.patcher = new AdapterPatcher(targetAdapter, this.dataAdapter);
     try {
       this.patcher.patch(PATCHED_METHODS as unknown as ReadonlyArray<keyof object & string>);
+      this.activePathMapper = mapper;
       logger.info(`Adapter patched via ${transportLabel}: [${PATCHED_METHODS.join(', ')}]`);
       new Notice(`Remote SSH: adapter patched via ${transportLabel} (${PATCHED_METHODS.length} methods)`);
     } catch (e) {
@@ -354,6 +363,91 @@ export default class RemoteSshPlugin extends Plugin {
       this.readCache = null;
       this.dirCache = null;
       new Notice(`Adapter patch failed: ${(e as Error).message}`);
+      return;
+    }
+
+    // Live-update subscription is only meaningful on the RPC transport;
+    // the SFTP fallback has no notification channel.
+    if (this.rpcConnection) {
+      void this.subscribeToFsChanged();
+    }
+  }
+
+  /**
+   * Register an `fs.changed` notification handler and ask the daemon to
+   * watch the entire vault. Failure here is non-fatal: the adapter
+   * still works, the only loss is auto-refresh on remote-side edits.
+   */
+  private async subscribeToFsChanged(): Promise<void> {
+    if (!this.rpcConnection) return;
+    if (this.rpcWatchSubscriptionId) return;
+
+    const rpc = this.rpcConnection.rpc;
+    // Register the notification handler *before* sending fs.watch so we
+    // can't miss the very first event the daemon emits.
+    const handler = (params: FsChangedParams) => this.handleFsChanged(params);
+    this.rpcWatchHandlerDisposer = rpc.onNotification('fs.changed', handler);
+
+    try {
+      const result = await rpc.call('fs.watch', { path: '', recursive: true });
+      this.rpcWatchSubscriptionId = result.subscriptionId;
+      logger.info(`fs.watch subscribed: ${this.rpcWatchSubscriptionId}`);
+    } catch (e) {
+      logger.error(`fs.watch failed: ${(e as Error).message}`);
+      this.rpcWatchHandlerDisposer?.();
+      this.rpcWatchHandlerDisposer = null;
+    }
+  }
+
+  /**
+   * Translate a daemon-pushed `fs.changed` notification into a cache
+   * invalidation + (when the file is already known to the vault) a
+   * vault-level event so open editors and plugins re-read.
+   */
+  private handleFsChanged(params: FsChangedParams): void {
+    if (!this.dataAdapter) return;
+    if (this.rpcWatchSubscriptionId && params.subscriptionId !== this.rpcWatchSubscriptionId) {
+      return;
+    }
+
+    const action = interpretWatchEvent(params.path, this.activePathMapper);
+    if (!action) return;
+
+    this.dataAdapter.invalidateRemotePath(action.remotePath);
+
+    const eventName = mapFsChangeToVaultEvent(params.event);
+    if (!eventName) return;
+
+    const file = this.app.vault.getAbstractFileByPath(action.vaultPath);
+    if (!file) return;
+    // Vault.trigger is inherited from Events; dispatching the same
+    // events Obsidian's own scanner would dispatch lets editors and
+    // plugins react to remote-side edits without us having to reach
+    // into private internals.
+    (this.app.vault as unknown as { trigger: (name: string, ...args: unknown[]) => void })
+      .trigger(eventName, file);
+  }
+
+  /**
+   * Drop the daemon-side subscription and the local notification
+   * handler. Safe to call when nothing was subscribed (the patch
+   * never ran, the RPC tunnel was never established, etc.).
+   */
+  private unsubscribeFromFsChanged(): void {
+    const id = this.rpcWatchSubscriptionId;
+    this.rpcWatchSubscriptionId = null;
+    this.activePathMapper = null;
+
+    if (id && this.rpcConnection) {
+      // Best-effort: if the daemon-side subscription is already gone
+      // (process restart, connection drop) the call will reject and
+      // we just log it.
+      this.rpcConnection.rpc.call('fs.unwatch', { subscriptionId: id })
+        .catch(e => logger.warn(`fs.unwatch failed: ${(e as Error).message}`));
+    }
+    if (this.rpcWatchHandlerDisposer) {
+      this.rpcWatchHandlerDisposer();
+      this.rpcWatchHandlerDisposer = null;
     }
   }
 
@@ -367,6 +461,10 @@ export default class RemoteSshPlugin extends Plugin {
   }
 
   private restoreAdapter(): void {
+    // Drop the watch subscription before tearing the adapter down so
+    // any in-flight fs.changed callbacks find a still-valid adapter
+    // (or, if the handler races, a null `dataAdapter` which it tolerates).
+    this.unsubscribeFromFsChanged();
     if (this.patcher?.isPatched()) {
       try {
         this.patcher.restore();
@@ -521,5 +619,23 @@ export default class RemoteSshPlugin extends Plugin {
     } else if (this.state === SyncState.CONNECTED) {
       this.disconnect();
     }
+  }
+}
+
+/**
+ * Map the daemon's `fs.changed` event names onto Obsidian's vault
+ * event names. Returns `null` for events we don't surface — `renamed`
+ * needs both old and new paths and the cache invalidation already
+ * happened, so dispatching a partial event would just confuse plugins.
+ */
+function mapFsChangeToVaultEvent(
+  e: FsChangedParams['event'],
+): 'create' | 'modify' | 'delete' | null {
+  switch (e) {
+    case 'created':  return 'create';
+    case 'modified': return 'modify';
+    case 'deleted':  return 'delete';
+    case 'renamed':  return null;
+    default:         return null;
   }
 }
