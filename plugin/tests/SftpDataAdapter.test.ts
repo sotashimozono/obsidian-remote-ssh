@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SftpDataAdapter } from '../src/adapter/SftpDataAdapter';
 import { ReadCache } from '../src/cache/ReadCache';
 import { DirCache } from '../src/cache/DirCache';
+import { PathMapper } from '../src/path/PathMapper';
 import type { RemoteEntry, RemoteStat } from '../src/types';
 
 /** Minimal stand-in for SftpClient covering both read- and write-side calls. */
@@ -491,6 +492,117 @@ describe('SftpDataAdapter (read-side)', () => {
       await adapter.trashLocal('note.md');
       expect('/v/note.md' in fake.files).toBe(false);
       expect(fake.files['/v/.trash/note.md'].data.toString('utf8')).toBe('bye');
+    });
+  });
+
+  // ─── PathMapper integration ───────────────────────────────────────────────
+  //
+  // These tests confirm that when an adapter is constructed with a
+  // PathMapper, vault-relative reads/writes/lists for client-private
+  // paths land in the per-client subtree on the remote, while ordinary
+  // vault content (and shared `.obsidian/*` files) go to their nominal
+  // locations unchanged.
+
+  describe('with PathMapper', () => {
+    it('redirects writes for private vault paths into .obsidian/user/<id>/', async () => {
+      const fake = makeFakeClient({ dirs: { '/v': [] } });
+      const adapter = new SftpDataAdapter(
+        fake.client, '/v', readCache, dirCache, 'v', new PathMapper('host-a'),
+      );
+
+      await adapter.write('.obsidian/workspace.json', '{"open":[]}');
+      // The remote sees the per-client subtree, not the bare path.
+      expect('/v/.obsidian/workspace.json' in fake.files).toBe(false);
+      expect(fake.files['/v/.obsidian/user/host-a/workspace.json'].data.toString('utf8'))
+        .toBe('{"open":[]}');
+    });
+
+    it('reads private paths from the per-client subtree', async () => {
+      const fake = makeFakeClient({
+        files: {
+          '/v/.obsidian/user/host-a/workspace.json': { data: Buffer.from('{"a":1}'), mtime: 1 },
+        },
+        dirs: { '/v': [], '/v/.obsidian': [], '/v/.obsidian/user': [], '/v/.obsidian/user/host-a': [] },
+      });
+      const adapter = new SftpDataAdapter(
+        fake.client, '/v', readCache, dirCache, 'v', new PathMapper('host-a'),
+      );
+
+      await expect(adapter.read('.obsidian/workspace.json')).resolves.toBe('{"a":1}');
+    });
+
+    it('passes non-private paths through to their nominal remote locations', async () => {
+      const fake = makeFakeClient({ dirs: { '/v': [] } });
+      const adapter = new SftpDataAdapter(
+        fake.client, '/v', readCache, dirCache, 'v', new PathMapper('host-a'),
+      );
+
+      await adapter.write('Notes/foo.md', '# Hello');
+      expect(fake.files['/v/Notes/foo.md'].data.toString('utf8')).toBe('# Hello');
+      // Definitely not redirected.
+      expect(Object.keys(fake.files).some(k => k.includes('user/host-a/Notes'))).toBe(false);
+    });
+
+    it('list(".obsidian") merges shared and per-client entries, hiding the user/ dir', async () => {
+      const fake = makeFakeClient({
+        files: {
+          '/v/.obsidian/hotkeys.json': { data: Buffer.from('{}'), mtime: 1 },
+          '/v/.obsidian/user/host-a/workspace.json': { data: Buffer.from('{}'), mtime: 1 },
+        },
+        dirs: {
+          '/v': [],
+          // Shared .obsidian (hotkeys.json + a plugins dir + the user-subtree dir)
+          '/v/.obsidian': [
+            { name: 'hotkeys.json', isFile: true, isDirectory: false, isSymbolicLink: false, mtime: 1, size: 2 },
+            { name: 'plugins',      isFile: false, isDirectory: true, isSymbolicLink: false, mtime: 1, size: 0 },
+            { name: 'user',         isFile: false, isDirectory: true, isSymbolicLink: false, mtime: 1, size: 0 },
+          ],
+          '/v/.obsidian/plugins': [],
+          '/v/.obsidian/user': [
+            { name: 'host-a', isFile: false, isDirectory: true, isSymbolicLink: false, mtime: 1, size: 0 },
+          ],
+          '/v/.obsidian/user/host-a': [
+            { name: 'workspace.json', isFile: true, isDirectory: false, isSymbolicLink: false, mtime: 1, size: 2 },
+          ],
+        },
+      });
+      const adapter = new SftpDataAdapter(
+        fake.client, '/v', readCache, dirCache, 'v', new PathMapper('host-a'),
+      );
+
+      const out = await adapter.list('.obsidian');
+      // The `user/` directory is hidden; both private and shared
+      // children appear under their nominal `.obsidian/...` paths.
+      expect(out.folders.sort()).toEqual(['.obsidian/plugins']);
+      expect(out.files.sort()).toEqual(['.obsidian/hotkeys.json', '.obsidian/workspace.json']);
+    });
+
+    it('list of a fully-private directory walks the per-client subtree', async () => {
+      const fake = makeFakeClient({
+        dirs: {
+          '/v': [],
+          '/v/.obsidian/user/host-a/cache': [
+            { name: 'index.bin', isFile: true, isDirectory: false, isSymbolicLink: false, mtime: 1, size: 0 },
+          ],
+        },
+      });
+      const adapter = new SftpDataAdapter(
+        fake.client, '/v', readCache, dirCache, 'v', new PathMapper('host-a'),
+      );
+
+      const out = await adapter.list('.obsidian/cache');
+      expect(out.files).toEqual(['.obsidian/cache/index.bin']);
+      expect(out.folders).toEqual([]);
+    });
+
+    it('toRemote on a private path returns the per-client absolute path', () => {
+      const fake = makeFakeClient();
+      const adapter = new SftpDataAdapter(
+        fake.client, '/v', readCache, dirCache, 'v', new PathMapper('host-a'),
+      );
+      expect(adapter.toRemote('.obsidian/workspace.json'))
+        .toBe('/v/.obsidian/user/host-a/workspace.json');
+      expect(adapter.toRemote('Notes/x.md')).toBe('/v/Notes/x.md');
     });
   });
 });
