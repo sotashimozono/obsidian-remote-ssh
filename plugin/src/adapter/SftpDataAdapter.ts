@@ -324,6 +324,20 @@ export class SftpDataAdapter {
   }
 
   /**
+   * Drop cache entries for a path the daemon just reported as
+   * changed via an `fs.changed` push. The argument is the daemon's
+   * vault-relative path (already past PathMapper for private files);
+   * the adapter joins it with `remoteBasePath` to recover the cache
+   * key it actually stored under.
+   */
+  invalidateRemotePath(remoteVaultPath: string): void {
+    const abs = this.joinRemote(remoteVaultPath);
+    this.readCache.invalidate(abs);
+    const parent = parentDirRemote(abs);
+    if (parent) this.dirCache.invalidate(parent);
+  }
+
+  /**
    * Resolve a vault-relative path to the absolute path on the remote.
    *
    * If a PathMapper is attached, private vault paths are first
