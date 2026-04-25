@@ -1,11 +1,8 @@
 import { Modal, App, Setting, Notice } from 'obsidian';
 import type { SshProfile, AuthMethod } from '../types';
 import { DEFAULT_PROFILE } from '../constants';
-import { expandHome } from '../util/pathUtils';
 import { readSshConfig, type SshConfigEntry } from '../ssh/SshConfigReader';
 import * as crypto from 'crypto';
-import * as os from 'os';
-import * as path from 'path';
 
 export class ProfileForm extends Modal {
   private profile: SshProfile;
@@ -24,7 +21,6 @@ export class ProfileForm extends Modal {
           ...DEFAULT_PROFILE,
           id: crypto.randomUUID(),
           name: 'New Profile',
-          localCachePath: path.join(os.homedir(), '.obsidian-remote', 'new-profile'),
         };
   }
 
@@ -33,7 +29,6 @@ export class ProfileForm extends Modal {
     contentEl.empty();
     contentEl.createEl('h2', { text: this.isNew ? 'Add SSH Profile' : 'Edit Profile' });
 
-    // Import from ~/.ssh/config
     const sshEntries = readSshConfig();
     if (sshEntries.length > 0) {
       new Setting(contentEl)
@@ -89,37 +84,14 @@ export class ProfileForm extends Modal {
       .addText(t => t.setPlaceholder('~/.ssh/id_ed25519').setValue(this.profile.privateKeyPath ?? '')
         .onChange(v => { this.profile.privateKeyPath = v || undefined; }));
 
-    contentEl.createEl('h3', { text: 'Paths' });
+    contentEl.createEl('h3', { text: 'Remote vault' });
 
     new Setting(contentEl)
       .setName('Remote vault path')
-      .setDesc('Absolute path on the SSH server')
+      .setDesc('Absolute path on the SSH server (e.g. /home/user/vault) or home-relative (e.g. work/vault).')
       .addText(t => t.setPlaceholder('/home/user/vault').setValue(this.profile.remotePath)
         .onChange(v => { this.profile.remotePath = v; }));
 
-    new Setting(contentEl)
-      .setName('Local cache path')
-      .setDesc('Local directory to use as Obsidian vault. Created if not present.')
-      .addText(t => t.setValue(this.profile.localCachePath)
-        .onChange(v => { this.profile.localCachePath = expandHome(v); }));
-
-    contentEl.createEl('h3', { text: 'Sync' });
-
-    new Setting(contentEl)
-      .setName('Upload on save')
-      .setDesc('Push file to remote immediately when saved in Obsidian')
-      .addToggle(t => t.setValue(this.profile.uploadOnSave)
-        .onChange(v => { this.profile.uploadOnSave = v; }));
-
-    new Setting(contentEl)
-      .setName('Ignore patterns')
-      .setDesc('Comma-separated glob patterns to exclude (e.g. .git, *.tmp)')
-      .addText(t => t.setValue(this.profile.ignorePatterns.join(', '))
-        .onChange(v => {
-          this.profile.ignorePatterns = v.split(',').map(s => s.trim()).filter(Boolean);
-        }));
-
-    // Footer
     const footer = contentEl.createDiv('conflict-footer');
     footer.createEl('button', { text: 'Cancel' }).onclick = () => this.close();
     footer.createEl('button', { text: 'Save', cls: 'mod-cta' }).onclick = () => {
@@ -141,14 +113,12 @@ export class ProfileForm extends Modal {
     if (e.proxyJump) {
       this.profile.jumpHost = { host: e.proxyJump, port: 22, username: e.user, authMethod: 'privateKey' };
     }
-    this.profile.localCachePath  = path.join(os.homedir(), '.obsidian-remote', e.alias);
   }
 
   private validate(): boolean {
     if (!this.profile.host) { new Notice('Host is required'); return false; }
     if (!this.profile.username) { new Notice('Username is required'); return false; }
     if (!this.profile.remotePath) { new Notice('Remote vault path is required'); return false; }
-    if (!this.profile.localCachePath) { new Notice('Local cache path is required'); return false; }
     if (!this.profile.name) { new Notice('Profile name is required'); return false; }
     return true;
   }
