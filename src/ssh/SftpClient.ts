@@ -265,8 +265,26 @@ export class SftpClient {
     });
   }
 
+  /**
+   * Create the directory, treating "already exists" as success.
+   *
+   * OpenSSH's SFTP server reports an existing directory as
+   * SSH_FX_FAILURE with the opaque message "Failure", so a substring
+   * match on "exist" misses it. Stat-then-mkdir avoids the ambiguity:
+   * if a directory is already there we are done; if a non-directory
+   * is in the way we surface the conflict; otherwise we mkdir and let
+   * a real SFTP error bubble up.
+   */
   async mkdir(remotePath: string): Promise<void> {
     const sftp = this.requireSftp();
+    try {
+      const s = await this.stat(remotePath);
+      if (s.isDirectory) return;
+      throw new Error(`mkdir: "${remotePath}" exists and is not a directory`);
+    } catch (e) {
+      // Treat any stat failure as "path is not there yet" and try to create it.
+      if ((e as Error).message?.startsWith('mkdir: ')) throw e;
+    }
     return new Promise((resolve, reject) => {
       sftp.mkdir(remotePath, err => {
         if (err && !err.message.toLowerCase().includes('exist')) reject(err);
