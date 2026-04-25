@@ -1,6 +1,15 @@
 package server
 
-import "sync"
+import (
+	"errors"
+	"sync"
+)
+
+// NotificationSender writes one server-push notification on the
+// session's connection. The implementation is responsible for
+// serialising concurrent writes (a request reply may be in flight
+// at the same time a watcher event tries to push).
+type NotificationSender func(method string, params interface{}) error
 
 // Session is the per-connection state used by method handlers.
 // Every accepted connection gets its own Session, so mutation of
@@ -12,6 +21,7 @@ type Session struct {
 	mu              sync.Mutex
 	authenticated   bool
 	subscriptionIDs map[string]struct{}
+	sender          NotificationSender
 }
 
 // NewSession returns a fresh, unauthenticated session.
@@ -60,4 +70,27 @@ func (s *Session) SubscriptionIDs() []string {
 		out = append(out, id)
 	}
 	return out
+}
+
+// SetNotifier installs the function the session uses to write a
+// server-push frame. Called once at connection setup; later calls
+// replace the previous sender atomically.
+func (s *Session) SetNotifier(send NotificationSender) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sender = send
+}
+
+// SendNotification writes one notification frame on the session's
+// connection. Returns an error when no notifier has been set (the
+// session was constructed in test code without one) or the underlying
+// write fails.
+func (s *Session) SendNotification(method string, params interface{}) error {
+	s.mu.Lock()
+	send := s.sender
+	s.mu.Unlock()
+	if send == nil {
+		return errors.New("Session: SendNotification called before SetNotifier")
+	}
+	return send(method, params)
 }

@@ -18,7 +18,19 @@ import (
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/proto"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/rpc"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/server"
+	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/watcher"
 )
+
+// watcherCleaner adapts the package's vault watcher to
+// server.SubscriptionCleaner — see the equivalent type in
+// cmd/obsidian-remote-server/main.go for the production wiring.
+type watcherCleaner struct{ w *watcher.Watcher }
+
+func (c watcherCleaner) CleanupSubscriptions(ids []string) {
+	for _, id := range ids {
+		c.w.Unsubscribe(id)
+	}
+}
 
 // testServer spins up a listening Server on 127.0.0.1:<random>, wires
 // the full handler set (matching main.go), and tears everything down
@@ -43,10 +55,17 @@ func startTestServer(t *testing.T) *testServer {
 	}
 
 	vaultRoot := t.TempDir()
+	w, err := watcher.New(vaultRoot)
+	if err != nil {
+		t.Fatalf("watcher: %v", err)
+	}
+	t.Cleanup(func() { _ = w.Close() })
+
 	srv := server.New(server.Options{
-		Token:     tk,
-		VaultRoot: vaultRoot,
-		Version:   "test",
+		Token:               tk,
+		VaultRoot:           vaultRoot,
+		Version:             "test",
+		SubscriptionCleaner: watcherCleaner{w},
 	})
 	disp := srv.Dispatcher()
 	disp.Handle("auth", handlers.Auth(tk))
@@ -66,6 +85,8 @@ func startTestServer(t *testing.T) *testServer {
 	disp.Handle("fs.rename", handlers.RequireAuth(handlers.FsRename(vaultRoot)))
 	disp.Handle("fs.copy", handlers.RequireAuth(handlers.FsCopy(vaultRoot)))
 	disp.Handle("fs.trashLocal", handlers.RequireAuth(handlers.FsTrashLocal(vaultRoot)))
+	disp.Handle("fs.watch", handlers.RequireAuth(handlers.FsWatch(w)))
+	disp.Handle("fs.unwatch", handlers.RequireAuth(handlers.FsUnwatch(w)))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -431,6 +452,7 @@ func TestServer_AuthThenServerInfo(t *testing.T) {
 		"fs.readBinary", "fs.readText",
 		"fs.remove", "fs.rename", "fs.rmdir",
 		"fs.stat", "fs.trashLocal",
+		"fs.unwatch", "fs.watch",
 		"fs.write", "fs.writeBinary",
 		"server.info",
 	}
@@ -455,5 +477,99 @@ func TestServer_GracefulEOF(t *testing.T) {
 	_, errObj := c.call(t, "auth", map[string]string{"token": string(ts.token)})
 	if errObj != nil {
 		t.Fatalf("auth after prior close: %+v", errObj)
+	}
+}
+
+// TestServer_WatchPipeline confirms the daemon's fs.watch surface
+// end-to-end: a "watcher" client subscribes to the vault root, a
+// separate "writer" client writes a file through fs.write, and the
+// watcher receives a matching `fs.changed` notification on its
+// socket.
+//
+// Two connections keep the watcher's read loop from racing the
+// fs.write reply.
+func TestServer_WatchPipeline(t *testing.T) {
+	ts := startTestServer(t)
+
+	// Watcher connection.
+	w := ts.dial(t)
+	if _, errObj := w.call(t, "auth", map[string]string{"token": string(ts.token)}); errObj != nil {
+		t.Fatalf("watcher auth: %+v", errObj)
+	}
+	subRaw, errObj := w.call(t, "fs.watch", map[string]any{"path": "", "recursive": true})
+	if errObj != nil {
+		t.Fatalf("fs.watch: %+v", errObj)
+	}
+	var sub proto.WatchResult
+	if err := json.Unmarshal(subRaw, &sub); err != nil {
+		t.Fatalf("unmarshal watch result: %v", err)
+	}
+	if sub.SubscriptionID == "" {
+		t.Fatal("fs.watch returned an empty subscription id")
+	}
+
+	// Writer connection: a separate session does the file write so
+	// the watcher's reader never has to interleave the fs.write reply
+	// with the fs.changed notification.
+	wr := ts.dial(t)
+	if _, errObj := wr.call(t, "auth", map[string]string{"token": string(ts.token)}); errObj != nil {
+		t.Fatalf("writer auth: %+v", errObj)
+	}
+	go func() {
+		// Tiny delay so the watcher reader is blocked on its
+		// next ReadFrame when the notification lands.
+		time.Sleep(50 * time.Millisecond)
+		_, _ = wr.call(t, "fs.write", map[string]any{
+			"path":    "watched.md",
+			"content": "fresh",
+		})
+	}()
+
+	// atomicWriteFile creates a tmp file first and then renames it to
+	// the target, so fsnotify will fire several events in sequence
+	// (create + modify on the tmp, then a rename + create matching
+	// the final path). We just need to find one fs.changed where the
+	// path matches our target.
+	deadline := time.Now().Add(3 * time.Second)
+	gotChange := false
+	for time.Now().Before(deadline) && !gotChange {
+		_ = w.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		body, err := rpc.ReadFrame(w.reader, 0)
+		if err != nil {
+			continue // read deadline; try again
+		}
+		var env struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if err := json.Unmarshal(body, &env); err != nil {
+			continue
+		}
+		if env.Method != "fs.changed" {
+			continue
+		}
+		var p proto.FsChangedParams
+		if err := json.Unmarshal(env.Params, &p); err != nil {
+			t.Fatalf("unmarshal fs.changed params: %v", err)
+		}
+		if p.SubscriptionID != sub.SubscriptionID {
+			t.Errorf("subscriptionId = %q, want %q", p.SubscriptionID, sub.SubscriptionID)
+		}
+		if p.Path == "watched.md" {
+			if p.Event != proto.FsChangeEventCreated && p.Event != proto.FsChangeEventModified {
+				t.Errorf("event = %q, want created or modified", p.Event)
+			}
+			gotChange = true
+		}
+		// Other events (tmp file artefacts) just get drained — keep reading.
+	}
+	_ = w.conn.SetReadDeadline(time.Time{})
+	if !gotChange {
+		t.Fatal("never received an fs.changed notification for watched.md within the deadline")
+	}
+
+	if _, errObj := w.call(t, "fs.unwatch", map[string]string{"subscriptionId": sub.SubscriptionID}); errObj != nil {
+		t.Fatalf("fs.unwatch: %+v", errObj)
 	}
 }

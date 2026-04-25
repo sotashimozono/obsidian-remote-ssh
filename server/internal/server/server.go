@@ -17,8 +17,18 @@ import (
 	"sync/atomic"
 
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/auth"
+	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/proto"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/rpc"
 )
+
+// SubscriptionCleaner unhooks any watcher subscriptions a closing
+// session may have left registered. The server calls
+// CleanupSubscriptions on the cleaner once per closed session,
+// passing the ids the session knows about. A nil cleaner is fine —
+// fs.watch hasn't been registered.
+type SubscriptionCleaner interface {
+	CleanupSubscriptions(ids []string)
+}
 
 // Options configure a Server.
 type Options struct {
@@ -38,6 +48,12 @@ type Options struct {
 	// Logger is used for connection-level events. Defaults to a no-op
 	// logger when nil.
 	Logger *slog.Logger
+
+	// SubscriptionCleaner is invoked when a connection closes; its
+	// CleanupSubscriptions method receives the watcher subscription
+	// ids the session collected so the watcher can drop them. Nil is
+	// fine and means "no cleanup needed".
+	SubscriptionCleaner SubscriptionCleaner
 }
 
 // Server accepts one connection at a time on an external listener and
@@ -105,17 +121,45 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	connID := s.connCount.Add(1)
 	log := s.log.With("conn", connID, "peer", conn.RemoteAddr().String())
 	log.Info("connection opened")
+	session := NewSession()
 	defer func() {
+		// Drop any watcher subscriptions the session collected before
+		// the connection actually closes — otherwise the watcher
+		// would keep firing callbacks on a dead writer.
+		if s.opts.SubscriptionCleaner != nil {
+			s.opts.SubscriptionCleaner.CleanupSubscriptions(session.SubscriptionIDs())
+		}
 		_ = conn.Close()
 		log.Info("connection closed")
 	}()
 
-	session := NewSession()
 	reader := bufio.NewReader(conn)
-	// Protect concurrent writes to the connection (currently only the
-	// reply path writes, but fs.watch push events will write from
-	// other goroutines in a later phase).
+	// Protect concurrent writes to the connection: replies and
+	// fs.watch push notifications can race for the wire.
 	var writeMu sync.Mutex
+
+	// Wire the session's notifier so push handlers can write to
+	// `conn` without grabbing private fields. JSON marshalling lives
+	// in this closure so we depend on `proto` here rather than in
+	// every handler that wants to push.
+	session.SetNotifier(func(method string, params interface{}) error {
+		paramsBytes, err := json.Marshal(params)
+		if err != nil {
+			return fmt.Errorf("server: marshal notification params: %w", err)
+		}
+		envelope := proto.Notification{
+			JSONRPC: proto.JSONRPCVersion,
+			Method:  method,
+			Params:  paramsBytes,
+		}
+		body, err := json.Marshal(envelope)
+		if err != nil {
+			return fmt.Errorf("server: marshal notification: %w", err)
+		}
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return rpc.WriteFrame(conn, body)
+	})
 
 	for {
 		body, err := rpc.ReadFrame(reader, 0)
