@@ -120,6 +120,38 @@ export class SftpClient {
     logger.info(`SftpClient: SFTP channel open`);
   }
 
+  /**
+   * Forward a local Duplex to a unix-domain socket on the remote host.
+   *
+   * Used by the α transport to reach `obsidian-remote-server`'s
+   * listening socket (e.g. `~/.obsidian-remote/server.sock`) through
+   * the same SSH connection that already carries the SFTP channel.
+   * Requires OpenSSH's `direct-streamlocal@openssh.com` extension,
+   * which every mainstream sshd has shipped since OpenSSH 6.7.
+   */
+  async openUnixStream(socketPath: string): Promise<Duplex> {
+    const client = this.requireClient();
+    return new Promise((resolve, reject) => {
+      client.openssh_forwardOutStreamLocal(socketPath, (err: Error | undefined, stream: Duplex) => {
+        if (err) reject(err);
+        else resolve(stream);
+      });
+    });
+  }
+
+  /**
+   * Read a small file off the remote via SFTP. Intended for reading
+   * one-shot state like the daemon's session token; for vault files
+   * use `readBinary`/`readText` which go through the same channel
+   * but return typed buffers directly.
+   */
+  async readRemoteFile(remotePath: string): Promise<Buffer> {
+    const sftp = this.requireSftp();
+    return new Promise((resolve, reject) => {
+      sftp.readFile(remotePath, (err, buf) => err ? reject(err) : resolve(buf));
+    });
+  }
+
   async disconnect(): Promise<void> {
     this.intentionalDisconnect = true;
     const client = this.client;
@@ -331,6 +363,11 @@ export class SftpClient {
   private requireSftp(): SFTPWrapper {
     if (!this.sftp) throw new Error('SftpClient: not connected');
     return this.sftp;
+  }
+
+  private requireClient(): Client {
+    if (!this.client) throw new Error('SftpClient: not connected');
+    return this.client;
   }
 }
 
