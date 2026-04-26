@@ -59,6 +59,21 @@ export class SftpDataAdapter {
     private resourceBridge: ResourceBridge | null = null,
   ) {}
 
+  /**
+   * Swap the underlying transport while the adapter stays patched
+   * onto `app.vault.adapter`. Used by the reconnect path: an SSH drop
+   * tears down the old `RemoteFsClient`, but the adapter object
+   * itself is still wired into Obsidian, so we just rebind it to a
+   * fresh client (RPC tunnel or SFTP) without going through a
+   * restore/re-patch cycle that would force editors to re-render.
+   *
+   * Caches are preserved — entries are mtime-keyed, so any divergence
+   * is caught on the next read.
+   */
+  swapClient(newClient: RemoteFsClient): void {
+    this.client = newClient;
+  }
+
   // ─── DataAdapter (read-side) ─────────────────────────────────────────────
 
   getName(): string {

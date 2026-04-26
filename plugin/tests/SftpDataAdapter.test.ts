@@ -605,4 +605,39 @@ describe('SftpDataAdapter (read-side)', () => {
       expect(adapter.toRemote('Notes/x.md')).toBe('/v/Notes/x.md');
     });
   });
+
+  describe('swapClient', () => {
+    it('routes subsequent reads through the new client', async () => {
+      const oldClient = makeFakeClient({
+        files: { '/v/note.md': { data: Buffer.from('OLD'), mtime: 1 } },
+      });
+      const newClient = makeFakeClient({
+        files: { '/v/note.md': { data: Buffer.from('NEW'), mtime: 2 } },
+      });
+      const adapter = new SftpDataAdapter(oldClient.client, '/v', readCache, dirCache, 'v');
+      // Sanity: the adapter sees the old client's data first.
+      expect(await adapter.read('note.md')).toBe('OLD');
+      adapter.swapClient(newClient.client);
+      // After swap, mtime mismatch invalidates the cache and the
+      // newer client's data flows through.
+      expect(await adapter.read('note.md')).toBe('NEW');
+    });
+
+    it('preserves cached entries across swaps when mtimes still match', async () => {
+      const oldClient = makeFakeClient({
+        files: { '/v/note.md': { data: Buffer.from('SAME'), mtime: 7 } },
+      });
+      const newClient = makeFakeClient({
+        files: { '/v/note.md': { data: Buffer.from('SAME'), mtime: 7 } },
+      });
+      const adapter = new SftpDataAdapter(oldClient.client, '/v', readCache, dirCache, 'v');
+      await adapter.read('note.md'); // primes cache
+      adapter.swapClient(newClient.client);
+      // Same mtime → cache hit, the new client only sees a stat call.
+      const out = await adapter.read('note.md');
+      expect(out).toBe('SAME');
+      expect(newClient.client.readBinary).not.toHaveBeenCalled();
+      expect(newClient.client.stat).toHaveBeenCalled();
+    });
+  });
 });
