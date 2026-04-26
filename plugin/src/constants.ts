@@ -22,6 +22,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   reconnectMaxRetries: 5,
   clientId: '',
   userName: '',
+  autoPatchAdapter: true,
 };
 
 export const MAX_RETRY = 4;
