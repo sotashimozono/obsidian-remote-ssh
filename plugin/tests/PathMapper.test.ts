@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { PathMapper, sanitizeClientId, DEFAULT_PRIVATE_PATTERNS } from '../src/path/PathMapper';
+import {
+  PathMapper,
+  sanitizeClientId,
+  defaultClientId,
+  defaultUserName,
+  DEFAULT_PRIVATE_PATTERNS,
+} from '../src/path/PathMapper';
 
 const ID = 'host-a';
 
@@ -17,6 +23,20 @@ describe('sanitizeClientId', () => {
   it('falls back to "unknown" when the input is empty after sanitisation', () => {
     expect(sanitizeClientId('')).toBe('unknown');
     expect(sanitizeClientId('!!!')).toBe('unknown');
+  });
+});
+
+describe('defaultClientId / defaultUserName', () => {
+  it('defaultClientId returns a non-empty sanitized string', () => {
+    const id = defaultClientId();
+    expect(id).not.toBe('');
+    // The same string should pass through sanitize unchanged.
+    expect(sanitizeClientId(id)).toBe(id);
+  });
+
+  it('defaultUserName returns a non-empty string', () => {
+    const u = defaultUserName();
+    expect(u).not.toBe('');
   });
 });
 

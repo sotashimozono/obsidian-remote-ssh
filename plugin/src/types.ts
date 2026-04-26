@@ -74,6 +74,21 @@ export interface PluginSettings {
    * to disable auto-reconnect entirely.
    */
   reconnectMaxRetries: number;
+  /**
+   * Override for `defaultClientId()` used by PathMapper. Determines
+   * the per-client subtree on the remote (`.obsidian/user/<id>/...`).
+   * Empty string falls back to a sanitized OS hostname. Changing this
+   * after first use leaves the previous subtree on the remote with
+   * no automatic migration; the user can manually move files.
+   */
+  clientId: string;
+  /**
+   * Display name for this device. Cosmetic in v1 — used to label
+   * notices and (eventually) multi-client presence info written
+   * alongside this client's private subtree on the remote. Empty
+   * string falls back to the OS username.
+   */
+  userName: string;
 }
 
 export interface LogLine {

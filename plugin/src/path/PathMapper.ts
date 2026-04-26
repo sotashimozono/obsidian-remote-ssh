@@ -55,6 +55,22 @@ export function defaultClientId(): string {
 }
 
 /**
+ * Default human-readable user name for the device. Used as a
+ * placeholder in the settings UI and as the fallback when the user
+ * leaves the field blank. Falls through to "unknown" if `userInfo()`
+ * is unavailable (it's documented to throw on some restricted
+ * environments).
+ */
+export function defaultUserName(): string {
+  try {
+    const info = os.userInfo();
+    return info.username || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
  * PathMapper translates between the vault-relative paths Obsidian uses
  * and the actual paths we store on the remote. The mapping is the
  * identity for ordinary vault content; only `.obsidian/*` files

@@ -18,7 +18,7 @@ import { ServerDeployer } from './transport/ServerDeployer';
 import { ReconnectManager } from './transport/ReconnectManager';
 import type { ReconnectState } from './transport/ReconnectManager';
 import { DEFAULT_BACKOFF } from './transport/Backoff';
-import { PathMapper, defaultClientId } from './path/PathMapper';
+import { PathMapper, defaultClientId, sanitizeClientId } from './path/PathMapper';
 import { interpretWatchEvent } from './path/WatchEventFilter';
 import type { FsChangedParams } from './proto/types';
 import * as fs from 'fs';
@@ -310,6 +310,18 @@ export default class RemoteSshPlugin extends Plugin {
   }
 
   /**
+   * Pick the clientId that this session should use for PathMapper.
+   * Falls back to the OS hostname when the user hasn't set an
+   * override; either way the result is sanitized so it's safe as a
+   * directory name on the remote.
+   */
+  private resolveClientId(): string {
+    const override = (this.settings.clientId ?? '').trim();
+    if (override) return sanitizeClientId(override);
+    return defaultClientId();
+  }
+
+  /**
    * Read accessor for `rpcConnection`. Used by `reconnectAttempt`
    * after `startRpcSession` may have re-populated the field via
    * `this.`, which the TypeScript flow analyser narrows away
@@ -544,7 +556,7 @@ export default class RemoteSshPlugin extends Plugin {
     // .obsidian/workspace.json get redirected into a per-client subtree
     // on the remote so two machines on the same vault don't trample
     // each other's UI state. Phase 4-J0.
-    const clientId = defaultClientId();
+    const clientId = this.resolveClientId();
     const mapper = new PathMapper(clientId);
     logger.info(`PathMapper: clientId="${clientId}"`);
 

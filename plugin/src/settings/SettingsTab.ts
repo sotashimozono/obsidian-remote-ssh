@@ -2,6 +2,11 @@ import { App, PluginSettingTab, Setting } from 'obsidian';
 import type RemoteSshPlugin from '../main';
 import { ProfileForm } from './ProfileForm';
 import type { SshProfile } from '../types';
+import {
+  defaultClientId,
+  defaultUserName,
+  sanitizeClientId,
+} from '../path/PathMapper';
 
 export class SettingsTab extends PluginSettingTab {
   constructor(app: App, private plugin: RemoteSshPlugin) {
@@ -30,6 +35,42 @@ export class SettingsTab extends PluginSettingTab {
     for (const profile of this.plugin.settings.profiles) {
       this.renderProfileRow(containerEl, profile);
     }
+
+    containerEl.createEl('h3', { text: 'This device' });
+
+    new Setting(containerEl)
+      .setName('Client ID')
+      .setDesc(
+        'Per-device subtree name on the remote. Leave blank to use the '
+        + `OS hostname. Current default: "${defaultClientId()}". Allowed `
+        + 'characters: A-Z a-z 0-9 . - _ (anything else is replaced with "-"). '
+        + 'Changing this leaves the old subtree behind on the remote — '
+        + 'workspace layout, recent files, etc. start fresh.',
+      )
+      .addText(t => t
+        .setPlaceholder(defaultClientId())
+        .setValue(this.plugin.settings.clientId)
+        .onChange(async v => {
+          // Empty string = "use the default"; non-empty values are
+          // sanitized so a typo'd entry can't produce an invalid path.
+          this.plugin.settings.clientId = v.trim() === '' ? '' : sanitizeClientId(v);
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('User name')
+      .setDesc(
+        'Display name for this device. Cosmetic for now — surfaces in '
+        + 'connect notices and (eventually) multi-client presence info on '
+        + `the remote. Default: "${defaultUserName()}".`,
+      )
+      .addText(t => t
+        .setPlaceholder(defaultUserName())
+        .setValue(this.plugin.settings.userName)
+        .onChange(async v => {
+          this.plugin.settings.userName = v.trim();
+          await this.plugin.saveSettings();
+        }));
 
     containerEl.createEl('h3', { text: 'Advanced' });
     new Setting(containerEl)
