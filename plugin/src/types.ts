@@ -10,10 +10,11 @@ export type AuthMethod = 'password' | 'privateKey' | 'agent';
 export type RemoteTransport = 'sftp' | 'rpc';
 
 export enum SyncState {
-  IDLE       = 'idle',
-  CONNECTING = 'connecting',
-  CONNECTED  = 'connected',
-  ERROR      = 'error',
+  IDLE         = 'idle',
+  CONNECTING   = 'connecting',
+  CONNECTED    = 'connected',
+  RECONNECTING = 'reconnecting',
+  ERROR        = 'error',
 }
 
 export interface JumpHostConfig {

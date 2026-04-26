@@ -2,22 +2,25 @@ import type { Plugin } from 'obsidian';
 import { SyncState } from '../types';
 
 const ICON: Record<SyncState, string> = {
-  [SyncState.IDLE]:       '⬡',
-  [SyncState.CONNECTING]: '⟳',
-  [SyncState.CONNECTED]:  '⬢',
-  [SyncState.ERROR]:      '✕',
+  [SyncState.IDLE]:         '⬡',
+  [SyncState.CONNECTING]:   '⟳',
+  [SyncState.CONNECTED]:    '⬢',
+  [SyncState.RECONNECTING]: '⟳',
+  [SyncState.ERROR]:        '✕',
 };
 
 const LABEL: Record<SyncState, string> = {
-  [SyncState.IDLE]:       'Remote SSH: Disconnected',
-  [SyncState.CONNECTING]: 'Remote SSH: Connecting…',
-  [SyncState.CONNECTED]:  'Remote SSH: Connected',
-  [SyncState.ERROR]:      'Remote SSH: Error',
+  [SyncState.IDLE]:         'Remote SSH: Disconnected',
+  [SyncState.CONNECTING]:   'Remote SSH: Connecting…',
+  [SyncState.CONNECTED]:    'Remote SSH: Connected',
+  [SyncState.RECONNECTING]: 'Remote SSH: Reconnecting…',
+  [SyncState.ERROR]:        'Remote SSH: Error',
 };
 
 const CSS_CLASS: Partial<Record<SyncState, string>> = {
-  [SyncState.CONNECTED]: 'is-connected',
-  [SyncState.ERROR]:     'is-error',
+  [SyncState.CONNECTED]:    'is-connected',
+  [SyncState.RECONNECTING]: 'is-reconnecting',
+  [SyncState.ERROR]:        'is-error',
 };
 
 export class StatusBar {

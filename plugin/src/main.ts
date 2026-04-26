@@ -15,6 +15,8 @@ import { SftpRemoteFsClient } from './adapter/SftpRemoteFsClient';
 import { RpcRemoteFsClient } from './adapter/RpcRemoteFsClient';
 import { establishRpcConnection } from './transport/RpcConnection';
 import { ServerDeployer } from './transport/ServerDeployer';
+import { ReconnectManager } from './transport/ReconnectManager';
+import type { ReconnectState } from './transport/ReconnectManager';
 import { PathMapper, defaultClientId } from './path/PathMapper';
 import { interpretWatchEvent } from './path/WatchEventFilter';
 import type { FsChangedParams } from './proto/types';
@@ -66,6 +68,17 @@ export default class RemoteSshPlugin extends Plugin {
   private activePathMapper: PathMapper | null = null;
   /** Localhost HTTP bridge serving binary vault assets to the webview. */
   private resourceBridge: ResourceBridge | null = null;
+  /**
+   * Profile in use by the current session. Held so the reconnect
+   * loop can re-issue the connect / RPC / fs.watch sequence after an
+   * unexpected SSH drop without forcing the user back to the modal.
+   */
+  private activeProfile: SshProfile | null = null;
+  /**
+   * Active reconnect-loop instance. Non-null between an unexpected
+   * disconnect and either recovery or final failure / cancel.
+   */
+  private reconnectManager: ReconnectManager | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -76,10 +89,14 @@ export default class RemoteSshPlugin extends Plugin {
 
     this.client = new SftpClient(this.authResolver, this.hostKeyStore);
     this.client.onClose(({ unexpected }) => {
+      // Intentional disconnects are driven by `disconnect()` which
+      // already handles cleanup. Unexpected ones (network drop, peer
+      // killed sshd, ...) hand off to the reconnect loop, which keeps
+      // the patched adapter alive via swapClient instead of forcing a
+      // restore + re-patch round-trip.
       if (unexpected) {
-        this.restoreAdapter();
-        this.setState(SyncState.ERROR);
-        new Notice('Remote SSH: Connection lost');
+        new Notice('Remote SSH: Connection lost — reconnecting…');
+        void this.startReconnect();
       }
     });
     this.activeRemoteBasePath = null;
@@ -230,6 +247,7 @@ export default class RemoteSshPlugin extends Plugin {
     // PathMapper (Phase 4-J0) can redirect those to a per-client subtree.
     // Use the "Debug: patch adapter" command to opt in for now.
     this.activeRemoteBasePath = effectivePath;
+    this.activeProfile = profile;
     this.setState(SyncState.CONNECTED);
     this.settings.activeProfileId = profile.id;
     await this.saveSettings();
@@ -280,6 +298,130 @@ export default class RemoteSshPlugin extends Plugin {
   }
 
   /**
+   * Read accessor for `rpcConnection`. Used by `reconnectAttempt`
+   * after `startRpcSession` may have re-populated the field via
+   * `this.`, which the TypeScript flow analyser narrows away
+   * because it can't see the cross-method assignment.
+   */
+  private currentRpcConnection(): Awaited<ReturnType<typeof establishRpcConnection>> | null {
+    return this.rpcConnection;
+  }
+
+  /**
+   * Drive the reconnect loop after an unexpected SSH drop.
+   *
+   * Idempotent: a second unexpected close while a loop is already
+   * in flight is a no-op (the manager keeps trying). Cancellation
+   * happens via `disconnect()`.
+   */
+  private async startReconnect(): Promise<void> {
+    if (this.reconnectManager?.isActive()) return;
+    if (!this.activeProfile) {
+      logger.warn('startReconnect: no active profile to reconnect with');
+      this.setState(SyncState.ERROR);
+      return;
+    }
+    this.setState(SyncState.RECONNECTING);
+    const manager = new ReconnectManager({
+      attempt: () => this.reconnectAttempt(),
+      onState: (s) => this.onReconnectStateChange(s),
+    });
+    this.reconnectManager = manager;
+    await manager.run();
+  }
+
+  /**
+   * One reconcile pass: re-establish SSH, redeploy + re-handshake the
+   * daemon if the active transport is RPC, rebind the patched adapter
+   * to the fresh client, and re-subscribe to fs.watch if the patched
+   * adapter had been listening before. Throws to signal a retryable
+   * failure.
+   */
+  private async reconnectAttempt(): Promise<void> {
+    const profile = this.activeProfile;
+    if (!profile) throw new Error('no active profile');
+
+    // 1. SSH session.
+    if (!this.client.isAlive()) {
+      await this.client.connect(profile);
+    }
+
+    // 2. RPC tunnel (if the profile uses it). The previous
+    // rpcConnection is dead because the underlying ssh stream is
+    // gone — drop the reference and redeploy. Always-redeploy is
+    // simpler than probing daemon liveness, and ServerDeployer
+    // already kills any prior process at startup.
+    const transport = profile.transport ?? 'sftp';
+    if (this.rpcConnection) {
+      try { this.rpcConnection.close(); } catch { /* already dead */ }
+      this.rpcConnection = null;
+    }
+    if (transport === 'rpc') {
+      const effectivePath = this.activeRemoteBasePath ?? normalizeRemotePath(profile.remotePath);
+      await this.startRpcSession(profile, effectivePath);
+    }
+
+    // 3. Adapter rebind. If the user had patched the adapter, swap
+    // its underlying client to the fresh transport instead of going
+    // through restore + re-patch (which would force editors to
+    // re-render and lose scroll position).
+    if (this.dataAdapter) {
+      // The cast hides the narrow-to-null TS did above; startRpcSession
+      // may have written this.rpcConnection back via `this.`, which
+      // the flow analyser doesn't track across method boundaries.
+      const freshRpc = this.currentRpcConnection();
+      const newClient = freshRpc
+        ? new RpcRemoteFsClient(freshRpc.rpc)
+        : new SftpRemoteFsClient(this.client);
+      this.dataAdapter.swapClient(newClient);
+    }
+
+    // 4. fs.watch re-subscribe. The old subscription id is dead with
+    // its session, so clear local bookkeeping before resubscribing.
+    this.rpcWatchSubscriptionId = null;
+    if (this.rpcWatchHandlerDisposer) {
+      this.rpcWatchHandlerDisposer();
+      this.rpcWatchHandlerDisposer = null;
+    }
+    if (this.activePathMapper && this.rpcConnection) {
+      await this.subscribeToFsChanged();
+    }
+  }
+
+  /**
+   * Project the manager's state onto the StatusBar + Notice surface
+   * and, on terminal states, clean up.
+   */
+  private onReconnectStateChange(s: ReconnectState): void {
+    if (s.kind === 'waiting') {
+      const seconds = Math.max(1, Math.round(s.delayMs / 1000));
+      this.statusBar.update(
+        SyncState.RECONNECTING,
+        `Remote SSH: Reconnecting (${s.attempt}/${s.totalAttempts}) in ${seconds}s…`,
+      );
+    } else if (s.kind === 'attempting') {
+      this.statusBar.update(
+        SyncState.RECONNECTING,
+        `Remote SSH: Reconnecting (attempt ${s.attempt}/${s.totalAttempts})…`,
+      );
+    } else if (s.kind === 'recovered') {
+      this.setState(SyncState.CONNECTED);
+      new Notice('Remote SSH: Reconnected');
+      this.reconnectManager = null;
+    } else if (s.kind === 'failed') {
+      // Give up: tear the patched adapter down so Obsidian falls
+      // back to local file:// reads instead of blocking forever on a
+      // dead transport.
+      this.restoreAdapter();
+      this.setState(SyncState.ERROR);
+      new Notice(`Remote SSH: Reconnect failed — ${s.reason}`);
+      this.reconnectManager = null;
+    } else if (s.kind === 'cancelled') {
+      this.reconnectManager = null;
+    }
+  }
+
+  /**
    * Idempotent: it always restores the adapter, drops the active SSH
    * client, clears `activeProfileId`, and parks the state machine on
    * IDLE. Calling it from a stale UI button (where state was already
@@ -289,8 +431,15 @@ export default class RemoteSshPlugin extends Plugin {
     const wasActive = this.state !== SyncState.IDLE
       || this.client?.isAlive()
       || this.settings.activeProfileId !== null;
+    // Stop any in-flight reconnect loop before tearing down so the
+    // attempt callback doesn't observe a half-disposed session.
+    if (this.reconnectManager) {
+      this.reconnectManager.cancel();
+      this.reconnectManager = null;
+    }
     this.restoreAdapter();
     this.activeRemoteBasePath = null;
+    this.activeProfile = null;
 
     // Close the RPC tunnel before stopping the daemon so the daemon
     // sees a clean disconnect rather than a half-open socket.
