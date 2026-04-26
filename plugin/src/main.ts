@@ -401,8 +401,9 @@ export default class RemoteSshPlugin extends Plugin {
 
   /**
    * Translate a daemon-pushed `fs.changed` notification into a cache
-   * invalidation + (when the file is already known to the vault) a
-   * vault-level event so open editors and plugins re-read.
+   * invalidation + a vault reconcile so the File Explorer, Quick
+   * Switcher, etc. pick up creates / deletes / renames the same way
+   * Obsidian's own filesystem watcher would.
    */
   private handleFsChanged(params: FsChangedParams): void {
     if (!this.dataAdapter) return;
@@ -415,17 +416,93 @@ export default class RemoteSshPlugin extends Plugin {
 
     this.dataAdapter.invalidateRemotePath(action.remotePath);
 
-    const eventName = mapFsChangeToVaultEvent(params.event);
-    if (!eventName) return;
+    let newVaultPath: string | undefined;
+    if (params.event === 'renamed' && params.newPath) {
+      const newAction = interpretWatchEvent(params.newPath, this.activePathMapper);
+      if (newAction) {
+        this.dataAdapter.invalidateRemotePath(newAction.remotePath);
+        newVaultPath = newAction.vaultPath;
+      }
+    }
 
-    const file = this.app.vault.getAbstractFileByPath(action.vaultPath);
-    if (!file) return;
-    // Vault.trigger is inherited from Events; dispatching the same
-    // events Obsidian's own scanner would dispatch lets editors and
-    // plugins react to remote-side edits without us having to reach
-    // into private internals.
-    (this.app.vault as unknown as { trigger: (name: string, ...args: unknown[]) => void })
-      .trigger(eventName, file);
+    // Reconcile is async (it stats through the patched SFTP adapter).
+    // The notification handler is sync, so we kick the work off and
+    // log any failure rather than letting it bubble up to RpcClient.
+    void this.reconcileVaultPath(action.vaultPath, newVaultPath, params.event);
+  }
+
+  /**
+   * Push a single path through `app.vault.adapter.reconcileFile` (or
+   * `reconcileFolder`) so Obsidian's vault model reflects what the
+   * daemon just told us happened on disk.
+   *
+   * `reconcileFile` and `reconcileFolder` are private FileSystemAdapter
+   * methods. They are not in the public typings, but are de-facto
+   * stable across recent Obsidian versions and are the same API
+   * Obsidian's own filesystem watcher uses. We try-call them and fall
+   * back to a `vault.trigger('modify', ...)` for known files when
+   * they're missing — that fallback only handles in-place edits, but
+   * it's still better than nothing on an Obsidian build that has
+   * dropped the API.
+   */
+  private async reconcileVaultPath(
+    oldVaultPath: string,
+    newVaultPath: string | undefined,
+    event: FsChangedParams['event'],
+  ): Promise<void> {
+    const adapter = this.app.vault.adapter as unknown as ReconcileCapableAdapter;
+    const isRename = newVaultPath !== undefined && newVaultPath !== oldVaultPath;
+    const targetPath = newVaultPath ?? oldVaultPath;
+
+    // Decide file vs folder. After a delete the stat will fail, so
+    // fall back to whatever Obsidian still has cached for the old path.
+    let isFolder = false;
+    try {
+      const s = await this.app.vault.adapter.stat(targetPath);
+      if (s) {
+        isFolder = s.type === 'folder';
+      } else {
+        isFolder = this.lookupIsFolder(oldVaultPath);
+      }
+    } catch {
+      isFolder = this.lookupIsFolder(oldVaultPath);
+    }
+
+    const reconcile = isFolder ? adapter.reconcileFolder : adapter.reconcileFile;
+    if (typeof reconcile === 'function') {
+      try {
+        await reconcile.call(adapter, targetPath, isRename ? oldVaultPath : undefined);
+        return;
+      } catch (e) {
+        logger.warn(`reconcile (${event}) failed for ${targetPath}: ${(e as Error).message}`);
+        return;
+      }
+    }
+
+    // Fallback path: Obsidian build doesn't expose reconcile*. We can
+    // still service in-place edits on already-known files via trigger;
+    // creates / deletes / renames will only show up after a reload.
+    logger.warn(
+      'adapter.reconcileFile/reconcileFolder unavailable on this Obsidian build; ' +
+      `falling back to vault.trigger for ${event} ${targetPath}`,
+    );
+    const file = this.app.vault.getAbstractFileByPath(oldVaultPath);
+    if (file && event === 'modified') {
+      (this.app.vault as unknown as { trigger: (name: string, ...args: unknown[]) => void })
+        .trigger('modify', file);
+    }
+  }
+
+  /**
+   * Best-effort "is the path a folder" check using whatever Obsidian
+   * still has in its in-memory model. Used as a fallback when stat
+   * fails (e.g. after a delete) so we still pick the right reconcile
+   * variant.
+   */
+  private lookupIsFolder(vaultPath: string): boolean {
+    const af = this.app.vault.getAbstractFileByPath(vaultPath);
+    if (!af) return false;
+    return (af as { children?: unknown }).children !== undefined;
   }
 
   /**
@@ -623,19 +700,12 @@ export default class RemoteSshPlugin extends Plugin {
 }
 
 /**
- * Map the daemon's `fs.changed` event names onto Obsidian's vault
- * event names. Returns `null` for events we don't surface — `renamed`
- * needs both old and new paths and the cache invalidation already
- * happened, so dispatching a partial event would just confuse plugins.
+ * Shape of `app.vault.adapter` we rely on for reconciliation. The
+ * methods are not part of Obsidian's public DataAdapter typings — we
+ * reach them via FileSystemAdapter's private surface and try-call
+ * them, so the type is intentionally narrow and optional.
  */
-function mapFsChangeToVaultEvent(
-  e: FsChangedParams['event'],
-): 'create' | 'modify' | 'delete' | null {
-  switch (e) {
-    case 'created':  return 'create';
-    case 'modified': return 'modify';
-    case 'deleted':  return 'delete';
-    case 'renamed':  return null;
-    default:         return null;
-  }
+interface ReconcileCapableAdapter {
+  reconcileFile?: (realPath: string, oldRealPath?: string) => Promise<void>;
+  reconcileFolder?: (realPath: string, oldRealPath?: string) => Promise<void>;
 }
