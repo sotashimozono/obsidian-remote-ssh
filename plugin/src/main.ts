@@ -10,6 +10,7 @@ import { ReadCache } from './cache/ReadCache';
 import { DirCache } from './cache/DirCache';
 import { SftpDataAdapter } from './adapter/SftpDataAdapter';
 import { AdapterPatcher } from './adapter/AdapterPatcher';
+import { ResourceBridge } from './adapter/ResourceBridge';
 import { SftpRemoteFsClient } from './adapter/SftpRemoteFsClient';
 import { RpcRemoteFsClient } from './adapter/RpcRemoteFsClient';
 import { establishRpcConnection } from './transport/RpcConnection';
@@ -35,6 +36,8 @@ const PATCHED_METHODS = [
   'mkdir', 'remove', 'rmdir', 'rename', 'copy',
   // trash
   'trashSystem', 'trashLocal',
+  // resources (binary URL for <img> / <iframe> / <audio>)
+  'getResourcePath',
 ] as const;
 
 export default class RemoteSshPlugin extends Plugin {
@@ -61,6 +64,8 @@ export default class RemoteSshPlugin extends Plugin {
   private rpcWatchHandlerDisposer: (() => void) | null = null;
   /** PathMapper used by the active patched adapter; needed to interpret fs.changed paths. */
   private activePathMapper: PathMapper | null = null;
+  /** Localhost HTTP bridge serving binary vault assets to the webview. */
+  private resourceBridge: ResourceBridge | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -315,7 +320,7 @@ export default class RemoteSshPlugin extends Plugin {
     if (wasActive) new Notice('Remote SSH: Disconnected');
   }
 
-  private debugPatchAdapter(): void {
+  private async debugPatchAdapter(): Promise<void> {
     if (this.state !== SyncState.CONNECTED || !this.activeRemoteBasePath) {
       new Notice('Remote SSH: connect first');
       return;
@@ -342,6 +347,19 @@ export default class RemoteSshPlugin extends Plugin {
     const clientId = defaultClientId();
     const mapper = new PathMapper(clientId);
     logger.info(`PathMapper: clientId="${clientId}"`);
+
+    // Spin up the localhost binary bridge so getResourcePath has
+    // somewhere to send Obsidian. The bridge is best-effort: if it
+    // fails to bind we still patch and just lose image rendering.
+    const bridge = new ResourceBridge();
+    try {
+      await bridge.start(p => this.fetchBinaryForBridge(p));
+      this.resourceBridge = bridge;
+    } catch (e) {
+      logger.warn(`ResourceBridge: start failed: ${(e as Error).message}`);
+      this.resourceBridge = null;
+    }
+
     this.dataAdapter = new SftpDataAdapter(
       fsClient,
       this.activeRemoteBasePath,
@@ -349,6 +367,7 @@ export default class RemoteSshPlugin extends Plugin {
       this.dirCache,
       this.app.vault.getName(),
       mapper,
+      this.resourceBridge,
     );
     this.patcher = new AdapterPatcher(targetAdapter, this.dataAdapter);
     try {
@@ -362,6 +381,9 @@ export default class RemoteSshPlugin extends Plugin {
       this.dataAdapter = null;
       this.readCache = null;
       this.dirCache = null;
+      // Patch failed before we ever served a URL, so no point keeping
+      // the bridge alive for nobody.
+      void this.stopResourceBridge();
       new Notice(`Adapter patch failed: ${(e as Error).message}`);
       return;
     }
@@ -554,6 +576,33 @@ export default class RemoteSshPlugin extends Plugin {
     this.dataAdapter = null;
     this.readCache = null;
     this.dirCache = null;
+    // Bridge tears down asynchronously; we don't await here because
+    // restoreAdapter must remain sync for the connection-close hook.
+    void this.stopResourceBridge();
+  }
+
+  /**
+   * Bridge → adapter glue: fetch a binary asset through the patched
+   * adapter so the bridge benefits from caching and PathMapper
+   * translation. Returns `Uint8Array` as the bridge expects.
+   */
+  private async fetchBinaryForBridge(vaultPath: string): Promise<Uint8Array> {
+    if (!this.dataAdapter) {
+      throw new Error('adapter is not patched');
+    }
+    return this.dataAdapter.fetchBinaryForBridge(vaultPath);
+  }
+
+  /** Stop the resource bridge if running. Idempotent. */
+  private async stopResourceBridge(): Promise<void> {
+    const bridge = this.resourceBridge;
+    if (!bridge) return;
+    this.resourceBridge = null;
+    try {
+      await bridge.stop();
+    } catch (e) {
+      logger.warn(`ResourceBridge: stop failed: ${(e as Error).message}`);
+    }
   }
 
   private async debugListRoot(): Promise<void> {

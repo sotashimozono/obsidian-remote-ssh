@@ -3,6 +3,7 @@ import type { RemoteFsClient } from './RemoteFsClient';
 import type { ReadCache } from '../cache/ReadCache';
 import type { DirCache } from '../cache/DirCache';
 import type { PathMapper } from '../path/PathMapper';
+import type { ResourceBridge } from './ResourceBridge';
 import type { RemoteEntry } from '../types';
 import { logger } from '../util/logger';
 
@@ -21,8 +22,12 @@ import { logger } from '../util/logger';
  * dependency from the concrete `SftpClient` to the narrow
  * `RemoteFsClient` interface.
  *
- * `getResourcePath` is intentionally not implemented yet; Phase 4-I
- * will add a localhost HTTP bridge for binary serving.
+ * `getResourcePath` returns a `http://127.0.0.1:<port>/r/<token>?p=…`
+ * URL served by an optional `ResourceBridge` (Phase 5-F). When no
+ * bridge is wired the method falls back to a `data:` URL with no
+ * payload, which Obsidian will fail to render — that's acceptable
+ * because resource serving is a feature of the patched adapter, not
+ * a hard requirement of the interface.
  *
  * Path translation is currently a straight join of `remoteBasePath`
  * and the vault-relative `normalizedPath`. The per-client user-cache
@@ -45,6 +50,13 @@ export class SftpDataAdapter {
      * Phase 4-J0.
      */
     private pathMapper: PathMapper | null = null,
+    /**
+     * Optional localhost HTTP bridge that serves binary content to the
+     * Obsidian webview. When supplied, `getResourcePath` returns a
+     * bridge URL so `<img>`, `<iframe>`, `<audio>` etc. can render
+     * remote-vault assets.
+     */
+    private resourceBridge: ResourceBridge | null = null,
   ) {}
 
   // ─── DataAdapter (read-side) ─────────────────────────────────────────────
@@ -151,6 +163,31 @@ export class SftpDataAdapter {
     const ab = new ArrayBuffer(buf.byteLength);
     new Uint8Array(ab).set(buf);
     return ab;
+  }
+
+  /**
+   * URL the Obsidian webview should fetch to render this asset. If
+   * the ResourceBridge is wired, the URL hits its localhost server
+   * (which calls back into this adapter's `readBinary` for the bytes,
+   * with all the cache + path-mapping logic intact). Without a bridge
+   * we hand back an empty `data:` URL — the asset won't render, but
+   * the read path is the only one that actually needs the bridge.
+   */
+  getResourcePath(normalizedPath: string): string {
+    if (this.resourceBridge && this.resourceBridge.isRunning()) {
+      return this.resourceBridge.urlFor(normalizedPath);
+    }
+    return 'data:application/octet-stream;base64,';
+  }
+
+  /**
+   * Read a vault-relative binary asset and hand back a `Uint8Array`.
+   * Wraps `readBinary` for the bridge's GET handler — ArrayBuffer ↔
+   * Uint8Array is just a view, not a copy.
+   */
+  async fetchBinaryForBridge(normalizedPath: string): Promise<Uint8Array> {
+    const ab = await this.readBinary(normalizedPath);
+    return new Uint8Array(ab);
   }
 
   // ─── DataAdapter (write-side) ────────────────────────────────────────────
