@@ -73,6 +73,21 @@ export class SettingsTab extends PluginSettingTab {
         }));
 
     containerEl.createEl('h3', { text: 'Advanced' });
+
+    new Setting(containerEl)
+      .setName('Auto-patch adapter on connect')
+      .setDesc(
+        'When on, connecting to a profile immediately routes vault reads/writes '
+        + 'through the remote — the equivalent of "open folder on host" in VSCode '
+        + 'Remote-SSH. Turn off only for plugin development, when you want to '
+        + 'inspect the pre-patch state and use the Debug commands manually.',
+      )
+      .addToggle(t => t.setValue(this.plugin.settings.autoPatchAdapter)
+        .onChange(async v => {
+          this.plugin.settings.autoPatchAdapter = v;
+          await this.plugin.saveSettings();
+        }));
+
     new Setting(containerEl)
       .setName('Debug logging')
       .addToggle(t => t.setValue(this.plugin.settings.enableDebugLog)

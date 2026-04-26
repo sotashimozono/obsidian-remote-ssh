@@ -18,7 +18,7 @@ import { ServerDeployer } from './transport/ServerDeployer';
 import { ReconnectManager } from './transport/ReconnectManager';
 import type { ReconnectState } from './transport/ReconnectManager';
 import { DEFAULT_BACKOFF } from './transport/Backoff';
-import { PathMapper, defaultClientId, sanitizeClientId } from './path/PathMapper';
+import { PathMapper, defaultClientId, defaultUserName, sanitizeClientId } from './path/PathMapper';
 import { interpretWatchEvent } from './path/WatchEventFilter';
 import type { FsChangedParams } from './proto/types';
 import * as fs from 'fs';
@@ -254,19 +254,43 @@ export default class RemoteSshPlugin extends Plugin {
       }
     }
 
-    // Adapter is NOT patched on connect: Obsidian still has paths it expects
-    // to read locally (`.obsidian/workspace.json`, plugin data, etc.) until
-    // PathMapper (Phase 4-J0) can redirect those to a per-client subtree.
-    // Use the "Debug: patch adapter" command to opt in for now.
     this.activeRemoteBasePath = effectivePath;
     this.activeProfile = profile;
     this.setState(SyncState.CONNECTED);
     this.settings.activeProfileId = profile.id;
     await this.saveSettings();
+
+    // Auto-patch is the VSCode Remote-SSH equivalent of "open folder
+    // on host" — without it the user sees a connected status bar but
+    // their vault is still local-only. We default to ON; debug
+    // workflows opt out via settings.
+    if (this.settings.autoPatchAdapter) {
+      const patched = await this.patchAdapter();
+      if (!patched) {
+        new Notice('Remote SSH: adapter patch failed — disconnecting');
+        await this.disconnect().catch(() => { /* already errored */ });
+        return;
+      }
+    }
+
+    const userLabel = this.formatUserLabel();
+    const patchSuffix = this.settings.autoPatchAdapter
+      ? ''
+      : ' (adapter NOT patched — autoPatchAdapter is off)';
     new Notice(
-      `Remote SSH: Connected to ${profile.name} via ${transport.toUpperCase()}${rpcSummary} ` +
-      `(adapter NOT patched — use "Debug: patch adapter" to opt in)`,
+      `Remote SSH: Connected to ${profile.name} as ${userLabel} via ${transport.toUpperCase()}${rpcSummary}${patchSuffix}`,
     );
+  }
+
+  /**
+   * Build a `userName@clientId` label using the active settings,
+   * with sensible fallbacks. Used for the connect notice and (later)
+   * for any presence info written alongside the per-client subtree.
+   */
+  private formatUserLabel(): string {
+    const userName = (this.settings.userName?.trim() || defaultUserName());
+    const clientId = this.resolveClientId();
+    return `${userName}@${clientId}`;
   }
 
   /**
@@ -532,14 +556,24 @@ export default class RemoteSshPlugin extends Plugin {
     if (wasActive) new Notice('Remote SSH: Disconnected');
   }
 
-  private async debugPatchAdapter(): Promise<void> {
+  /**
+   * Build the SftpDataAdapter, start the ResourceBridge, monkey-patch
+   * `app.vault.adapter`, and subscribe to fs.watch when the active
+   * transport is RPC.
+   *
+   * Returns true on success, false on failure. Silent — the caller
+   * decides what notice (if any) to surface; both
+   * `connectProfile`'s auto-patch and the manual debug command have
+   * different opinions on phrasing.
+   */
+  private async patchAdapter(): Promise<boolean> {
     if (this.state !== SyncState.CONNECTED || !this.activeRemoteBasePath) {
-      new Notice('Remote SSH: connect first');
-      return;
+      logger.warn('patchAdapter: state is not CONNECTED');
+      return false;
     }
     if (this.patcher?.isPatched()) {
-      new Notice('Remote SSH: adapter already patched');
-      return;
+      logger.info('patchAdapter: adapter already patched');
+      return true;
     }
     const targetAdapter = this.app.vault.adapter as unknown as object;
     this.readCache = new ReadCache();
@@ -586,7 +620,6 @@ export default class RemoteSshPlugin extends Plugin {
       this.patcher.patch(PATCHED_METHODS as unknown as ReadonlyArray<keyof object & string>);
       this.activePathMapper = mapper;
       logger.info(`Adapter patched via ${transportLabel}: [${PATCHED_METHODS.join(', ')}]`);
-      new Notice(`Remote SSH: adapter patched via ${transportLabel} (${PATCHED_METHODS.length} methods)`);
     } catch (e) {
       logger.error(`Adapter patch failed: ${(e as Error).message}`);
       this.patcher = null;
@@ -596,14 +629,38 @@ export default class RemoteSshPlugin extends Plugin {
       // Patch failed before we ever served a URL, so no point keeping
       // the bridge alive for nobody.
       void this.stopResourceBridge();
-      new Notice(`Adapter patch failed: ${(e as Error).message}`);
-      return;
+      return false;
     }
 
     // Live-update subscription is only meaningful on the RPC transport;
     // the SFTP fallback has no notification channel.
     if (this.rpcConnection) {
       void this.subscribeToFsChanged();
+    }
+    return true;
+  }
+
+  /**
+   * Manual command-palette entry point for adapter patching. Used
+   * during development to inspect pre-patch behaviour or to re-patch
+   * after a manual restore — `connectProfile` runs the same flow
+   * automatically when `settings.autoPatchAdapter` is true.
+   */
+  private async debugPatchAdapter(): Promise<void> {
+    if (this.state !== SyncState.CONNECTED || !this.activeRemoteBasePath) {
+      new Notice('Remote SSH: connect first');
+      return;
+    }
+    if (this.patcher?.isPatched()) {
+      new Notice('Remote SSH: adapter already patched');
+      return;
+    }
+    const transportLabel = this.rpcConnection ? 'RPC' : 'SFTP';
+    const ok = await this.patchAdapter();
+    if (ok) {
+      new Notice(`Remote SSH: adapter patched via ${transportLabel} (${PATCHED_METHODS.length} methods)`);
+    } else {
+      new Notice('Remote SSH: adapter patch failed (see console.log)');
     }
   }
 
