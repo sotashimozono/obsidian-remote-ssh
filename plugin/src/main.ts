@@ -17,6 +17,7 @@ import { establishRpcConnection } from './transport/RpcConnection';
 import { ServerDeployer } from './transport/ServerDeployer';
 import { ReconnectManager } from './transport/ReconnectManager';
 import type { ReconnectState } from './transport/ReconnectManager';
+import { DEFAULT_BACKOFF } from './transport/Backoff';
 import { PathMapper, defaultClientId } from './path/PathMapper';
 import { interpretWatchEvent } from './path/WatchEventFilter';
 import type { FsChangedParams } from './proto/types';
@@ -116,6 +117,17 @@ export default class RemoteSshPlugin extends Plugin {
       id: 'disconnect',
       name: 'Disconnect from remote vault',
       callback: () => this.disconnect(),
+    });
+
+    this.addCommand({
+      id: 'cancel-reconnect',
+      name: 'Cancel ongoing reconnect',
+      checkCallback: (checking) => {
+        const active = this.reconnectManager?.isActive() ?? false;
+        if (checking) return active;
+        if (active) void this.cancelReconnect();
+        return true;
+      },
     });
 
     this.addCommand({
@@ -308,6 +320,25 @@ export default class RemoteSshPlugin extends Plugin {
   }
 
   /**
+   * User-driven cancel of the in-flight reconnect loop. Differs from
+   * `disconnect()` in that it doesn't try to stop a daemon (the SSH
+   * session is already dead) and it leaves `activeProfileId` alone so
+   * the user can hit "connect" again from the StatusBar without
+   * picking the profile again.
+   */
+  private async cancelReconnect(): Promise<void> {
+    if (!this.reconnectManager?.isActive()) return;
+    this.reconnectManager.cancel();
+    this.reconnectManager = null;
+    // Drop the patched adapter so Obsidian stops fielding "reconnecting"
+    // errors and falls back to the original FileSystemAdapter; the
+    // user is on their own to reconnect.
+    this.restoreAdapter();
+    this.setState(SyncState.ERROR);
+    new Notice('Remote SSH: Reconnect cancelled');
+  }
+
+  /**
    * Drive the reconnect loop after an unexpected SSH drop.
    *
    * Idempotent: a second unexpected close while a loop is already
@@ -321,10 +352,27 @@ export default class RemoteSshPlugin extends Plugin {
       this.setState(SyncState.ERROR);
       return;
     }
+    const maxRetries = this.settings.reconnectMaxRetries ?? DEFAULT_SETTINGS.reconnectMaxRetries;
+    if (maxRetries <= 0) {
+      // Auto-reconnect disabled — fall back to the pre-Phase-4-K
+      // behaviour: tear the patched adapter down and park on ERROR.
+      logger.info('startReconnect: auto-reconnect disabled (reconnectMaxRetries <= 0)');
+      this.restoreAdapter();
+      this.setState(SyncState.ERROR);
+      return;
+    }
     this.setState(SyncState.RECONNECTING);
+    // Park every adapter call on a deterministic "reconnecting" error
+    // (read-from-cache where possible) so write attempts during the
+    // outage don't silently corrupt remote state.
+    this.dataAdapter?.setReconnecting(true);
     const manager = new ReconnectManager({
       attempt: () => this.reconnectAttempt(),
       onState: (s) => this.onReconnectStateChange(s),
+      backoff: {
+        ...DEFAULT_BACKOFF,
+        maxRetries,
+      },
     });
     this.reconnectManager = manager;
     await manager.run();
@@ -405,18 +453,21 @@ export default class RemoteSshPlugin extends Plugin {
         `Remote SSH: Reconnecting (attempt ${s.attempt}/${s.totalAttempts})…`,
       );
     } else if (s.kind === 'recovered') {
+      this.dataAdapter?.setReconnecting(false);
       this.setState(SyncState.CONNECTED);
       new Notice('Remote SSH: Reconnected');
       this.reconnectManager = null;
     } else if (s.kind === 'failed') {
       // Give up: tear the patched adapter down so Obsidian falls
       // back to local file:// reads instead of blocking forever on a
-      // dead transport.
+      // dead transport. restoreAdapter clears dataAdapter so the
+      // setReconnecting flag goes with it.
       this.restoreAdapter();
       this.setState(SyncState.ERROR);
       new Notice(`Remote SSH: Reconnect failed — ${s.reason}`);
       this.reconnectManager = null;
     } else if (s.kind === 'cancelled') {
+      this.dataAdapter?.setReconnecting(false);
       this.reconnectManager = null;
     }
   }

@@ -41,6 +41,20 @@ export class SettingsTab extends PluginSettingTab {
           const { logger } = await import('../util/logger');
           logger.setDebug(v);
         }));
+
+    new Setting(containerEl)
+      .setName('Reconnect attempts after unexpected disconnect')
+      .setDesc('Number of times to retry the connection with exponential backoff before giving up. Set to 0 to disable auto-reconnect.')
+      .addText(t => t
+        .setPlaceholder('5')
+        .setValue(String(this.plugin.settings.reconnectMaxRetries))
+        .onChange(async v => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n >= 0 && n <= 100) {
+            this.plugin.settings.reconnectMaxRetries = n;
+            await this.plugin.saveSettings();
+          }
+        }));
   }
 
   private renderProfileRow(containerEl: HTMLElement, profile: SshProfile) {
