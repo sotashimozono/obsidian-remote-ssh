@@ -155,17 +155,110 @@ export class ResourceBridge {
     }
 
     const contentType = guessMimeType(rawPath);
-    res.writeHead(200, {
+    const total = bytes.byteLength;
+
+    // Range support. We always advertise byte ranges in 200 responses;
+    // when the client asks for a range we respond with 206 and a
+    // sliced body. Note: we still load the *full* bytes through
+    // fetchBinary above — true partial reads would need
+    // `fs.readBinaryRange` in the daemon protocol (Phase 6-B.2).
+    // ReadCache means repeated range requests for the same file
+    // don't re-read across the SSH link as long as it fits.
+    const rangeHeader = req.headers.range;
+    const parsed = rangeHeader ? parseRangeHeader(rangeHeader, total) : 'none';
+
+    if (parsed === 'invalid') {
+      res.writeHead(416, {
+        'Content-Range': `bytes */${total}`,
+        'Cache-Control': 'no-store',
+      }).end();
+      return;
+    }
+
+    if (parsed === 'none') {
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Content-Length': total,
+        'Cache-Control': 'no-store',
+        'Accept-Ranges': 'bytes',
+      });
+      if (req.method === 'HEAD') {
+        res.end();
+      } else {
+        res.end(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+      }
+      return;
+    }
+
+    const { start, end } = parsed;
+    const sliceLen = end - start + 1;
+    res.writeHead(206, {
       'Content-Type': contentType,
-      'Content-Length': bytes.byteLength,
+      'Content-Length': sliceLen,
+      'Content-Range': `bytes ${start}-${end}/${total}`,
       'Cache-Control': 'no-store',
+      'Accept-Ranges': 'bytes',
     });
     if (req.method === 'HEAD') {
       res.end();
     } else {
-      res.end(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+      const slice = bytes.subarray(start, end + 1);
+      res.end(Buffer.from(slice.buffer, slice.byteOffset, slice.byteLength));
     }
   }
+}
+
+/**
+ * Parse an HTTP `Range:` header against a known total resource size.
+ * Pure function so the rules can be unit-tested without spinning up
+ * a server.
+ *
+ * Returns:
+ *   - `'invalid'` for syntactically broken or out-of-range requests
+ *     (caller should reply 416 with `Content-Range: bytes *\/total`)
+ *   - `{start, end}` for a satisfiable single-range request (caller
+ *     should reply 206 with `Content-Range: bytes start-end/total`)
+ *
+ * Multi-range (`bytes=0-50,100-150`) is intentionally rejected as
+ * invalid — the webview only ever asks for one range at a time, and
+ * supporting multipart/byteranges is a much bigger change.
+ *
+ * Forms understood (mirroring RFC 7233):
+ *   - `bytes=N-M`      — explicit start and end (inclusive)
+ *   - `bytes=N-`       — from N to the end of the resource
+ *   - `bytes=-N`       — last N bytes (a "suffix" range)
+ */
+export function parseRangeHeader(
+  headerValue: string,
+  totalSize: number,
+): { start: number; end: number } | 'invalid' {
+  if (totalSize <= 0) return 'invalid';
+  const m = /^bytes=(\d*)-(\d*)$/.exec(headerValue.trim());
+  if (!m) return 'invalid';
+  const startStr = m[1];
+  const endStr = m[2];
+  let start: number;
+  let end: number;
+  if (startStr === '' && endStr === '') return 'invalid';
+  if (startStr === '') {
+    // Suffix range: last N bytes.
+    const n = parseInt(endStr, 10);
+    if (!Number.isFinite(n) || n <= 0) return 'invalid';
+    start = Math.max(0, totalSize - n);
+    end = totalSize - 1;
+  } else if (endStr === '') {
+    start = parseInt(startStr, 10);
+    end = totalSize - 1;
+  } else {
+    start = parseInt(startStr, 10);
+    end = parseInt(endStr, 10);
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 'invalid';
+  if (start < 0 || start >= totalSize) return 'invalid';
+  if (end < start) return 'invalid';
+  // Spec allows clamping a too-large end; do so.
+  if (end >= totalSize) end = totalSize - 1;
+  return { start, end };
 }
 
 /**

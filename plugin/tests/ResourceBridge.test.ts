@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as http from 'http';
-import { ResourceBridge } from '../src/adapter/ResourceBridge';
+import { ResourceBridge, parseRangeHeader } from '../src/adapter/ResourceBridge';
 
 /**
  * End-to-end tests against a real localhost http.Server. The bridge is
@@ -158,7 +158,10 @@ describe('ResourceBridge', () => {
  * pulling in a fetch polyfill — vitest's `node` environment doesn't
  * always have one configured here.
  */
-function fetchUrl(rawUrl: string): Promise<{
+function fetchUrl(
+  rawUrl: string,
+  extraHeaders: http.OutgoingHttpHeaders = {},
+): Promise<{
   statusCode: number;
   headers: http.IncomingHttpHeaders;
   body: Buffer;
@@ -166,7 +169,13 @@ function fetchUrl(rawUrl: string): Promise<{
   return new Promise((resolve, reject) => {
     const u = new URL(rawUrl);
     const req = http.request(
-      { host: u.hostname, port: u.port, path: u.pathname + u.search, method: 'GET' },
+      {
+        host: u.hostname,
+        port: u.port,
+        path: u.pathname + u.search,
+        method: 'GET',
+        headers: extraHeaders,
+      },
       res => {
         const chunks: Buffer[] = [];
         res.on('data', c => chunks.push(c));
@@ -182,3 +191,104 @@ function fetchUrl(rawUrl: string): Promise<{
     req.end();
   });
 }
+
+describe('parseRangeHeader', () => {
+  it('parses an explicit start-end range', () => {
+    expect(parseRangeHeader('bytes=0-99', 1000)).toEqual({ start: 0, end: 99 });
+    expect(parseRangeHeader('bytes=100-199', 1000)).toEqual({ start: 100, end: 199 });
+  });
+
+  it('parses an open-ended range as start..total-1', () => {
+    expect(parseRangeHeader('bytes=500-', 1000)).toEqual({ start: 500, end: 999 });
+  });
+
+  it('parses a suffix range as last N bytes', () => {
+    expect(parseRangeHeader('bytes=-100', 1000)).toEqual({ start: 900, end: 999 });
+  });
+
+  it('clamps an end past total-1', () => {
+    expect(parseRangeHeader('bytes=100-9999', 1000)).toEqual({ start: 100, end: 999 });
+  });
+
+  it('rejects malformed headers as invalid', () => {
+    expect(parseRangeHeader('items=0-100', 1000)).toBe('invalid');
+    expect(parseRangeHeader('bytes=', 1000)).toBe('invalid');
+    expect(parseRangeHeader('bytes=-', 1000)).toBe('invalid');
+    expect(parseRangeHeader('bytes=abc-100', 1000)).toBe('invalid');
+    expect(parseRangeHeader('bytes=0-50,100-150', 1000)).toBe('invalid');
+  });
+
+  it('rejects a start past total', () => {
+    expect(parseRangeHeader('bytes=2000-', 1000)).toBe('invalid');
+  });
+
+  it('rejects start > end', () => {
+    expect(parseRangeHeader('bytes=200-100', 1000)).toBe('invalid');
+  });
+
+  it('rejects a suffix range of 0 bytes', () => {
+    expect(parseRangeHeader('bytes=-0', 1000)).toBe('invalid');
+  });
+
+  it('rejects all ranges on an empty resource', () => {
+    expect(parseRangeHeader('bytes=0-', 0)).toBe('invalid');
+  });
+});
+
+describe('ResourceBridge Range responses', () => {
+  let bridge: ResourceBridge;
+  beforeEach(() => { bridge = new ResourceBridge(); });
+  afterEach(async () => { await bridge.stop(); });
+
+  it('advertises Accept-Ranges: bytes on a regular 200 response', async () => {
+    await bridge.start(async () => new TextEncoder().encode('hello world'));
+    const r = await fetchUrl(bridge.urlFor('a.txt'));
+    expect(r.statusCode).toBe(200);
+    expect(r.headers['accept-ranges']).toBe('bytes');
+  });
+
+  it('serves 206 Partial Content for a valid Range', async () => {
+    const payload = new TextEncoder().encode('hello world'); // 11 bytes
+    await bridge.start(async () => payload);
+    const r = await fetchUrl(bridge.urlFor('a.txt'), { Range: 'bytes=6-10' });
+    expect(r.statusCode).toBe(206);
+    expect(r.headers['content-range']).toBe('bytes 6-10/11');
+    expect(Number(r.headers['content-length'])).toBe(5);
+    expect(r.body.toString('utf8')).toBe('world');
+  });
+
+  it('serves 206 for a suffix range', async () => {
+    const payload = new TextEncoder().encode('hello world');
+    await bridge.start(async () => payload);
+    const r = await fetchUrl(bridge.urlFor('a.txt'), { Range: 'bytes=-5' });
+    expect(r.statusCode).toBe(206);
+    expect(r.headers['content-range']).toBe('bytes 6-10/11');
+    expect(r.body.toString('utf8')).toBe('world');
+  });
+
+  it('serves 206 for an open-ended range', async () => {
+    const payload = new TextEncoder().encode('hello world');
+    await bridge.start(async () => payload);
+    const r = await fetchUrl(bridge.urlFor('a.txt'), { Range: 'bytes=6-' });
+    expect(r.statusCode).toBe(206);
+    expect(r.headers['content-range']).toBe('bytes 6-10/11');
+    expect(r.body.toString('utf8')).toBe('world');
+  });
+
+  it('returns 416 with Content-Range: bytes */N for an invalid range', async () => {
+    const payload = new TextEncoder().encode('hello world');
+    await bridge.start(async () => payload);
+    const r = await fetchUrl(bridge.urlFor('a.txt'), { Range: 'bytes=2000-3000' });
+    expect(r.statusCode).toBe(416);
+    expect(r.headers['content-range']).toBe('bytes */11');
+  });
+
+  it('clamps a too-large end and serves 206', async () => {
+    const payload = new TextEncoder().encode('hello world');
+    await bridge.start(async () => payload);
+    const r = await fetchUrl(bridge.urlFor('a.txt'), { Range: 'bytes=6-9999' });
+    expect(r.statusCode).toBe(206);
+    expect(r.headers['content-range']).toBe('bytes 6-10/11');
+    expect(r.body.toString('utf8')).toBe('world');
+  });
+});
