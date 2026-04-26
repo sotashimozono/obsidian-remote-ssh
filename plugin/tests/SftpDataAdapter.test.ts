@@ -640,4 +640,66 @@ describe('SftpDataAdapter (read-side)', () => {
       expect(newClient.client.stat).toHaveBeenCalled();
     });
   });
+
+  describe('setReconnecting (gate)', () => {
+    it('serves reads from the cache while reconnecting', async () => {
+      const fake = makeFakeClient({
+        files: { '/v/note.md': { data: Buffer.from('CACHED'), mtime: 1 } },
+      });
+      const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+      await adapter.read('note.md'); // prime cache
+      fake.client.stat.mockClear();
+      fake.client.readBinary.mockClear();
+      adapter.setReconnecting(true);
+      // Cached read is served without touching the (dead) client.
+      expect(await adapter.read('note.md')).toBe('CACHED');
+      expect(fake.client.stat).not.toHaveBeenCalled();
+      expect(fake.client.readBinary).not.toHaveBeenCalled();
+    });
+
+    it('throws on a cache miss while reconnecting', async () => {
+      const fake = makeFakeClient({});
+      const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+      adapter.setReconnecting(true);
+      await expect(adapter.read('absent.md')).rejects.toThrow(/reconnecting/i);
+    });
+
+    it('throws on every write-side method while reconnecting', async () => {
+      const fake = makeFakeClient({});
+      const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+      adapter.setReconnecting(true);
+      const ab = new ArrayBuffer(0);
+      await expect(adapter.write('a', 'x')).rejects.toThrow(/reconnecting/i);
+      await expect(adapter.writeBinary('a', ab)).rejects.toThrow(/reconnecting/i);
+      await expect(adapter.append('a', 'x')).rejects.toThrow(/reconnecting/i);
+      await expect(adapter.appendBinary('a', ab)).rejects.toThrow(/reconnecting/i);
+      await expect(adapter.process('a', x => x)).rejects.toThrow(/reconnecting/i);
+      await expect(adapter.mkdir('d')).rejects.toThrow(/reconnecting/i);
+      await expect(adapter.remove('a')).rejects.toThrow(/reconnecting/i);
+      await expect(adapter.rmdir('d', false)).rejects.toThrow(/reconnecting/i);
+      await expect(adapter.rename('a', 'b')).rejects.toThrow(/reconnecting/i);
+      await expect(adapter.copy('a', 'b')).rejects.toThrow(/reconnecting/i);
+      await expect(adapter.trashLocal('a')).rejects.toThrow(/reconnecting/i);
+    });
+
+    it('throws on stat / list / exists while reconnecting', async () => {
+      const fake = makeFakeClient({});
+      const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+      adapter.setReconnecting(true);
+      await expect(adapter.exists('x')).rejects.toThrow(/reconnecting/i);
+      await expect(adapter.stat('x')).rejects.toThrow(/reconnecting/i);
+      await expect(adapter.list('')).rejects.toThrow(/reconnecting/i);
+    });
+
+    it('returns to normal once the gate is cleared', async () => {
+      const fake = makeFakeClient({
+        files: { '/v/note.md': { data: Buffer.from('hi'), mtime: 9 } },
+      });
+      const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+      adapter.setReconnecting(true);
+      await expect(adapter.write('note.md', 'data')).rejects.toThrow(/reconnecting/i);
+      adapter.setReconnecting(false);
+      await expect(adapter.read('note.md')).resolves.toBe('hi');
+    });
+  });
 });

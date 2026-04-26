@@ -68,6 +68,12 @@ export interface PluginSettings {
   activeProfileId: string | null;
   enableDebugLog: boolean;
   maxLogLines: number;
+  /**
+   * Maximum number of reconnect attempts after an unexpected SSH
+   * drop. Default 5 (Backoff's DEFAULT_BACKOFF.maxRetries). Set to 0
+   * to disable auto-reconnect entirely.
+   */
+  reconnectMaxRetries: number;
 }
 
 export interface LogLine {

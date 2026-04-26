@@ -74,6 +74,28 @@ export class SftpDataAdapter {
     this.client = newClient;
   }
 
+  /** True between the start of a reconnect loop and its terminal state. */
+  private reconnecting = false;
+
+  /**
+   * Toggle the "reconnecting" gate. While set:
+   *  - read / readBinary serve cached values only and throw on miss
+   *  - list / stat / exists throw immediately (no cache fallback)
+   *  - any write-side method throws with a clear "reconnecting" notice
+   *
+   * The reconnect manager flips this on at loop start and off at
+   * recovered / failed / cancelled. Existing in-flight calls hit
+   * the dead transport and reject naturally — only *new* calls are
+   * affected by the gate.
+   */
+  setReconnecting(on: boolean): void {
+    this.reconnecting = on;
+  }
+
+  isReconnecting(): boolean {
+    return this.reconnecting;
+  }
+
   // ─── DataAdapter (read-side) ─────────────────────────────────────────────
 
   getName(): string {
@@ -81,10 +103,12 @@ export class SftpDataAdapter {
   }
 
   async exists(normalizedPath: string, _sensitive?: boolean): Promise<boolean> {
+    if (this.reconnecting) throw reconnectingError();
     return this.client.exists(this.toRemote(normalizedPath));
   }
 
   async stat(normalizedPath: string): Promise<Stat | null> {
+    if (this.reconnecting) throw reconnectingError();
     try {
       const s = await this.client.stat(this.toRemote(normalizedPath));
       return {
@@ -101,6 +125,7 @@ export class SftpDataAdapter {
   }
 
   async list(normalizedPath: string): Promise<ListedFiles> {
+    if (this.reconnecting) throw reconnectingError();
     const plan = this.planList(normalizedPath);
     const primaryRemote = this.joinRemote(plan.primary);
 
@@ -208,14 +233,17 @@ export class SftpDataAdapter {
   // ─── DataAdapter (write-side) ────────────────────────────────────────────
 
   async write(normalizedPath: string, data: string, _options?: DataWriteOptions): Promise<void> {
+    if (this.reconnecting) throw reconnectingError();
     await this.writeBuffer(normalizedPath, Buffer.from(data, 'utf8'));
   }
 
   async writeBinary(normalizedPath: string, data: ArrayBuffer, _options?: DataWriteOptions): Promise<void> {
+    if (this.reconnecting) throw reconnectingError();
     await this.writeBuffer(normalizedPath, Buffer.from(data));
   }
 
   async append(normalizedPath: string, data: string, options?: DataWriteOptions): Promise<void> {
+    if (this.reconnecting) throw reconnectingError();
     let existing = '';
     try { existing = await this.read(normalizedPath); }
     catch { /* file did not exist; start empty so append acts like create */ }
@@ -223,6 +251,7 @@ export class SftpDataAdapter {
   }
 
   async appendBinary(normalizedPath: string, data: ArrayBuffer, options?: DataWriteOptions): Promise<void> {
+    if (this.reconnecting) throw reconnectingError();
     let existing: Buffer;
     try { existing = await this.readBuffer(normalizedPath); }
     catch { existing = Buffer.alloc(0); }
@@ -241,6 +270,7 @@ export class SftpDataAdapter {
     fn: (data: string) => string,
     options?: DataWriteOptions,
   ): Promise<string> {
+    if (this.reconnecting) throw reconnectingError();
     const current = await this.read(normalizedPath);
     const next = fn(current);
     await this.write(normalizedPath, next, options);
@@ -248,12 +278,14 @@ export class SftpDataAdapter {
   }
 
   async mkdir(normalizedPath: string): Promise<void> {
+    if (this.reconnecting) throw reconnectingError();
     const remote = this.toRemote(normalizedPath);
     await this.client.mkdirp(remote);
     this.dirCache.invalidate(parentDirRemote(remote));
   }
 
   async remove(normalizedPath: string): Promise<void> {
+    if (this.reconnecting) throw reconnectingError();
     const remote = this.toRemote(normalizedPath);
     await this.client.remove(remote);
     this.readCache.invalidate(remote);
@@ -261,6 +293,7 @@ export class SftpDataAdapter {
   }
 
   async rmdir(normalizedPath: string, recursive: boolean): Promise<void> {
+    if (this.reconnecting) throw reconnectingError();
     const remote = this.toRemote(normalizedPath);
     await this.client.rmdir(remote, recursive);
     this.readCache.invalidatePrefix(remote);
@@ -269,6 +302,7 @@ export class SftpDataAdapter {
   }
 
   async rename(oldPath: string, newPath: string): Promise<void> {
+    if (this.reconnecting) throw reconnectingError();
     const oldRemote = this.toRemote(oldPath);
     const newRemote = this.toRemote(newPath);
     await this.client.mkdirp(parentDirRemote(newRemote));
@@ -281,6 +315,7 @@ export class SftpDataAdapter {
   }
 
   async copy(oldPath: string, newPath: string): Promise<void> {
+    if (this.reconnecting) throw reconnectingError();
     const oldRemote = this.toRemote(oldPath);
     const newRemote = this.toRemote(newPath);
     await this.client.mkdirp(parentDirRemote(newRemote));
@@ -305,6 +340,7 @@ export class SftpDataAdapter {
    * matches the desktop behaviour).
    */
   async trashLocal(normalizedPath: string): Promise<void> {
+    if (this.reconnecting) throw reconnectingError();
     const trashedPath = '.trash/' + normalizedPath;
     await this.rename(normalizedPath, trashedPath);
   }
@@ -323,6 +359,17 @@ export class SftpDataAdapter {
   private async readBuffer(normalizedPath: string): Promise<Buffer> {
     const remote = this.toRemote(normalizedPath);
     const cached = this.readCache.peek(remote);
+
+    // While reconnecting we can't talk to the remote at all. Serve
+    // whatever is already in the cache so already-open editors keep
+    // working; throw on a miss rather than block forever.
+    if (this.reconnecting) {
+      if (cached) {
+        this.readCache.get(remote); // bump LRU on hit
+        return cached.data;
+      }
+      throw reconnectingError();
+    }
 
     if (cached) {
       try {
@@ -425,4 +472,15 @@ function parentDirRemote(p: string): string {
   if (i < 0) return '';
   if (i === 0) return '/';
   return p.slice(0, i);
+}
+
+/**
+ * Stable error thrown by every adapter method while a reconnect is
+ * in flight. Distinguishes the "remote is temporarily unavailable"
+ * case from "file not found" / "permission denied" so callers (and
+ * the Obsidian editor in particular) can surface a friendly notice
+ * rather than a generic IO failure.
+ */
+function reconnectingError(): Error {
+  return new Error('Remote SSH: reconnecting — try again once the connection is restored');
 }

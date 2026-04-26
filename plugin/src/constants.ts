@@ -19,6 +19,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   activeProfileId: null,
   enableDebugLog: false,
   maxLogLines: 500,
+  reconnectMaxRetries: 5,
 };
 
 export const MAX_RETRY = 4;
