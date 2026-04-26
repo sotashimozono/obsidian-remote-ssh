@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -156,6 +157,48 @@ func (c *client) call(t *testing.T, method string, params interface{}) (json.Raw
 	}
 	if err := json.Unmarshal(reply, &env); err != nil {
 		t.Fatalf("unmarshal reply: %v\n%s", err, reply)
+	}
+	return env.Result, env.Error
+}
+
+// callNoFatal mirrors `call` but surfaces transport / decoding errors
+// in the returned ErrorObject instead of failing the test directly.
+// Useful from goroutines that race with test teardown — a t.Fatalf
+// from a side goroutine would mark the test failed even though the
+// only "error" is the listener being closed at exit time.
+func (c *client) callNoFatal(method string, params interface{}) (json.RawMessage, *proto.ErrorObject) {
+	c.nextID++
+	id := c.nextID
+	paramsBytes, err := json.Marshal(params)
+	if err != nil {
+		return nil, &proto.ErrorObject{Code: proto.ErrorInternalError, Message: "marshal params: " + err.Error()}
+	}
+	if params == nil {
+		paramsBytes = json.RawMessage("null")
+	}
+	reqBytes, err := json.Marshal(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  method,
+		"params":  json.RawMessage(paramsBytes),
+	})
+	if err != nil {
+		return nil, &proto.ErrorObject{Code: proto.ErrorInternalError, Message: "marshal request: " + err.Error()}
+	}
+	if err := rpc.WriteFrame(c.conn, reqBytes); err != nil {
+		return nil, &proto.ErrorObject{Code: proto.ErrorInternalError, Message: "write frame: " + err.Error()}
+	}
+	reply, err := rpc.ReadFrame(c.reader, 0)
+	if err != nil {
+		return nil, &proto.ErrorObject{Code: proto.ErrorInternalError, Message: "read frame: " + err.Error()}
+	}
+	var env struct {
+		ID     json.RawMessage    `json:"id"`
+		Result json.RawMessage    `json:"result,omitempty"`
+		Error  *proto.ErrorObject `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(reply, &env); err != nil {
+		return nil, &proto.ErrorObject{Code: proto.ErrorInternalError, Message: "unmarshal reply: " + err.Error()}
 	}
 	return env.Result, env.Error
 }
@@ -515,14 +558,26 @@ func TestServer_WatchPipeline(t *testing.T) {
 	if _, errObj := wr.call(t, "auth", map[string]string{"token": string(ts.token)}); errObj != nil {
 		t.Fatalf("writer auth: %+v", errObj)
 	}
+	// The writer goroutine has its own short-lived view of `t`; using
+	// `t.Fatalf` from here would race with the main test ending and
+	// cause a "use of closed network connection" failure when the
+	// teardown closes the listener before the fs.write reply arrives.
+	// We just signal completion and surface any non-nil error explicitly
+	// when the main test is done with the watcher.
+	writerDone := make(chan error, 1)
 	go func() {
 		// Tiny delay so the watcher reader is blocked on its
 		// next ReadFrame when the notification lands.
 		time.Sleep(50 * time.Millisecond)
-		_, _ = wr.call(t, "fs.write", map[string]any{
+		_, errObj := wr.callNoFatal("fs.write", map[string]any{
 			"path":    "watched.md",
 			"content": "fresh",
 		})
+		if errObj != nil {
+			writerDone <- fmt.Errorf("writer fs.write: %+v", errObj)
+		} else {
+			writerDone <- nil
+		}
 	}()
 
 	// atomicWriteFile creates a tmp file first and then renames it to
@@ -571,5 +626,18 @@ func TestServer_WatchPipeline(t *testing.T) {
 
 	if _, errObj := w.call(t, "fs.unwatch", map[string]string{"subscriptionId": sub.SubscriptionID}); errObj != nil {
 		t.Fatalf("fs.unwatch: %+v", errObj)
+	}
+
+	// Wait for the writer goroutine before returning so its
+	// reply-read finishes before the test server's listener closes.
+	// A bounded wait is enough: the write itself already succeeded by
+	// the time we observed the fs.changed notification.
+	select {
+	case err := <-writerDone:
+		if err != nil {
+			t.Errorf("%v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Errorf("writer goroutine did not finish in time")
 	}
 }
