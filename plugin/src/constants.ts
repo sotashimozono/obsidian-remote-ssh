@@ -20,6 +20,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   enableDebugLog: false,
   maxLogLines: 500,
   reconnectMaxRetries: 5,
+  clientId: '',
+  userName: '',
 };
 
 export const MAX_RETRY = 4;
