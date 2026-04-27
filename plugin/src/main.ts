@@ -624,9 +624,19 @@ export default class RemoteSshPlugin extends Plugin {
       this.resourceBridge = null;
     }
 
+    // The Go daemon already knows the absolute vault root via its
+    // `--vault-root` flag, so RPC clients must send paths RELATIVE to
+    // that root (empty string for the root itself). Sending the same
+    // `work/VaultDev` prefix the SFTP path needs would double up:
+    // daemon-side `Resolve(absRoot, "work/VaultDev")` becomes
+    // `<absRoot>/work/VaultDev`, missing the real vault entirely
+    // (or — when a stale doubled mirror exists — quietly listing it).
+    // The SFTP transport has no such root-knowing server; it does need
+    // the prefix to anchor calls at the vault.
+    const adapterRemoteBase = this.rpcConnection ? '' : this.activeRemoteBasePath;
     this.dataAdapter = new SftpDataAdapter(
       fsClient,
-      this.activeRemoteBasePath,
+      adapterRemoteBase,
       this.readCache,
       this.dirCache,
       this.app.vault.getName(),
