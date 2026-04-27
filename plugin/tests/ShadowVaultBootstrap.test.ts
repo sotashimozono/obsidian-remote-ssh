@@ -141,6 +141,53 @@ describe('ShadowVaultBootstrap.bootstrap', () => {
     expect(data.autoConnectProfileId).toBe('two');
   });
 
+  it('inherits the source vault\'s data.json on first bootstrap so accumulated host keys / secrets carry over', async () => {
+    // Stage a source data.json that simulates what a real running
+    // plugin would write — host keys collected from past TOFU
+    // prompts, secrets, etc. The first-ever bootstrap should seed
+    // these into the shadow so the auto-connect doesn't re-prompt.
+    fs.writeFileSync(path.join(scratch.sourceDir, 'data.json'), JSON.stringify({
+      hostKeyStore: { 'host:22': 'fingerprint-trusted-by-source' },
+      secrets: { somekey: 'somevalue' },
+      enableDebugLog: true,
+    }), 'utf-8');
+
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const result = await r.bootstrap(profile, [profile]);
+
+    const shadowData = JSON.parse(fs.readFileSync(result.layout.pluginDataFile, 'utf-8'));
+    expect(shadowData.hostKeyStore).toEqual({ 'host:22': 'fingerprint-trusted-by-source' });
+    expect(shadowData.secrets).toEqual({ somekey: 'somevalue' });
+    expect(shadowData.enableDebugLog).toBe(true);
+    // Bootstrap-managed fields override source values.
+    expect(shadowData.activeProfileId).toBe('p1');
+    expect(shadowData.autoConnectProfileId).toBe('p1');
+  });
+
+  it('preserves shadow-side accumulated state on re-bootstrap (does not reset hostKeyStore back to source\'s)', async () => {
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const first = await r.bootstrap(profile, [profile]);
+
+    // Simulate what the shadow's running plugin would do after a
+    // first connect: write new host keys / settings to its own data.json.
+    const accumulated = JSON.parse(fs.readFileSync(first.layout.pluginDataFile, 'utf-8'));
+    accumulated.hostKeyStore = { 'remote:22': 'fingerprint-collected-in-shadow' };
+    accumulated.secrets = { tofuKey: 'tofuValue' };
+    fs.writeFileSync(first.layout.pluginDataFile, JSON.stringify(accumulated, null, 2), 'utf-8');
+
+    // Re-bootstrap (e.g. user clicks Connect again from Settings).
+    await r.bootstrap(profile, [profile]);
+
+    const after = JSON.parse(fs.readFileSync(first.layout.pluginDataFile, 'utf-8'));
+    expect(after.hostKeyStore).toEqual({ 'remote:22': 'fingerprint-collected-in-shadow' });
+    expect(after.secrets).toEqual({ tofuKey: 'tofuValue' });
+    // Bootstrap-managed fields still get refreshed.
+    expect(after.profiles).toEqual([profile]);
+    expect(after.autoConnectProfileId).toBe('p1');
+  });
+
   it('regression: source plugin\'s data.json is NEVER touched by install, even on re-bootstrap', async () => {
     // Stage a sentinel data.json in the SOURCE plugin dir — this
     // mirrors the dev-vault setup where the developer's hostKeyStore /
@@ -162,10 +209,13 @@ describe('ShadowVaultBootstrap.bootstrap', () => {
     // Source untouched.
     expect(fs.readFileSync(sourceDataJson, 'utf-8')).toBe(sentinel);
 
-    // Shadow has its own data.json with the bootstrap-written content.
+    // Shadow has its own data.json. With the merge behaviour added in
+    // Phase 4 it inherits the source's hostKeyStore on first
+    // bootstrap, but bootstrap-managed fields override anything
+    // source had.
     const shadowData = JSON.parse(fs.readFileSync(result.layout.pluginDataFile, 'utf-8'));
     expect(shadowData.activeProfileId).toBe('p1');
-    expect(shadowData).not.toHaveProperty('hostKeyStore');
+    expect(shadowData.hostKeyStore).toEqual({ 'host:22': 'fingerprint-must-survive' });
 
     // Re-bootstrap and re-check — once was a regression in PR #64,
     // both passes must keep the source data.json intact.

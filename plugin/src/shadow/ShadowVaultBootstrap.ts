@@ -73,9 +73,20 @@ export class ShadowVaultBootstrap {
     // appear immediately; copy as a Windows fallback).
     const pluginInstallMethod = this.installPlugin(layout.pluginDir);
 
-    // data.json: full profile config + the auto-connect marker the
-    // shadow window's plugin onload will read in Phase 4.
+    // data.json strategy: MERGE rather than overwrite, so accumulated
+    // state on the shadow side (hostKeyStore from past TOFU prompts,
+    // secrets, etc.) survives a re-bootstrap. On first bootstrap we
+    // seed from the source vault's data.json so the shadow inherits
+    // the source's already-trusted host keys — without that, every
+    // freshly-bootstrapped shadow vault would TOFU-prompt on the
+    // very first auto-connect.
+    //
+    // Bootstrap-managed fields (profiles list, activeProfileId,
+    // autoConnectProfileId) are always overwritten to reflect the
+    // current Connect click.
+    const baseData = this.readBaseDataJson(layout.pluginDataFile);
     const data = {
+      ...baseData,
       profiles: allProfiles,
       activeProfileId: profile.id,
       autoConnectProfileId: profile.id,
@@ -106,6 +117,41 @@ export class ShadowVaultBootstrap {
   }
 
   // ─── internals ──────────────────────────────────────────────────────────
+
+  /**
+   * Decide what to use as the base for the shadow vault's
+   * `data.json` before merging the bootstrap-managed fields:
+   *
+   * - If a shadow `data.json` already exists, parse and use it.
+   *   Preserves anything the shadow has accumulated since last
+   *   bootstrap (hostKeyStore, secrets, user preferences).
+   * - Otherwise, fall back to the source vault's `data.json` so the
+   *   first shadow connect can re-use the user's already-trusted
+   *   host keys instead of TOFU-prompting.
+   * - Otherwise, start fresh `{}`.
+   *
+   * Parse failures are logged and treated as "start fresh" — better
+   * to lose accumulated state than write a corrupted JSON file
+   * that would brick the plugin on next load.
+   */
+  private readBaseDataJson(shadowDataPath: string): Record<string, unknown> {
+    const candidates = [shadowDataPath, path.join(this.sourcePluginDir, 'data.json')];
+    for (const candidate of candidates) {
+      if (!fs.existsSync(candidate)) continue;
+      try {
+        const parsed = JSON.parse(fs.readFileSync(candidate, 'utf-8'));
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch (e) {
+        logger.warn(
+          `ShadowVaultBootstrap: failed to parse ${candidate} (${(e as Error).message}); ` +
+          'continuing without it',
+        );
+      }
+    }
+    return {};
+  }
 
   /**
    * Install the plugin per-file rather than as one big symlinked
