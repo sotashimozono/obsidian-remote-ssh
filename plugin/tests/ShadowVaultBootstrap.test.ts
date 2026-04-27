@@ -141,6 +141,73 @@ describe('ShadowVaultBootstrap.bootstrap', () => {
     expect(data.autoConnectProfileId).toBe('two');
   });
 
+  it('regression: source plugin\'s data.json is NEVER touched by install, even on re-bootstrap', async () => {
+    // Stage a sentinel data.json in the SOURCE plugin dir — this
+    // mirrors the dev-vault setup where the developer's hostKeyStore /
+    // secrets / etc live alongside main.js. The earlier whole-dir
+    // symlink approach silently overwrote this file when the shadow
+    // vault first wrote its own per-vault settings; per-file install
+    // must keep it intact.
+    const sourceDataJson = path.join(scratch.sourceDir, 'data.json');
+    const sentinel = JSON.stringify({
+      hostKeyStore: { 'host:22': 'fingerprint-must-survive' },
+      profiles: [{ id: 'source-profile' }],
+    });
+    fs.writeFileSync(sourceDataJson, sentinel, 'utf-8');
+
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const result = await r.bootstrap(profile, [profile]);
+
+    // Source untouched.
+    expect(fs.readFileSync(sourceDataJson, 'utf-8')).toBe(sentinel);
+
+    // Shadow has its own data.json with the bootstrap-written content.
+    const shadowData = JSON.parse(fs.readFileSync(result.layout.pluginDataFile, 'utf-8'));
+    expect(shadowData.activeProfileId).toBe('p1');
+    expect(shadowData).not.toHaveProperty('hostKeyStore');
+
+    // Re-bootstrap and re-check — once was a regression in PR #64,
+    // both passes must keep the source data.json intact.
+    await r.bootstrap(profile, [profile]);
+    expect(fs.readFileSync(sourceDataJson, 'utf-8')).toBe(sentinel);
+  });
+
+  it('regression: a stale whole-dir symlink at pluginDir is unlinked, not followed (does not delete source)', async () => {
+    // Simulate the pre-fix on-disk state: pluginDir is a symlink to
+    // sourceDir. installPlugin must replace this with a real dir
+    // without deleting any of the source files.
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const layout = r.layoutFor('p1');
+    fs.mkdirSync(path.dirname(layout.pluginDir), { recursive: true });
+    try {
+      const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+      fs.symlinkSync(scratch.sourceDir, layout.pluginDir, linkType);
+    } catch (e) {
+      // If we can't even create a symlink in the test env, the test
+      // can't exercise the relevant cleanup path — bail rather than
+      // false-pass. (We always at least install per-file in that case,
+      // so the regression isn't reachable.)
+      console.warn(`skipping: cannot create symlink in test env: ${(e as Error).message}`);
+      return;
+    }
+
+    // Stage a unique file in the source so we can detect deletion.
+    const sourceCanary = path.join(scratch.sourceDir, 'CANARY.txt');
+    fs.writeFileSync(sourceCanary, 'do-not-delete', 'utf-8');
+
+    const profile = makeProfile({ id: 'p1' });
+    await r.bootstrap(profile, [profile]);
+
+    // Source file still there.
+    expect(fs.existsSync(sourceCanary)).toBe(true);
+    expect(fs.readFileSync(sourceCanary, 'utf-8')).toBe('do-not-delete');
+    // Plugin dir is now a real dir, not a symlink.
+    const stat = fs.lstatSync(layout.pluginDir);
+    expect(stat.isSymbolicLink()).toBe(false);
+    expect(stat.isDirectory()).toBe(true);
+  });
+
   it('refreshes plugin install on bootstrap so plugin updates land immediately', async () => {
     const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
     const profile = makeProfile({ id: 'p1' });
