@@ -1,0 +1,31 @@
+# Docker test environment for the plugin's SSH integration tests.
+#
+# Brings up a single sshd container on 127.0.0.1:2222 with a
+# pre-created `tester` user (UID 1000) whose home holds an empty
+# `vault/` directory the tests write into.
+#
+# Usage:
+#   npm run sshd:start    # generates a keypair (if missing) + docker compose up -d
+#   npm run test:integration
+#   npm run sshd:stop
+#
+# The keypair lives in `docker/keys/` and is gitignored. The
+# container reads the public key as authorized_keys via bind mount,
+# so rotating keys doesn't require rebuilding the image.
+
+services:
+  sshd:
+    build: ./docker/test-sshd
+    image: obsidian-remote-ssh-test-sshd:latest
+    container_name: obsidian-remote-ssh-test-sshd
+    ports:
+      - "127.0.0.1:2222:22"
+    volumes:
+      - ./docker/keys/id_test.pub:/home/tester/.ssh/authorized_keys:ro
+      - ./docker/test-vault:/home/tester/vault
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "ss -lnt | grep ':22 '"]
+      interval: 2s
+      timeout: 2s
+      retries: 15

@@ -5,3 +5,11 @@ main.js
 coverage/
 cdp-console.log
 plugin/server-bin/
+
+# Docker test environment artefacts: keypair generated on first run,
+# bind-mounted vault contents written by integration tests.
+docker/keys/id_test
+docker/keys/id_test.pub
+docker/test-vault/*
+!docker/test-vault/.gitkeep
+!docker/test-vault/README.md

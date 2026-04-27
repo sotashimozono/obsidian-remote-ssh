@@ -1,0 +1,56 @@
+name: Integration
+
+# Runs the SSH integration tests against a docker sshd container.
+# Slower than the main `ci.yml` job (Docker build + container
+# startup) so it lives on its own workflow with no concurrency
+# group sharing — main CI keeps moving while this runs.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: SSH integration
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: plugin/package-lock.json
+
+      - run: npm ci
+
+      - name: Bring up test sshd
+        run: npm run sshd:start
+
+      - name: Run integration tests
+        run: npm run test:integration
+
+      - name: Tear down test sshd
+        if: always()
+        run: npm run sshd:stop
+
+      - name: Upload sshd logs on failure
+        if: failure()
+        run: docker logs obsidian-remote-ssh-test-sshd > sshd-logs.txt 2>&1 || true
+        working-directory: ${{ github.workspace }}
+
+      - name: Attach sshd logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sshd-logs
+          path: sshd-logs.txt
