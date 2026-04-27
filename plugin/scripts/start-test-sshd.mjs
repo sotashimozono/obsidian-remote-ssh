@@ -61,13 +61,26 @@ while (Date.now() < deadline) {
   }
   if (status === 'unhealthy' || status === 'exited') {
     console.error(`sshd entered unhealthy state: ${status}`);
+    dumpContainerLogs();
     process.exit(1);
   }
   // 'starting' or empty (container not yet up) — wait a tick.
   await new Promise(r => setTimeout(r, 1000));
 }
 console.error('Timed out waiting for sshd to become healthy.');
+dumpContainerLogs();
 process.exit(1);
+
+function dumpContainerLogs() {
+  console.error('--- docker logs (obsidian-remote-ssh-test-sshd) ---');
+  spawnSync('docker', ['logs', '--tail', '200', 'obsidian-remote-ssh-test-sshd'],
+    { stdio: 'inherit' });
+  console.error('--- docker inspect (Health) ---');
+  const r = spawnSync('docker',
+    ['inspect', '--format', '{{json .State.Health}}', 'obsidian-remote-ssh-test-sshd'],
+    { encoding: 'utf8' });
+  console.error(r.stdout || r.stderr || '');
+}
 
 // ─── helpers ───────────────────────────────────────────────────────────
 

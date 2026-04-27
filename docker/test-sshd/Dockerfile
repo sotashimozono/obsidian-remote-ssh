@@ -10,7 +10,7 @@
 FROM ubuntu:22.04
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openssh-server \
+ && apt-get install -y --no-install-recommends openssh-server iproute2 \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir /var/run/sshd \
  && useradd -m -s /bin/bash -u 1000 tester \
