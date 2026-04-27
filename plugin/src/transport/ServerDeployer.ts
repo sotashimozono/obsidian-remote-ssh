@@ -93,13 +93,22 @@ const DEFAULTS = {
  */
 export class ServerDeployer {
   /**
-   * Absolutised paths from the most recent successful `deploy()`. Kept
-   * so `stop()` can target exactly what was started — pkill matching
-   * the absolute argv prevents misses if the user later passes custom
-   * paths, and the socket/token cleanup uses the same paths the daemon
-   * actually wrote.
+   * State from the most recent successful `deploy()`, kept so `stop()`
+   * can use the same kill pattern + cleanup paths the daemon was
+   * actually started with.
    */
-  private deployedPaths: { binary: string; socket: string; token: string } | null = null;
+  private deployedState: {
+    binary: string;
+    socket: string;
+    token: string;
+    /**
+     * Pre-built `pkill -f` regex (no leading anchor, trailing space)
+     * that matches the daemon's argv regardless of whether it was
+     * launched with the relative or the absolute form of the binary
+     * path.
+     */
+    killPattern: string;
+  } | null = null;
 
   constructor(private readonly ssh: DeployerSshClient) {}
 
@@ -116,17 +125,25 @@ export class ServerDeployer {
     const waitMs           = opts.waitForTokenTimeoutMs ?? DEFAULTS.waitForTokenTimeoutMs;
 
     const remoteDir = parentDirOf(remoteBinaryPath);
+    const killPattern = buildKillPattern(remoteBinaryPath, home);
 
     logger.info(`ServerDeployer: ensuring ${remoteDir}/ exists`);
     await this.run(`mkdir -p ${shellQuote(remoteDir)} && chmod 700 ${shellQuote(remoteDir)}`);
 
     if (killExisting) {
-      logger.info('ServerDeployer: killing any prior daemon');
-      // Match by the unique --vault-root flag so we never kill an
-      // unrelated process that happens to share the binary name.
-      await this.run(`pkill -f ${shellQuote(remoteBinaryPath + ' ')} 2>/dev/null || true`);
-      // Stale socket left by a hard-killed daemon would block bind().
-      await this.run(`rm -f ${shellQuote(remoteSocketPath)} ${shellQuote(remoteTokenPath)}`);
+      logger.info(`ServerDeployer: killing any prior daemon (pkill -f ${killPattern})`);
+      // Use the suffix-form pattern so we catch daemons started by
+      // older builds where the argv used the relative path. Without
+      // this, an upgrade leaves the prior daemon alive and the upload
+      // below hits ETXTBSY (text file busy) on Linux because the
+      // binary it's overwriting is still being executed.
+      await this.run(`pkill -f ${shellQuote(killPattern)} 2>/dev/null || true`);
+      // Defense in depth: also unlink the binary itself. If pkill
+      // missed (e.g., the prior daemon was started under a different
+      // path shape we can't predict), Linux still lets us unlink an
+      // executable that's running — the inode stays alive for the
+      // existing process while the path is freed for our new file.
+      await this.run(`rm -f ${shellQuote(remoteBinaryPath)} ${shellQuote(remoteSocketPath)} ${shellQuote(remoteTokenPath)}`);
     }
 
     logger.info(`ServerDeployer: uploading binary → ${remoteBinaryPath}`);
@@ -148,23 +165,28 @@ export class ServerDeployer {
     await this.run(startCmd);
 
     const token = await this.waitForToken(remoteTokenPath, waitMs);
-    this.deployedPaths = { binary: remoteBinaryPath, socket: remoteSocketPath, token: remoteTokenPath };
+    this.deployedState = {
+      binary: remoteBinaryPath,
+      socket: remoteSocketPath,
+      token: remoteTokenPath,
+      killPattern,
+    };
     return { remoteBinaryPath, remoteSocketPath, remoteTokenPath, token };
   }
 
   /**
    * Stop the daemon launched by the most recent `deploy()`. Safe to
-   * call when nothing was deployed (no-op). Targets the exact absolute
-   * paths used at deploy time so it never misses or cleans up the
-   * wrong process.
+   * call when nothing was deployed (no-op). Uses the same suffix-form
+   * pkill pattern deploy() chose, so a daemon stays killable even if
+   * the running argv differs from the absolutised launch path.
    */
   async stop(): Promise<void> {
-    const paths = this.deployedPaths;
-    if (!paths) return;
-    logger.info(`ServerDeployer: stopping daemon at ${paths.binary}`);
-    await this.run(`pkill -f ${shellQuote(paths.binary + ' ')} 2>/dev/null || true`);
-    await this.run(`rm -f ${shellQuote(paths.socket)} ${shellQuote(paths.token)}`);
-    this.deployedPaths = null;
+    const state = this.deployedState;
+    if (!state) return;
+    logger.info(`ServerDeployer: stopping daemon at ${state.binary}`);
+    await this.run(`pkill -f ${shellQuote(state.killPattern)} 2>/dev/null || true`);
+    await this.run(`rm -f ${shellQuote(state.binary)} ${shellQuote(state.socket)} ${shellQuote(state.token)}`);
+    this.deployedState = null;
   }
 
   // ─── internals ───────────────────────────────────────────────────────────
@@ -199,6 +221,36 @@ export class ServerDeployer {
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Build the regex `pkill -f` should match for a deployed daemon.
+ *
+ * The daemon's argv contains the binary path verbatim. Across versions
+ * that path may be relative (`.obsidian-remote/server`) or absolute
+ * (`$HOME/.obsidian-remote/server`); we want a single pattern that
+ * matches both so an upgrade can clean up its predecessor.
+ *
+ * Strategy: take the absolute path and strip the `$HOME/` prefix,
+ * yielding the segment that's guaranteed to appear in BOTH shapes.
+ * Escape regex metacharacters so a literal `.obsidian-remote` doesn't
+ * accidentally match `xobsidian-remote`. Append a trailing space so we
+ * don't false-match on path prefixes (`.obsidian-remote/server-old`).
+ *
+ * For paths that don't live under `$HOME` (custom absolute), there's
+ * no relative form to worry about — the absolute path itself becomes
+ * the pattern.
+ */
+export function buildKillPattern(absoluteBinaryPath: string, remoteHome: string): string {
+  const home = remoteHome.endsWith('/') ? remoteHome.slice(0, -1) : remoteHome;
+  const tail = absoluteBinaryPath.startsWith(home + '/')
+    ? absoluteBinaryPath.slice(home.length + 1)
+    : absoluteBinaryPath;
+  return escapeRegex(tail) + ' ';
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 /**
  * Absolutise a remote path against the resolved `$HOME` of the remote.
