@@ -194,6 +194,20 @@ describe('SftpDataAdapter (read-side)', () => {
       expect(adapter.toRemote('foo.md')).toBe('/foo.md');
       expect(adapter.toRemote('')).toBe('/');
     });
+
+    it('handles an empty base ("") — used for RPC mode where the daemon already knows the vault root', () => {
+      // In RPC mode the Go daemon's `--vault-root` provides the
+      // absolute prefix; the client must send vault-relative paths to
+      // avoid a double-prefix at the daemon's `Resolve` step.
+      const fake = makeFakeClient();
+      const adapter = new SftpDataAdapter(fake.client, '', readCache, dirCache, 'v');
+      expect(adapter.toRemote('foo.md')).toBe('foo.md');
+      expect(adapter.toRemote('dir/sub/note.md')).toBe('dir/sub/note.md');
+      // Vault root maps to the empty string so the daemon's Resolve()
+      // returns its absRoot unchanged.
+      expect(adapter.toRemote('')).toBe('');
+      expect(adapter.toRemote('/')).toBe('');
+    });
   });
 
   describe('exists', () => {
