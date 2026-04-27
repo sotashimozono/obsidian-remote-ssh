@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ServerDeployer, resolveRemotePath, type DeployerSshClient } from '../src/transport/ServerDeployer';
+import { ServerDeployer, resolveRemotePath, buildKillPattern, type DeployerSshClient } from '../src/transport/ServerDeployer';
 
 /**
  * Generic remote home used in mocks. Deliberately not the maintainer's
@@ -77,11 +77,15 @@ describe('ServerDeployer', () => {
     expect(uploads).toEqual([{ local: '/local/server', remote: `${FAKE_HOME}/.obsidian-remote/server` }]);
 
     // The first three commands must, in order, prep the dir, kill any
-    // prior daemon, and remove stale socket / token files. All paths
-    // are absolute now.
+    // prior daemon, and remove stale binary + socket + token files.
     expect(execLog[0]).toMatch(new RegExp(`mkdir -p '${FAKE_HOME}/\\.obsidian-remote'`));
-    expect(execLog[1]).toMatch(new RegExp(`pkill -f '${FAKE_HOME}/\\.obsidian-remote/server '`));
-    expect(execLog[2]).toMatch(new RegExp(`rm -f '${FAKE_HOME}/\\.obsidian-remote/server\\.sock' '${FAKE_HOME}/\\.obsidian-remote/token'`));
+    // pkill uses the suffix-form pattern (no $HOME prefix) so it
+    // matches daemons started with either the relative or absolute
+    // argv shape.
+    expect(execLog[1]).toBe(`pkill -f '\\.obsidian-remote/server ' 2>/dev/null || true`);
+    // rm includes the binary itself so a stale daemon's hold on the
+    // file (ETXTBSY) can't block the upcoming upload.
+    expect(execLog[2]).toBe(`rm -f '${FAKE_HOME}/.obsidian-remote/server' '${FAKE_HOME}/.obsidian-remote/server.sock' '${FAKE_HOME}/.obsidian-remote/token'`);
 
     // chmod and start come after the upload.
     expect(execLog[3]).toMatch(new RegExp(`chmod 700 '${FAKE_HOME}/\\.obsidian-remote/server'`));
@@ -186,7 +190,7 @@ describe('ServerDeployer', () => {
     })).rejects.toThrow(/did not write/);
   });
 
-  it('stop() targets the absolute paths from the most recent deploy()', async () => {
+  it('stop() reuses the deploy()-time kill pattern and cleans up binary + socket + token', async () => {
     const { ssh, execLog } = fakeSsh({ onReadFile: () => Buffer.from('tok') });
     const deployer = new ServerDeployer(ssh);
     await deployer.deploy({
@@ -197,8 +201,10 @@ describe('ServerDeployer', () => {
     await deployer.stop();
     const stopCmds = execLog.slice(before);
     expect(stopCmds.length).toBe(2);
-    expect(stopCmds[0]).toMatch(new RegExp(`pkill -f '${FAKE_HOME}/\\.obsidian-remote/server '`));
-    expect(stopCmds[1]).toMatch(new RegExp(`rm -f '${FAKE_HOME}/\\.obsidian-remote/server\\.sock' '${FAKE_HOME}/\\.obsidian-remote/token'`));
+    // Suffix pattern, same shape as deploy() uses, so it stays
+    // effective against pre-fix daemons.
+    expect(stopCmds[0]).toBe(`pkill -f '\\.obsidian-remote/server ' 2>/dev/null || true`);
+    expect(stopCmds[1]).toBe(`rm -f '${FAKE_HOME}/.obsidian-remote/server' '${FAKE_HOME}/.obsidian-remote/server.sock' '${FAKE_HOME}/.obsidian-remote/token'`);
   });
 
   it('stop() is a no-op if deploy() never ran', async () => {
@@ -250,5 +256,46 @@ describe('resolveRemotePath', () => {
     expect(resolveRemotePath('foo', '/Users/alice')).toBe('/Users/alice/foo');
     expect(resolveRemotePath('foo', '/var/lib/runner')).toBe('/var/lib/runner/foo');
     expect(resolveRemotePath('foo', '/root')).toBe('/root/foo');
+  });
+});
+
+describe('buildKillPattern', () => {
+  it('strips $HOME prefix so the pattern matches both relative and absolute argv', () => {
+    const pattern = buildKillPattern('/home/alice/.obsidian-remote/server', '/home/alice');
+    // Suffix only, escaped, trailing space.
+    expect(pattern).toBe('\\.obsidian-remote/server ');
+
+    // Same regex must match both shapes a real daemon argv could take.
+    const re = new RegExp(pattern);
+    expect(re.test('.obsidian-remote/server --vault-root=work/v --socket=...')).toBe(true);
+    expect(re.test('/home/alice/.obsidian-remote/server --vault-root=work/v --socket=...')).toBe(true);
+  });
+
+  it('escapes regex metacharacters so a literal . does not match unrelated paths', () => {
+    const pattern = buildKillPattern('/home/alice/.obsidian-remote/server', '/home/alice');
+    const re = new RegExp(pattern);
+    // The leading `.` is regex-escaped, so this typo-style argv must
+    // NOT match.
+    expect(re.test('xobsidian-remote/server --foo')).toBe(false);
+  });
+
+  it('keeps full absolute path for binaries outside $HOME', () => {
+    // Custom deployments under /opt or /var have no relative form to
+    // worry about, so the absolute path itself is the pattern.
+    const pattern = buildKillPattern('/opt/obsd/server', '/home/alice');
+    expect(pattern).toBe('/opt/obsd/server ');
+  });
+
+  it('handles $HOME with trailing slash', () => {
+    expect(buildKillPattern('/home/alice/.obsidian-remote/server', '/home/alice/'))
+      .toBe('\\.obsidian-remote/server ');
+  });
+
+  it('trailing space prevents prefix collisions', () => {
+    const pattern = buildKillPattern('/home/alice/.obsidian-remote/server', '/home/alice');
+    const re = new RegExp(pattern);
+    // Must not match a sibling that shares the prefix.
+    expect(re.test('.obsidian-remote/server-old --foo')).toBe(false);
+    expect(re.test('.obsidian-remote/server-new')).toBe(false);
   });
 });
