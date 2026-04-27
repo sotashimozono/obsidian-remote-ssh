@@ -21,8 +21,13 @@ RUN apt-get update \
  && sed -i 's/#\?PubkeyAuthentication.*/PubkeyAuthentication yes/'   /etc/ssh/sshd_config \
  && echo 'StrictModes no' >> /etc/ssh/sshd_config
 
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
 EXPOSE 22
 
-# `-D` keeps sshd in the foreground; `-e` sends logs to stderr so
-# `docker logs` shows them.
+# Entrypoint normalises bind-mount ownership; the CMD is the actual
+# sshd. `-D` keeps sshd in the foreground; `-e` sends logs to stderr
+# so `docker logs` shows them.
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["/usr/sbin/sshd", "-D", "-e"]
