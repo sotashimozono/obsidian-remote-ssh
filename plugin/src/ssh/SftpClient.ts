@@ -61,7 +61,21 @@ export class SftpClient {
     let sock: Duplex | undefined;
     if (profile.jumpHost) {
       logger.info(`SftpClient: opening jump tunnel via ${profile.jumpHost.host}`);
-      sock = await createJumpTunnel(profile.jumpHost, profile.host, profile.port, this.authResolver);
+      // Share the host-key store + connect timings between the jump
+      // and target so a compromised bastion is caught the same way
+      // as a compromised target, and the jump session tears down
+      // around the same time the target idle-keepalive does.
+      sock = await createJumpTunnel(
+        profile.jumpHost,
+        profile.host,
+        profile.port,
+        this.authResolver,
+        {
+          hostKeyStore:        this.hostKeyStore,
+          connectTimeoutMs:    profile.connectTimeoutMs,
+          keepaliveIntervalMs: profile.keepaliveIntervalMs,
+        },
+      );
     }
 
     const client = new Client();
