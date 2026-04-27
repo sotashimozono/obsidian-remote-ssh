@@ -12,7 +12,7 @@ describe('normalizeRemotePath', () => {
   });
 
   it('leaves absolute paths untouched aside from trailing slashes', () => {
-    expect(normalizeRemotePath('/home/souta/work/VaultDev/')).toBe('/home/souta/work/VaultDev');
+    expect(normalizeRemotePath('/home/alice/vault/')).toBe('/home/alice/vault');
     expect(normalizeRemotePath('/srv/vault')).toBe('/srv/vault');
   });
 
