@@ -19,6 +19,12 @@ export class SettingsTab extends PluginSettingTab {
     containerEl.createEl('h2', { text: 'Remote SSH' });
 
     containerEl.createEl('h3', { text: 'SSH Profiles' });
+    containerEl.createEl('p', {
+      text:
+        'Connecting to a profile opens the remote vault in a new Obsidian window — ' +
+        'a "shadow vault" specific to that profile. The current vault stays untouched.',
+      cls: 'setting-item-description',
+    });
 
     new Setting(containerEl)
       .setName('Add profile')
@@ -125,13 +131,20 @@ export class SettingsTab extends PluginSettingTab {
         `[${transport}]`,
       )
       .addButton(btn => btn
-        .setButtonText(isActive ? 'Disconnect' : 'Connect')
+        // `isActive` only flips when the legacy in-place patch flow
+        // (debug command) put the original vault into a connected
+        // state. Under the shadow-vault flow the original vault is
+        // never patched, so the button stays as "Connect" and clicks
+        // open a new window. The Disconnect path is preserved as a
+        // recovery affordance for users who reached the legacy state
+        // — that whole branch goes away in Phase 5.
+        .setButtonText(isActive ? 'Disconnect (legacy)' : 'Connect')
         .setCta()
         .onClick(async () => {
           if (isActive) {
             await this.plugin.disconnect();
           } else {
-            await this.plugin.connectProfile(profile);
+            await this.plugin.openShadowVaultFor(profile);
           }
           this.display();
         }))

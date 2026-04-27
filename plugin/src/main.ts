@@ -883,42 +883,35 @@ export default class RemoteSshPlugin extends Plugin {
   }
 
   /**
-   * POC for the shadow-vault flow (Phase 2 in
-   * docs/architecture-shadow-vault.md): bootstrap the shadow vault
-   * for the active profile and open it in a new Obsidian window.
-   * Phase 4 will wire the new window's plugin onload to auto-connect
-   * and run VaultModelBuilder; here we only verify Phase 2's half:
-   * the dir gets created with the right contents and Obsidian opens
-   * a window pointed at it.
+   * Settings UI Connect button handler (Phase 3) and the underlying
+   * implementation of the shadow-vault flow.
+   *
+   * Bootstraps the shadow vault for `profile` (creates the dir,
+   * installs the plugin per-file, writes data.json with the
+   * auto-connect marker, registers the path in obsidian.json) and
+   * opens it in a new Obsidian window via the
+   * `obsidian://open?path=…` URL scheme.
    *
    * Does NOT require an SSH connection — the shadow vault setup is
-   * a local-disk operation; the connect happens later, in the
-   * shadow window.
+   * a local-disk operation; the connect happens later, inside the
+   * shadow window (Phase 4).
+   *
+   * The legacy in-place patch flow (`connectProfile`) is still
+   * reachable via `Remote SSH: Debug: patch adapter` and gets
+   * deleted in Phase 5.
    */
-  private async debugOpenShadowVault(): Promise<void> {
-    const profileId = this.settings.activeProfileId;
-    if (!profileId) {
-      new Notice('Remote SSH POC: no active profile selected');
-      return;
-    }
-    const profile = this.settings.profiles.find(p => p.id === profileId);
-    if (!profile) {
-      new Notice(`Remote SSH POC: active profile id ${profileId} not found in profiles list`);
-      return;
-    }
-
+  async openShadowVaultFor(profile: SshProfile): Promise<void> {
     // Source dir: where this running plugin lives, so the shadow
-    // vault's plugin install symlinks/copies the same bundle.
+    // vault's plugin install symlinks the same bundle.
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) {
-      new Notice('Remote SSH POC: vault is not FileSystemAdapter-backed; cannot locate plugin source');
+      new Notice('Remote SSH: vault is not FileSystemAdapter-backed; cannot locate plugin source');
       return;
     }
     const sourcePluginDir = path.join(adapter.getBasePath(), '.obsidian', 'plugins', this.manifest.id);
 
     // Shadow vaults live under ~/.obsidian-remote/vaults/ on every
-    // OS (per the architecture doc). os.homedir() resolves at
-    // runtime — no hardcoded user.
+    // OS. os.homedir() resolves at runtime — no hardcoded user.
     const baseDir = path.join(os.homedir(), '.obsidian-remote', 'vaults');
 
     const registry = new ObsidianRegistry(ObsidianRegistry.defaultConfigPath());
@@ -928,16 +921,37 @@ export default class RemoteSshPlugin extends Plugin {
 
     try {
       const result = await manager.openShadowFor(profile, this.settings.profiles);
-      const where = result.layout.vaultDir;
       const how = result.pluginInstallMethod;
       const reg = result.registryCreated ? 'newly registered' : 'reused';
-      new Notice(`Remote SSH POC: opened shadow vault for ${profile.name} (${how}, ${reg})`);
-      logger.info(`debug-open-shadow-vault: vault=${where}, registry id=${result.registryId} (${reg}), plugin=${how}`);
+      new Notice(`Remote SSH: opened ${profile.name} in new window (${how}, ${reg})`);
+      logger.info(
+        `openShadowVaultFor: profile=${profile.name}, vault=${result.layout.vaultDir}, ` +
+        `registry id=${result.registryId} (${reg}), plugin=${how}`,
+      );
     } catch (e) {
       const msg = (e as Error).message;
-      logger.error(`debug-open-shadow-vault: ${msg}`);
-      new Notice(`Remote SSH POC: shadow vault failed — ${msg}`);
+      logger.error(`openShadowVaultFor: ${msg}`);
+      new Notice(`Remote SSH: shadow vault failed — ${msg}`);
     }
+  }
+
+  /**
+   * Hidden command palette wrapper for `openShadowVaultFor` against
+   * the active profile. Lets developers run the shadow flow without
+   * touching the Settings UI; same code path as the Connect button.
+   */
+  private async debugOpenShadowVault(): Promise<void> {
+    const profileId = this.settings.activeProfileId;
+    if (!profileId) {
+      new Notice('Remote SSH: no active profile selected');
+      return;
+    }
+    const profile = this.settings.profiles.find(p => p.id === profileId);
+    if (!profile) {
+      new Notice(`Remote SSH: active profile id ${profileId} not found in profiles list`);
+      return;
+    }
+    await this.openShadowVaultFor(profile);
   }
 
   /**
