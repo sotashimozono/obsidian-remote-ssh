@@ -102,6 +102,24 @@ describe('RpcRemoteFsClient', () => {
     const params = calls[0].params as { path: string; contentBase64: string };
     expect(params.path).toBe('x.bin');
     expect(Buffer.from(params.contentBase64, 'base64').toString('hex')).toBe('010203');
+    expect((params as { expectedMtime?: number }).expectedMtime).toBeUndefined();
+  });
+
+  it('writeBinary forwards expectedMtime when provided', async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const client = new RpcRemoteFsClient({
+      isClosed: () => false,
+      onClose: () => () => { /* noop */ },
+      call: vi.fn(async (method: string, params: unknown) => {
+        calls.push({ method, params });
+        if (method === 'fs.writeBinary') return { mtime: 2 };
+        throw new RpcError(-32601, method);
+      }),
+    } as unknown as RpcClient);
+
+    await client.writeBinary('x.bin', Buffer.from([1]), 1234);
+    const params = calls[0].params as { expectedMtime?: number };
+    expect(params.expectedMtime).toBe(1234);
   });
 
   it('mkdirp maps to fs.mkdir with recursive=true', async () => {

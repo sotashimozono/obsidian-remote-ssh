@@ -57,6 +57,17 @@ export class SftpDataAdapter {
      * remote-vault assets.
      */
     private resourceBridge: ResourceBridge | null = null,
+    /**
+     * Optional callback invoked when a write fails with
+     * `PreconditionFailed`. Returning `true` makes the adapter retry
+     * without `expectedMtime` (the user chose to overwrite the
+     * remote); `false` re-throws the original error so the caller
+     * sees a normal failure.
+     *
+     * When omitted (e.g. unit tests), conflicts are surfaced as the
+     * underlying `RpcError` and the editor decides what to do.
+     */
+    private onWriteConflict: ((vaultPath: string) => Promise<boolean>) | null = null,
   ) {}
 
   /**
@@ -402,6 +413,13 @@ export class SftpDataAdapter {
    * Atomic-on-the-server write through SftpClient (tmp+rename). Ensures
    * the parent directory exists, then refreshes the read cache with the
    * just-written content using the freshly-read mtime.
+   *
+   * When the adapter has a recent ReadCache entry for this path, the
+   * cached mtime is sent as `expectedMtime` so the server rejects the
+   * write if another client wrote in between. On rejection the
+   * `onWriteConflict` callback (when supplied) decides whether to
+   * retry without the precondition (overwrite) or surface the error
+   * as a normal write failure (cancel).
    */
   private async writeBuffer(normalizedPath: string, data: Buffer): Promise<void> {
     const remote = this.toRemote(normalizedPath);
@@ -409,7 +427,21 @@ export class SftpDataAdapter {
     if (parent && parent !== remote) {
       await this.client.mkdirp(parent);
     }
-    await this.client.writeBinary(remote, data);
+
+    const cached = this.readCache.peek(remote);
+    const expectedMtime = cached?.mtime;
+    try {
+      await this.client.writeBinary(remote, data, expectedMtime);
+    } catch (e) {
+      if (expectedMtime !== undefined && isPreconditionFailed(e) && this.onWriteConflict) {
+        const overwrite = await this.onWriteConflict(normalizedPath).catch(() => false);
+        if (!overwrite) throw e;
+        // User asked to clobber: retry without the precondition.
+        await this.client.writeBinary(remote, data);
+      } else {
+        throw e;
+      }
+    }
 
     let mtime = 0;
     try {
@@ -483,4 +515,19 @@ function parentDirRemote(p: string): string {
  */
 function reconnectingError(): Error {
   return new Error('Remote SSH: reconnecting — try again once the connection is restored');
+}
+
+/**
+ * Recognise the `PreconditionFailed` (-32020) error the daemon
+ * returns when an `fs.write` with `expectedMtime` finds the remote
+ * mtime has moved. Duck-typed against the `code` property so we
+ * don't have to import `RpcError` from the transport layer (the
+ * SFTP path also passes through this adapter and wraps its own
+ * errors differently).
+ */
+function isPreconditionFailed(e: unknown): boolean {
+  return typeof e === 'object'
+      && e !== null
+      && 'code' in e
+      && (e as { code: unknown }).code === -32020;
 }

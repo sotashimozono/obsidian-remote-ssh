@@ -30,8 +30,18 @@ export interface RemoteFsClient {
   readBinary(path: string): Promise<Buffer>;
 
   // ─── write side ───────────────────────────────────────────────────────
-  /** Atomic on the server; clients should not wrap in their own tmp+rename. */
-  writeBinary(path: string, data: Buffer): Promise<void>;
+  /**
+   * Atomic on the server; clients should not wrap in their own tmp+rename.
+   *
+   * `expectedMtime`, if provided, asks the server to reject the write
+   * with `PreconditionFailed` (-32020) when the remote mtime no longer
+   * matches — used by `SftpDataAdapter.writeBuffer` to detect
+   * concurrent edits from another client. Implementations that can't
+   * enforce a precondition (the direct-SFTP wrapper) should ignore the
+   * argument; conflict detection is a best-effort feature, not a
+   * correctness invariant.
+   */
+  writeBinary(path: string, data: Buffer, expectedMtime?: number): Promise<void>;
 
   /** Ensure a directory chain exists (idempotent). */
   mkdirp(path: string): Promise<void>;

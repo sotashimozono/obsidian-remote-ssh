@@ -11,6 +11,7 @@ import { DirCache } from './cache/DirCache';
 import { SftpDataAdapter } from './adapter/SftpDataAdapter';
 import { AdapterPatcher } from './adapter/AdapterPatcher';
 import { ResourceBridge } from './adapter/ResourceBridge';
+import { WriteConflictModal } from './ui/WriteConflictModal';
 import { SftpRemoteFsClient } from './adapter/SftpRemoteFsClient';
 import { RpcRemoteFsClient } from './adapter/RpcRemoteFsClient';
 import { establishRpcConnection } from './transport/RpcConnection';
@@ -614,6 +615,10 @@ export default class RemoteSshPlugin extends Plugin {
       this.app.vault.getName(),
       mapper,
       this.resourceBridge,
+      // On a precondition-failed write, surface a modal asking
+      // whether to clobber the remote. Only meaningful on the RPC
+      // transport (the SFTP wrapper ignores expectedMtime).
+      (vaultPath) => new WriteConflictModal(this.app, vaultPath).prompt(),
     );
     this.patcher = new AdapterPatcher(targetAdapter, this.dataAdapter);
     try {
