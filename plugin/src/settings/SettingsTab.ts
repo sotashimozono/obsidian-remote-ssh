@@ -81,20 +81,6 @@ export class SettingsTab extends PluginSettingTab {
     containerEl.createEl('h3', { text: 'Advanced' });
 
     new Setting(containerEl)
-      .setName('Auto-patch adapter on connect')
-      .setDesc(
-        'When on, connecting to a profile immediately routes vault reads/writes '
-        + 'through the remote — the equivalent of "open folder on host" in VSCode '
-        + 'Remote-SSH. Turn off only for plugin development, when you want to '
-        + 'inspect the pre-patch state and use the Debug commands manually.',
-      )
-      .addToggle(t => t.setValue(this.plugin.settings.autoPatchAdapter)
-        .onChange(async v => {
-          this.plugin.settings.autoPatchAdapter = v;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
       .setName('Debug logging')
       .addToggle(t => t.setValue(this.plugin.settings.enableDebugLog)
         .onChange(async v => {
@@ -131,14 +117,11 @@ export class SettingsTab extends PluginSettingTab {
         `[${transport}]`,
       )
       .addButton(btn => btn
-        // `isActive` only flips when the legacy in-place patch flow
-        // (debug command) put the original vault into a connected
-        // state. Under the shadow-vault flow the original vault is
-        // never patched, so the button stays as "Connect" and clicks
-        // open a new window. The Disconnect path is preserved as a
-        // recovery affordance for users who reached the legacy state
-        // — that whole branch goes away in Phase 5.
-        .setButtonText(isActive ? 'Disconnect (legacy)' : 'Connect')
+        // `isActive` only goes true inside a shadow window whose
+        // plugin instance has connected to this profile. From the
+        // original window's Settings, isActive is always false and
+        // the button reads "Connect" → opens the shadow vault.
+        .setButtonText(isActive ? 'Disconnect' : 'Connect')
         .setCta()
         .onClick(async () => {
           if (isActive) {

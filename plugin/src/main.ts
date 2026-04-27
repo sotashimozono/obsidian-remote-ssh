@@ -162,33 +162,6 @@ export default class RemoteSshPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: 'debug-dump-api',
-      name: 'Debug: dump adapter / vault API surface to console.log',
-      callback: () => this.debugDumpVaultAdapterAPI(),
-    });
-
-    this.addCommand({
-      id: 'debug-build-vault-from-remote',
-      name: 'Debug: build vault model from remote (POC)',
-      checkCallback: (checking: boolean) => {
-        if (!this.client?.isAlive()) return false;
-        if (!checking) void this.debugBuildVaultFromRemote();
-        return true;
-      },
-    });
-
-    this.addCommand({
-      id: 'debug-open-shadow-vault',
-      name: 'Debug: open shadow vault for active profile (Phase 2 POC)',
-      checkCallback: (checking: boolean) => {
-        // No active profile = nothing to shadow.
-        if (!this.settings.activeProfileId) return false;
-        if (!checking) void this.debugOpenShadowVault();
-        return true;
-      },
-    });
-
-    this.addCommand({
       id: 'reconnect',
       name: 'Reconnect to remote (shadow vault auto-connect)',
       checkCallback: (checking: boolean) => {
@@ -251,6 +224,12 @@ export default class RemoteSshPlugin extends Plugin {
   async loadSettings() {
     const saved = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved ?? {});
+    // Migration (Phase 5): the old `autoPatchAdapter` field is gone
+    // — Object.assign above doesn't pick it up because it's not in
+    // DEFAULT_SETTINGS, but a stray copy could survive in saved data
+    // and reappear via `saveData(...this.settings...)`. Force-strip
+    // it via the cast so saveSettings doesn't write it back.
+    delete (this.settings as unknown as Record<string, unknown>).autoPatchAdapter;
     // We never come back online already connected; activeProfileId from disk
     // is stale on startup and only confuses the settings UI.
     this.settings.activeProfileId = null;
@@ -270,7 +249,7 @@ export default class RemoteSshPlugin extends Plugin {
     });
   }
 
-  async connectProfile(profile: SshProfile, opts: { skipReconcile?: boolean } = {}) {
+  async connectProfile(profile: SshProfile) {
     if (this.client.isAlive()) {
       new Notice('Remote SSH: Already connected. Disconnect first.');
       return;
@@ -323,21 +302,21 @@ export default class RemoteSshPlugin extends Plugin {
     // on host" — without it the user sees a connected status bar but
     // their vault is still local-only. We default to ON; debug
     // workflows opt out via settings.
-    if (this.settings.autoPatchAdapter) {
-      const patched = await this.patchAdapter({ skipReconcile: opts.skipReconcile });
-      if (!patched) {
-        new Notice('Remote SSH: adapter patch failed — disconnecting');
-        await this.disconnect().catch(() => { /* already errored */ });
-        return;
-      }
+    // Patch the adapter unconditionally — the legacy
+    // `autoPatchAdapter` opt-out was a debug knob from before the
+    // shadow-vault flow took over. The shadow window's plugin needs
+    // the patch every time; outside a shadow window `connectProfile`
+    // isn't called from any user-facing path anymore.
+    const patched = await this.patchAdapter();
+    if (!patched) {
+      new Notice('Remote SSH: adapter patch failed — disconnecting');
+      await this.disconnect().catch(() => { /* already errored */ });
+      return;
     }
 
     const userLabel = this.formatUserLabel();
-    const patchSuffix = this.settings.autoPatchAdapter
-      ? ''
-      : ' (adapter NOT patched — autoPatchAdapter is off)';
     new Notice(
-      `Remote SSH: Connected to ${profile.name} as ${userLabel} via ${transport.toUpperCase()}${rpcSummary}${patchSuffix}`,
+      `Remote SSH: Connected to ${profile.name} as ${userLabel} via ${transport.toUpperCase()}${rpcSummary}`,
     );
   }
 
@@ -346,11 +325,6 @@ export default class RemoteSshPlugin extends Plugin {
    * `settings.autoConnectProfileId`, then populate the empty shadow
    * vault from the remote tree via `VaultModelBuilder`. Called once
    * on `onLayoutReady` and again from the `Reconnect` command.
-   *
-   * `connectProfile` runs with `skipReconcile: true` because the
-   * shadow vault is empty on disk — the legacy reconcileVaultRoot
-   * has nothing to reconcile and would only generate noise. Phase 5
-   * removes that path entirely and this flag goes away with it.
    *
    * `tag` shows up in the log line so we can tell whether a given
    * run came from the layout-ready hook or a manual reconnect.
@@ -377,7 +351,7 @@ export default class RemoteSshPlugin extends Plugin {
     }
 
     logger.info(`runAutoConnect(${tag}): connecting to profile ${profile.name}`);
-    await this.connectProfile(profile, { skipReconcile: true });
+    await this.connectProfile(profile);
 
     if (this.state !== SyncState.CONNECTED) {
       // connectProfile already surfaced a Notice on failure — don't
@@ -684,7 +658,7 @@ export default class RemoteSshPlugin extends Plugin {
    * `connectProfile`'s auto-patch and the manual debug command have
    * different opinions on phrasing.
    */
-  private async patchAdapter(opts: { skipReconcile?: boolean } = {}): Promise<boolean> {
+  private async patchAdapter(): Promise<boolean> {
     if (this.state !== SyncState.CONNECTED || !this.activeRemoteBasePath) {
       logger.warn('patchAdapter: state is not CONNECTED');
       return false;
@@ -770,147 +744,15 @@ export default class RemoteSshPlugin extends Plugin {
       void this.subscribeToFsChanged();
     }
 
-    // Force Obsidian to walk the vault root through the just-patched
-    // adapter so the in-memory file model matches the remote — without
-    // this, File Explorer keeps showing whatever local state it had
-    // when the vault opened (e.g. a dev-vault that's a copy of the
-    // user's main vault). Failure here is non-fatal; the adapter is
-    // already patched and reads will work.
-    //
-    // The shadow-vault flow (Phase 4) sets `skipReconcile: true`
-    // because the shadow vault is empty on disk — the legacy
-    // reconcileVaultRoot would just generate noise — and the caller
-    // runs `VaultModelBuilder` instead to populate the file model
-    // correctly. The whole reconcileVaultRoot path is removed in
-    // Phase 5.
-    if (!opts.skipReconcile) {
-      await this.reconcileVaultRoot();
-    }
+    // The legacy `reconcileVaultRoot()` walk used to fire here to
+    // re-build File Explorer from the just-patched adapter. The
+    // shadow-vault flow makes that walk obsolete: callers
+    // (`runAutoConnect`) follow up with `populateVaultFromRemote`
+    // which uses VaultModelBuilder, the only mechanism that
+    // actually works on this Obsidian build's reconcileFile.
     return true;
   }
 
-  /**
-   * Bring the vault's in-memory file model in line with whatever the
-   * current adapter sees on disk. Used right after a successful
-   * `patchAdapter` (so File Explorer shows the remote vault) and
-   * after `restoreAdapter` (so the local view comes back).
-   *
-   * The diagnostic dump in PR #54 confirmed `app.vault.adapter`
-   * exposes `reconcileFile(path)` but **not** `reconcileFolder` /
-   * `vault.scan` on the user's Obsidian build (1.5+ era), and that
-   * `reconcileFile('')` blows up with "startsWith of undefined" —
-   * the API expects an actual file path, not the root.
-   *
-   * So we drive it ourselves:
-   *   1. Walk every file currently visible through the (patched)
-   *      adapter and call `reconcileFile(path)` for each. New files
-   *      land in the vault's TFile map; existing ones get their
-   *      mtime checked.
-   *   2. Iterate the vault's known TFile entries and call
-   *      `reconcileFile(path)` for every file the walk *didn't*
-   *      already touch. The adapter's stat returns "not found" for
-   *      those, and Obsidian fires the deletion path internally.
-   *
-   * The 2-pass converges the model in both directions. Folders are
-   * derived from file paths, so we don't need a separate folder
-   * reconcile.
-   */
-  private async reconcileVaultRoot(): Promise<void> {
-    type ReconcileFile = (path: string, oldPath?: string) => void | Promise<void>;
-    const adapter = this.app.vault.adapter as unknown as {
-      reconcileFile?: ReconcileFile;
-    };
-    if (typeof adapter.reconcileFile !== 'function') {
-      logger.warn(
-        'app.vault.adapter.reconcileFile unavailable on this Obsidian build. '
-        + 'Run "Remote SSH: Debug: dump adapter / vault API surface" '
-        + 'and report back so we can target a different hook.',
-      );
-      return;
-    }
-    const reconcile = adapter.reconcileFile.bind(this.app.vault.adapter);
-
-    // Pass 1: walk the (patched) adapter's view, reconcile every
-    // file we find. We use a manual BFS over `list(folder)` rather
-    // than `listRecursive` because not every adapter implementation
-    // exposes the recursive flavour.
-    const seenRemote = new Set<string>();
-    const queue: string[] = [''];
-    while (queue.length > 0) {
-      const folder = queue.shift()!;
-      let listing: { files: string[]; folders: string[] };
-      try {
-        listing = await this.app.vault.adapter.list(folder);
-      } catch (e) {
-        logger.warn(`reconcileVaultRoot: list("${folder}") failed: ${(e as Error).message}`);
-        continue;
-      }
-      for (const file of listing.files) {
-        seenRemote.add(file);
-        try {
-          await reconcile(file);
-        } catch (e) {
-          logger.warn(`reconcileVaultRoot: reconcileFile("${file}") threw: ${(e as Error).message}`);
-        }
-      }
-      for (const child of listing.folders) {
-        queue.push(child);
-      }
-    }
-
-    // Pass 2: anything in the vault model that the walk didn't see
-    // is a leftover from before the swap. reconcileFile sees a stat
-    // miss and fires the deletion path; the entry leaves the vault
-    // model on its own.
-    const known = this.app.vault.getFiles();
-    let dropped = 0;
-    for (const f of known) {
-      if (seenRemote.has(f.path)) continue;
-      try {
-        await reconcile(f.path);
-        dropped++;
-      } catch (e) {
-        logger.warn(`reconcileVaultRoot: drop reconcile("${f.path}") threw: ${(e as Error).message}`);
-      }
-    }
-    logger.info(
-      `Vault model reconciled: ${seenRemote.size} adapter files visited, `
-      + `${dropped} stale entries pruned`,
-    );
-  }
-
-  /**
-   * Diagnostic command: log the method names on `app.vault.adapter`
-   * and `app.vault` (own + first-prototype) so we can target the
-   * right reconcile-equivalent on Obsidian builds where the usual
-   * suspects aren't reachable. Surfaces only function-typed members
-   * to keep the log readable.
-   */
-  private debugDumpVaultAdapterAPI(): void {
-    const fnsOn = (obj: object): string[] => {
-      const own = Object.getOwnPropertyNames(obj)
-        .filter(k => typeof (obj as Record<string, unknown>)[k] === 'function');
-      const proto = Object.getPrototypeOf(obj);
-      const inherited = proto
-        ? Object.getOwnPropertyNames(proto)
-            .filter(k => typeof (proto as Record<string, unknown>)[k] === 'function')
-        : [];
-      return [...new Set([...own, ...inherited])].sort();
-    };
-
-    const adapterFns = fnsOn(this.app.vault.adapter as unknown as object);
-    const vaultFns   = fnsOn(this.app.vault as unknown as object);
-
-    logger.info(`debug-api: app.vault.adapter functions (${adapterFns.length}):`);
-    for (const n of adapterFns) logger.info(`  - ${n}`);
-    logger.info(`debug-api: app.vault functions (${vaultFns.length}):`);
-    for (const n of vaultFns) logger.info(`  - ${n}`);
-
-    new Notice(
-      `Remote SSH: dumped ${adapterFns.length} adapter + ${vaultFns.length} `
-      + 'vault method names to console.log',
-    );
-  }
 
   /**
    * POC for the shadow-vault architecture (see
@@ -989,12 +831,6 @@ export default class RemoteSshPlugin extends Plugin {
     return summary;
   }
 
-  private async debugBuildVaultFromRemote(): Promise<void> {
-    new Notice('Remote SSH POC: walking remote tree…');
-    const summary = await this.populateVaultFromRemote('debug');
-    new Notice(`Remote SSH POC: ${summary}`);
-  }
-
   /**
    * Settings UI Connect button handler (Phase 3) and the underlying
    * implementation of the shadow-vault flow.
@@ -1008,10 +844,6 @@ export default class RemoteSshPlugin extends Plugin {
    * Does NOT require an SSH connection — the shadow vault setup is
    * a local-disk operation; the connect happens later, inside the
    * shadow window (Phase 4).
-   *
-   * The legacy in-place patch flow (`connectProfile`) is still
-   * reachable via `Remote SSH: Debug: patch adapter` and gets
-   * deleted in Phase 5.
    */
   async openShadowVaultFor(profile: SshProfile): Promise<void> {
     // Source dir: where this running plugin lives, so the shadow
@@ -1049,29 +881,9 @@ export default class RemoteSshPlugin extends Plugin {
   }
 
   /**
-   * Hidden command palette wrapper for `openShadowVaultFor` against
-   * the active profile. Lets developers run the shadow flow without
-   * touching the Settings UI; same code path as the Connect button.
-   */
-  private async debugOpenShadowVault(): Promise<void> {
-    const profileId = this.settings.activeProfileId;
-    if (!profileId) {
-      new Notice('Remote SSH: no active profile selected');
-      return;
-    }
-    const profile = this.settings.profiles.find(p => p.id === profileId);
-    if (!profile) {
-      new Notice(`Remote SSH: active profile id ${profileId} not found in profiles list`);
-      return;
-    }
-    await this.openShadowVaultFor(profile);
-  }
-
-  /**
    * Manual command-palette entry point for adapter patching. Used
    * during development to inspect pre-patch behaviour or to re-patch
-   * after a manual restore — `connectProfile` runs the same flow
-   * automatically when `settings.autoPatchAdapter` is true.
+   * after a manual restore.
    */
   private async debugPatchAdapter(): Promise<void> {
     if (this.state !== SyncState.CONNECTED || !this.activeRemoteBasePath) {
@@ -1279,11 +1091,10 @@ export default class RemoteSshPlugin extends Plugin {
     // Walk the vault root through the now-restored FileSystemAdapter
     // so File Explorer goes back to showing local files (the model
     // would otherwise stay frozen on whatever the patched remote view
-    // was reconciled to). Fire-and-forget — this method needs to stay
-    // sync for the SftpClient.onClose handler.
-    if (wasPatched) {
-      void this.reconcileVaultRoot();
-    }
+    // The legacy reconcileVaultRoot walk used to fire here to put
+    // File Explorer back to the local view after un-patching, but
+    // shadow vaults are torn down by closing their window — there's
+    // no in-place "switch back" UX to support anymore.
   }
 
   /**
@@ -1430,6 +1241,12 @@ export default class RemoteSshPlugin extends Plugin {
     this.statusBar?.update(s);
   }
 
+  /**
+   * Command-palette / status-bar entry point that mirrors the
+   * Settings UI's Connect button: pick a profile, then open it as a
+   * shadow vault in a new Obsidian window. The original window is
+   * never patched in-place anymore.
+   */
   private promptConnect() {
     const { profiles } = this.settings;
     if (profiles.length === 0) {
@@ -1440,7 +1257,7 @@ export default class RemoteSshPlugin extends Plugin {
       this.app,
       profiles,
       this.authResolver,
-      profile => this.connectProfile(profile),
+      profile => this.openShadowVaultFor(profile),
     ).open();
   }
 

@@ -90,15 +90,6 @@ export interface PluginSettings {
    */
   userName: string;
   /**
-   * When true (default), `connectProfile` automatically patches
-   * `app.vault.adapter` after a successful handshake so the user
-   * lands on the remote vault without running a separate command —
-   * the VSCode Remote-SSH equivalent of "open folder on host". Set
-   * to false during plugin development when you want to inspect the
-   * pre-patch state or use the Debug commands manually.
-   */
-  autoPatchAdapter: boolean;
-  /**
    * Shadow-vault marker (Phase 4). When set, the plugin's
    * `onLayoutReady` callback finds the matching profile and
    * automatically connects to it, then runs `VaultModelBuilder` to
