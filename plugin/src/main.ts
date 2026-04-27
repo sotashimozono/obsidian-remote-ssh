@@ -187,6 +187,31 @@ export default class RemoteSshPlugin extends Plugin {
         return true;
       },
     });
+
+    this.addCommand({
+      id: 'reconnect',
+      name: 'Reconnect to remote (shadow vault auto-connect)',
+      checkCallback: (checking: boolean) => {
+        // Only meaningful inside a shadow window (= a vault whose
+        // data.json has the autoConnectProfileId marker). Outside
+        // that, Reconnect doesn't have a target and the regular
+        // Connect command applies.
+        if (!this.settings.autoConnectProfileId) return false;
+        if (!checking) void this.runAutoConnect('reconnect');
+        return true;
+      },
+    });
+
+    // Phase 4: if this vault was opened with an autoConnectProfileId
+    // marker (= a shadow vault from `ShadowVaultBootstrap`), connect
+    // to that profile automatically as soon as the workspace is
+    // ready, then populate the file model from the remote tree. Done
+    // inside `onLayoutReady` so we wait for Obsidian's own vault
+    // initialization to finish before patching the adapter.
+    this.app.workspace.onLayoutReady(() => {
+      if (!this.settings.autoConnectProfileId) return;
+      void this.runAutoConnect('layout-ready');
+    });
   }
 
   async onunload() {
@@ -245,7 +270,7 @@ export default class RemoteSshPlugin extends Plugin {
     });
   }
 
-  async connectProfile(profile: SshProfile) {
+  async connectProfile(profile: SshProfile, opts: { skipReconcile?: boolean } = {}) {
     if (this.client.isAlive()) {
       new Notice('Remote SSH: Already connected. Disconnect first.');
       return;
@@ -299,7 +324,7 @@ export default class RemoteSshPlugin extends Plugin {
     // their vault is still local-only. We default to ON; debug
     // workflows opt out via settings.
     if (this.settings.autoPatchAdapter) {
-      const patched = await this.patchAdapter();
+      const patched = await this.patchAdapter({ skipReconcile: opts.skipReconcile });
       if (!patched) {
         new Notice('Remote SSH: adapter patch failed — disconnecting');
         await this.disconnect().catch(() => { /* already errored */ });
@@ -314,6 +339,65 @@ export default class RemoteSshPlugin extends Plugin {
     new Notice(
       `Remote SSH: Connected to ${profile.name} as ${userLabel} via ${transport.toUpperCase()}${rpcSummary}${patchSuffix}`,
     );
+  }
+
+  /**
+   * Phase 4 entry point: connect to the profile pointed at by
+   * `settings.autoConnectProfileId`, then populate the empty shadow
+   * vault from the remote tree via `VaultModelBuilder`. Called once
+   * on `onLayoutReady` and again from the `Reconnect` command.
+   *
+   * `connectProfile` runs with `skipReconcile: true` because the
+   * shadow vault is empty on disk — the legacy reconcileVaultRoot
+   * has nothing to reconcile and would only generate noise. Phase 5
+   * removes that path entirely and this flag goes away with it.
+   *
+   * `tag` shows up in the log line so we can tell whether a given
+   * run came from the layout-ready hook or a manual reconnect.
+   */
+  private async runAutoConnect(tag: 'layout-ready' | 'reconnect'): Promise<void> {
+    const profileId = this.settings.autoConnectProfileId;
+    if (!profileId) return;
+    const profile = this.settings.profiles.find(p => p.id === profileId);
+    if (!profile) {
+      logger.warn(
+        `runAutoConnect(${tag}): autoConnectProfileId=${profileId} but no matching ` +
+        'profile in data.json; skipping',
+      );
+      new Notice(
+        `Remote SSH: shadow-vault profile id ${profileId} not found in data.json — ` +
+        'cannot auto-connect',
+      );
+      return;
+    }
+
+    if (this.client.isAlive()) {
+      logger.info(`runAutoConnect(${tag}): client already alive — disconnecting first`);
+      try { await this.disconnect(); } catch { /* swallow; we're about to reconnect */ }
+    }
+
+    logger.info(`runAutoConnect(${tag}): connecting to profile ${profile.name}`);
+    await this.connectProfile(profile, { skipReconcile: true });
+
+    if (this.state !== SyncState.CONNECTED) {
+      // connectProfile already surfaced a Notice on failure — don't
+      // double up; just skip the populate.
+      logger.warn(`runAutoConnect(${tag}): connect did not reach CONNECTED state; skipping populate`);
+      return;
+    }
+
+    // Adapter is patched; build the file model so File Explorer
+    // renders the remote tree.
+    let summary: string;
+    try {
+      summary = await this.populateVaultFromRemote(`shadow-${tag}`);
+    } catch (e) {
+      const msg = (e as Error).message;
+      logger.error(`runAutoConnect(${tag}): populate failed: ${msg}`);
+      new Notice(`Remote SSH: connected but failed to populate vault — ${msg}`);
+      return;
+    }
+    new Notice(`Remote SSH: ${profile.name} ready — ${summary}`);
   }
 
   /**
@@ -600,7 +684,7 @@ export default class RemoteSshPlugin extends Plugin {
    * `connectProfile`'s auto-patch and the manual debug command have
    * different opinions on phrasing.
    */
-  private async patchAdapter(): Promise<boolean> {
+  private async patchAdapter(opts: { skipReconcile?: boolean } = {}): Promise<boolean> {
     if (this.state !== SyncState.CONNECTED || !this.activeRemoteBasePath) {
       logger.warn('patchAdapter: state is not CONNECTED');
       return false;
@@ -692,7 +776,16 @@ export default class RemoteSshPlugin extends Plugin {
     // when the vault opened (e.g. a dev-vault that's a copy of the
     // user's main vault). Failure here is non-fatal; the adapter is
     // already patched and reads will work.
-    await this.reconcileVaultRoot();
+    //
+    // The shadow-vault flow (Phase 4) sets `skipReconcile: true`
+    // because the shadow vault is empty on disk — the legacy
+    // reconcileVaultRoot would just generate noise — and the caller
+    // runs `VaultModelBuilder` instead to populate the file model
+    // correctly. The whole reconcileVaultRoot path is removed in
+    // Phase 5.
+    if (!opts.skipReconcile) {
+      await this.reconcileVaultRoot();
+    }
     return true;
   }
 
@@ -835,13 +928,26 @@ export default class RemoteSshPlugin extends Plugin {
    * existing in-place patch flow (Tier 1-A); the command is hidden
    * unless `this.client?.isAlive()`.
    */
-  private async debugBuildVaultFromRemote(): Promise<void> {
+  /**
+   * Walk the patched adapter and run `VaultModelBuilder` so File
+   * Explorer renders the remote tree. Public so both the debug
+   * command and the Phase 4 auto-connect flow share one path.
+   *
+   * Stat is intentionally skipped per file — every entry lands with
+   * zero ctime/mtime/size. Subsequent file accesses fault in real
+   * stat values via the patched adapter as needed; a Phase 6
+   * follow-up can switch to a daemon-side batch-stat if it shows
+   * up in profiles.
+   *
+   * Returns a short summary string suitable for a Notice; logs the
+   * full counts + first 5 errors via `logger.info`/`logger.warn`.
+   */
+  async populateVaultFromRemote(label: string = 'remote'): Promise<string> {
     const adapter = this.app.vault.adapter as unknown as {
       list(p: string): Promise<{ files: string[]; folders: string[] }>;
     };
 
     const start = Date.now();
-    new Notice('Remote SSH POC: walking remote tree…');
 
     const entries: RemoteEntry[] = [];
     const queue: string[] = [''];
@@ -851,7 +957,7 @@ export default class RemoteSshPlugin extends Plugin {
       try {
         listing = await adapter.list(folder);
       } catch (e) {
-        logger.warn(`debug-build-vault: list("${folder}") failed: ${(e as Error).message}`);
+        logger.warn(`populateVaultFromRemote: list("${folder}") failed: ${(e as Error).message}`);
         continue;
       }
       for (const sub of listing.folders) {
@@ -865,21 +971,28 @@ export default class RemoteSshPlugin extends Plugin {
       }
     }
     const walkMs = Date.now() - start;
-    logger.info(`debug-build-vault: walked ${entries.length} entries in ${walkMs}ms`);
+    logger.info(`populateVaultFromRemote(${label}): walked ${entries.length} entries in ${walkMs}ms`);
 
     const builder = new VaultModelBuilder(this.app.vault, { TFile, TFolder });
     const result = await builder.build(entries);
     const totalMs = Date.now() - start;
 
     const summary =
-      `built ${result.filesAdded}f + ${result.foldersAdded}d, ` +
-      `skipped ${result.skipped}, errors ${result.errors.length} (${totalMs}ms)`;
-    new Notice(`Remote SSH POC: ${summary}`);
+      `${result.filesAdded}f + ${result.foldersAdded}d built, ` +
+      `${result.skipped} skipped, ${result.errors.length} errors (${totalMs}ms)`;
     if (result.errors.length > 0) {
       logger.warn(
-        `debug-build-vault: first 5 errors: ${JSON.stringify(result.errors.slice(0, 5), null, 2)}`,
+        `populateVaultFromRemote(${label}): first 5 errors: ` +
+        JSON.stringify(result.errors.slice(0, 5), null, 2),
       );
     }
+    return summary;
+  }
+
+  private async debugBuildVaultFromRemote(): Promise<void> {
+    new Notice('Remote SSH POC: walking remote tree…');
+    const summary = await this.populateVaultFromRemote('debug');
+    new Notice(`Remote SSH POC: ${summary}`);
   }
 
   /**

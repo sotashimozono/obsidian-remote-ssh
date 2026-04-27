@@ -98,6 +98,18 @@ export interface PluginSettings {
    * pre-patch state or use the Debug commands manually.
    */
   autoPatchAdapter: boolean;
+  /**
+   * Shadow-vault marker (Phase 4). When set, the plugin's
+   * `onLayoutReady` callback finds the matching profile and
+   * automatically connects to it, then runs `VaultModelBuilder` to
+   * populate the (empty) shadow vault from the remote tree. This
+   * field is written to the shadow vault's `data.json` by
+   * `ShadowVaultBootstrap`; it should NOT be set on a regular
+   * (non-shadow) vault. Persistent: surviving across plugin
+   * reloads, so closing/reopening the shadow window picks up the
+   * connection again.
+   */
+  autoConnectProfileId?: string | null;
 }
 
 export interface LogLine {

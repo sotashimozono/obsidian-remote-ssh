@@ -23,6 +23,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   clientId: '',
   userName: '',
   autoPatchAdapter: true,
+  // Phase 4 marker for shadow vaults; null on a normal vault. Only
+  // `ShadowVaultBootstrap` writes a non-null value.
+  autoConnectProfileId: null,
 };
 
 export const MAX_RETRY = 4;
