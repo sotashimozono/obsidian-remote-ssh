@@ -160,9 +160,16 @@ export class VaultModelBuilder {
 
     insertIntoFileMap(this.vault, path, folder);
     parent.children.push(folder);
-    // Folders intentionally do not trigger 'create' — File Explorer
-    // discovers them via the children array, and other consumers
-    // (Templater, Dataview) only care about files.
+    // Fire `create` for folders too. The original Phase 1 design
+    // assumed File Explorer would discover folders via parent's
+    // children array, but Phase 4 smoke proved that wrong: File
+    // Explorer's `view.onCreate` is the only path that registers a
+    // folder in `view.fileItems`, and without that the folder DOM
+    // never gets built — so files inside also stay hidden even when
+    // they're correctly in `vault.fileMap`. Folders being processed
+    // before their files (per `byFoldersFirstThenDepth`) means each
+    // file's `create` event finds its parent already registered.
+    this.vault.trigger('create', folder);
   }
 }
 
