@@ -6,6 +6,10 @@ import { VaultModelBuilder, type RemoteEntry, type ObsidianClassDeps } from '../
  * the builder reads / writes. We don't extend `obsidian`'s class
  * declarations because the package ships .d.ts only — at test time
  * there is no runtime to extend.
+ *
+ * Constructors record the args they were called with so the tests
+ * can verify the builder always passes `(vault, path)` — Obsidian's
+ * real TFile/TFolder constructors require those.
  */
 class FakeTFile {
   vault!: unknown;
@@ -15,6 +19,13 @@ class FakeTFile {
   extension!: string;
   parent!: FakeTFolder;
   stat!: { ctime: number; mtime: number; size: number };
+
+  static lastConstructorArgs: { vault: unknown; path: string } | null = null;
+  constructor(vault: unknown, path: string) {
+    FakeTFile.lastConstructorArgs = { vault, path };
+    this.vault = vault;
+    this.path = path;
+  }
 }
 
 class FakeTFolder {
@@ -23,6 +34,15 @@ class FakeTFolder {
   name: string = '';
   parent: FakeTFolder | null = null;
   children: Array<FakeTFile | FakeTFolder> = [];
+
+  static lastConstructorArgs: { vault: unknown; path: string } | null = null;
+  constructor(vault?: unknown, path?: string) {
+    if (vault !== undefined && path !== undefined) {
+      FakeTFolder.lastConstructorArgs = { vault, path };
+      this.vault = vault;
+      this.path = path;
+    }
+  }
 }
 
 const deps: ObsidianClassDeps = {
@@ -211,6 +231,23 @@ describe('VaultModelBuilder.build', () => {
     expect(result.errors).toHaveLength(1);
     expect(fileMap['good.md']).toBeDefined();
     expect(fileMap['no-such/parent/file.md']).toBeUndefined();
+  });
+
+  it('passes (vault, path) to TFile / TFolder constructors so Obsidian-side initialisers never see undefined', async () => {
+    const { vault } = makeFakeVault();
+    FakeTFile.lastConstructorArgs = null;
+    FakeTFolder.lastConstructorArgs = null;
+    const entries: RemoteEntry[] = [
+      { path: 'sub',         isDirectory: true,  ctime: 0, mtime: 0, size: 0 },
+      { path: 'sub/leaf.md', isDirectory: false, ctime: 1, mtime: 2, size: 3 },
+    ];
+    await new VaultModelBuilder(vault as never, deps).build(entries);
+
+    // Real Obsidian's TFolder constructor calls `path.lastIndexOf('/')`
+    // and throws on undefined, so the builder must never fall back to
+    // the no-arg form.
+    expect(FakeTFolder.lastConstructorArgs).toEqual({ vault, path: 'sub' });
+    expect(FakeTFile.lastConstructorArgs).toEqual({ vault, path: 'sub/leaf.md' });
   });
 
   it('treats a colliding non-folder parent as an error rather than silently inserting', async () => {

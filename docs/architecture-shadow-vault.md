@@ -146,8 +146,10 @@ vault picker dialog). User picks the highlighted folder.
 can't supply, we have to construct quack-typed plain objects, and
 plugin compatibility (`instanceof TFile` checks) gets fragile.
 
-**Status (2026-04-27):** ✅ **Answered.** Constructor works with no
-arguments; we then populate fields manually.
+**Status (2026-04-27):** ✅ **Answered.** Construct as
+`new TFile(vault, path)` and `new TFolder(vault, path)`, then
+override the fields we control (`name`, `basename`, `extension`,
+`parent`, `stat`).
 
 `require('obsidian')` is not available in the devtools console (the
 `obsidian` module is only resolved inside the esbuild-bundled plugin
@@ -156,23 +158,22 @@ code), so the verification grabs the class via an existing instance:
 ```js
 const TFile   = Object.getPrototypeOf(app.vault.getFiles()[0]).constructor;
 const TFolder = Object.getPrototypeOf(app.vault.getRoot()).constructor;
-const fake    = new TFile();   // succeeded, no throw
-fake.vault    = app.vault;
-fake.path     = 'POC-fake-file.md';
-fake.name     = 'POC-fake-file.md';
-fake.basename = 'POC-fake-file';
-fake.extension= 'md';
-fake.parent   = app.vault.getRoot();
-fake.stat     = { ctime: Date.now(), mtime: Date.now(), size: 100 };
-console.log(fake instanceof TFile);   // → true
+new TFile();                       // appeared OK in initial test
+new TFolder();                     // → throws Cannot read properties of undefined (reading 'lastIndexOf')
+new TFolder(app.vault, '.test');   // OK; auto-fills [parent, deleted, vault, path, name, children]
 ```
 
-So `VaultModelBuilder` will: construct via `new TFile()` / `new
-TFolder()`, then populate `vault`, `path`, `name`, `basename`,
-`extension`, `parent`, `stat` for files; `vault`, `path`, `name`,
-`parent`, `children` for folders. From inside the bundled plugin we
-import the classes the normal way (`import { TFile, TFolder } from
-'obsidian'`) — only the devtools probe needs the prototype trick.
+The TFolder constructor calls `path.lastIndexOf('/')` to derive
+`name`; without an arg `path` is `undefined`. The TFile no-arg form
+*appeared* OK in the OQ2 minimal test only because we never read the
+auto-derived fields after construction. **Both must be constructed
+with `(vault, path)`** — `VaultModelBuilder` does this.
+
+From inside the bundled plugin we import the classes the normal way
+(`import { TFile, TFolder } from 'obsidian'`) — only the devtools
+probe needs the prototype trick. The constructors are dependency-
+injected into `VaultModelBuilder` so unit tests can pass `FakeTFile`/
+`FakeTFolder` (the `obsidian` package ships only `.d.ts`, no runtime).
 
 ### OQ3 — Does inserting into `vault.fileMap` + firing `vault.trigger('create', file)` make File Explorer render and downstream plugins (Templater, Dataview) treat the file as real?
 
