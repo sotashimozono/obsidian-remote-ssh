@@ -56,10 +56,11 @@ export class RpcRemoteFsClient implements RemoteFsClient {
 
   // ─── write side ───────────────────────────────────────────────────────
 
-  async writeBinary(path: string, data: Buffer): Promise<void> {
+  async writeBinary(path: string, data: Buffer, expectedMtime?: number): Promise<void> {
     await this.rpc.call('fs.writeBinary', {
       path,
       contentBase64: data.toString('base64'),
+      ...(expectedMtime !== undefined ? { expectedMtime } : {}),
     });
   }
 

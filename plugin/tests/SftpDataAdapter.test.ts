@@ -702,4 +702,102 @@ describe('SftpDataAdapter (read-side)', () => {
       await expect(adapter.read('note.md')).resolves.toBe('hi');
     });
   });
+
+  describe('write conflict (expectedMtime + onWriteConflict)', () => {
+    /**
+     * Build a client whose `writeBinary` rejects with
+     * PreconditionFailed whenever `expectedMtime` is supplied, and
+     * succeeds (writing into the in-memory store) when it isn't. Lets
+     * tests drive the "conflict, retry, success" path deterministically.
+     */
+    function makeConflictingClient() {
+      const fake = makeFakeClient({
+        files: { '/v/note.md': { data: Buffer.from('initial'), mtime: 100 } },
+      });
+      const writeCalls: Array<{ path: string; expected?: number }> = [];
+      fake.spies.writeBinary.mockImplementation(
+        async (p: string, data: Buffer, expectedMtime?: number) => {
+          writeCalls.push({ path: p, expected: expectedMtime });
+          if (expectedMtime !== undefined) {
+            const err = new Error('precondition failed') as Error & { code: number };
+            err.code = -32020;
+            throw err;
+          }
+          // Success path: write into the underlying in-memory store
+          // directly so we don't recurse through the spy.
+          fake.files[p] = { data: Buffer.from(data), mtime: 200 };
+        },
+      );
+      return { fake, writeCalls };
+    }
+
+    it('passes the cached mtime as expectedMtime when the path was recently read', async () => {
+      const fake = makeFakeClient({
+        files: { '/v/note.md': { data: Buffer.from('hi'), mtime: 7 } },
+      });
+      const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+      await adapter.read('note.md'); // primes cache with mtime=7
+      fake.spies.writeBinary.mockClear();
+      await adapter.write('note.md', 'updated');
+      expect(fake.spies.writeBinary).toHaveBeenCalledWith('/v/note.md', expect.any(Buffer), 7);
+    });
+
+    it('omits expectedMtime when the cache has no entry for the path', async () => {
+      const fake = makeFakeClient({});
+      const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+      await adapter.write('new.md', 'hello'); // first-touch write, no cache hit
+      expect(fake.spies.writeBinary).toHaveBeenCalledWith('/v/new.md', expect.any(Buffer), undefined);
+    });
+
+    it('asks onWriteConflict + retries without expectedMtime when user picks overwrite', async () => {
+      const { fake, writeCalls } = makeConflictingClient();
+      const onConflict = vi.fn(async () => true);
+      const adapter = new SftpDataAdapter(
+        fake.client, '/v', readCache, dirCache, 'v',
+        null, null, onConflict,
+      );
+      await adapter.read('note.md'); // primes mtime
+      await adapter.write('note.md', 'force');
+      expect(onConflict).toHaveBeenCalledWith('note.md');
+      expect(writeCalls).toHaveLength(2);
+      expect(writeCalls[0].expected).toBeDefined();
+      expect(writeCalls[1].expected).toBeUndefined();
+    });
+
+    it('rethrows the precondition error when user cancels the conflict', async () => {
+      const { fake } = makeConflictingClient();
+      const onConflict = vi.fn(async () => false);
+      const adapter = new SftpDataAdapter(
+        fake.client, '/v', readCache, dirCache, 'v',
+        null, null, onConflict,
+      );
+      await adapter.read('note.md');
+      await expect(adapter.write('note.md', 'no')).rejects.toMatchObject({ code: -32020 });
+      expect(onConflict).toHaveBeenCalledWith('note.md');
+    });
+
+    it('rethrows when there is no onWriteConflict callback', async () => {
+      const { fake } = makeConflictingClient();
+      const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+      await adapter.read('note.md');
+      await expect(adapter.write('note.md', 'no')).rejects.toMatchObject({ code: -32020 });
+    });
+
+    it('rethrows non-precondition errors without consulting the callback', async () => {
+      const fake = makeFakeClient({
+        files: { '/v/note.md': { data: Buffer.from('hi'), mtime: 1 } },
+      });
+      fake.spies.writeBinary.mockImplementation(async () => {
+        throw new Error('disk full');
+      });
+      const onConflict = vi.fn(async () => true);
+      const adapter = new SftpDataAdapter(
+        fake.client, '/v', readCache, dirCache, 'v',
+        null, null, onConflict,
+      );
+      await adapter.read('note.md');
+      await expect(adapter.write('note.md', 'no')).rejects.toThrow(/disk full/);
+      expect(onConflict).not.toHaveBeenCalled();
+    });
+  });
 });
