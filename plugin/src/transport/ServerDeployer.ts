@@ -9,6 +9,12 @@ export interface DeployerSshClient {
   uploadFile(localPath: string, remotePath: string): Promise<void>;
   readRemoteFile(remotePath: string): Promise<Buffer>;
   exec(cmd: string): Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  /**
+   * Resolve and cache the remote `$HOME`. Used to absolutise daemon
+   * paths so OpenSSH's direct-streamlocal forwarding (which has no
+   * concept of CWD on the sshd side) can find the unix socket.
+   */
+  getRemoteHome(): Promise<string>;
 }
 
 export interface DeployOptions {
@@ -86,13 +92,26 @@ const DEFAULTS = {
  * it costs less than fifty ms once the binary is on disk.
  */
 export class ServerDeployer {
+  /**
+   * Absolutised paths from the most recent successful `deploy()`. Kept
+   * so `stop()` can target exactly what was started — pkill matching
+   * the absolute argv prevents misses if the user later passes custom
+   * paths, and the socket/token cleanup uses the same paths the daemon
+   * actually wrote.
+   */
+  private deployedPaths: { binary: string; socket: string; token: string } | null = null;
+
   constructor(private readonly ssh: DeployerSshClient) {}
 
   async deploy(opts: DeployOptions): Promise<DeployResult> {
-    const remoteBinaryPath = opts.remoteBinaryPath ?? DEFAULTS.remoteBinaryPath;
-    const remoteTokenPath  = opts.remoteTokenPath  ?? DEFAULTS.remoteTokenPath;
-    const remoteSocketPath = opts.remoteSocketPath ?? DEFAULTS.remoteSocketPath;
-    const remoteLogPath    = opts.remoteLogPath    ?? DEFAULTS.remoteLogPath;
+    // Absolutise every path against the remote's $HOME up-front. We
+    // never read or hardcode a specific shape (`/home/...`,
+    // `/Users/...`, container paths); the actual remote answers.
+    const home = await this.ssh.getRemoteHome();
+    const remoteBinaryPath = resolveRemotePath(opts.remoteBinaryPath ?? DEFAULTS.remoteBinaryPath, home);
+    const remoteTokenPath  = resolveRemotePath(opts.remoteTokenPath  ?? DEFAULTS.remoteTokenPath,  home);
+    const remoteSocketPath = resolveRemotePath(opts.remoteSocketPath ?? DEFAULTS.remoteSocketPath, home);
+    const remoteLogPath    = resolveRemotePath(opts.remoteLogPath    ?? DEFAULTS.remoteLogPath,    home);
     const killExisting     = opts.killExisting     ?? DEFAULTS.killExisting;
     const waitMs           = opts.waitForTokenTimeoutMs ?? DEFAULTS.waitForTokenTimeoutMs;
 
@@ -129,19 +148,23 @@ export class ServerDeployer {
     await this.run(startCmd);
 
     const token = await this.waitForToken(remoteTokenPath, waitMs);
+    this.deployedPaths = { binary: remoteBinaryPath, socket: remoteSocketPath, token: remoteTokenPath };
     return { remoteBinaryPath, remoteSocketPath, remoteTokenPath, token };
   }
 
   /**
-   * Stop a running daemon by killing every process matching the
-   * deployed binary path. Safe to call when no daemon is up.
+   * Stop the daemon launched by the most recent `deploy()`. Safe to
+   * call when nothing was deployed (no-op). Targets the exact absolute
+   * paths used at deploy time so it never misses or cleans up the
+   * wrong process.
    */
-  async stop(remoteBinaryPath = DEFAULTS.remoteBinaryPath,
-             remoteSocketPath = DEFAULTS.remoteSocketPath,
-             remoteTokenPath  = DEFAULTS.remoteTokenPath): Promise<void> {
-    logger.info(`ServerDeployer: stopping daemon at ${remoteBinaryPath}`);
-    await this.run(`pkill -f ${shellQuote(remoteBinaryPath + ' ')} 2>/dev/null || true`);
-    await this.run(`rm -f ${shellQuote(remoteSocketPath)} ${shellQuote(remoteTokenPath)}`);
+  async stop(): Promise<void> {
+    const paths = this.deployedPaths;
+    if (!paths) return;
+    logger.info(`ServerDeployer: stopping daemon at ${paths.binary}`);
+    await this.run(`pkill -f ${shellQuote(paths.binary + ' ')} 2>/dev/null || true`);
+    await this.run(`rm -f ${shellQuote(paths.socket)} ${shellQuote(paths.token)}`);
+    this.deployedPaths = null;
   }
 
   // ─── internals ───────────────────────────────────────────────────────────
@@ -176,6 +199,24 @@ export class ServerDeployer {
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Absolutise a remote path against the resolved `$HOME` of the remote.
+ *
+ * - Already-absolute paths (`/...`) pass through unchanged.
+ * - `~` and `~/...` are expanded against `$HOME`.
+ * - Bare relative paths are anchored at `$HOME`.
+ *
+ * Exported so it can be unit-tested without standing up a fake SSH
+ * client.
+ */
+export function resolveRemotePath(p: string, remoteHome: string): string {
+  const home = remoteHome.endsWith('/') ? remoteHome.slice(0, -1) : remoteHome;
+  if (p === '~') return home;
+  if (p.startsWith('~/')) return home + p.slice(1);
+  if (p.startsWith('/')) return p;
+  return `${home}/${p}`;
+}
 
 /**
  * Wraps a string in single quotes for inclusion in a POSIX shell

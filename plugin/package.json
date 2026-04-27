@@ -1,6 +1,6 @@
 {
   "name": "obsidian-remote-ssh",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "VS Code Remote SSH-like experience for Obsidian",
   "main": "main.js",
   "scripts": {
@@ -19,7 +19,12 @@
     "lint": "eslint src --ext .ts",
     "version": "node scripts/bump-version.mjs && git add manifest.json versions.json"
   },
-  "keywords": ["obsidian", "ssh", "sftp", "remote"],
+  "keywords": [
+    "obsidian",
+    "ssh",
+    "sftp",
+    "remote"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {

@@ -27,6 +27,7 @@ export class SftpClient {
   private profile: SshProfile | null = null;
   private closeListeners: CloseListener[] = [];
   private intentionalDisconnect = false;
+  private remoteHome: string | null = null;
 
   constructor(
     private authResolver: AuthResolver,
@@ -100,6 +101,7 @@ export class SftpClient {
         const wasAlive = this.client === client;
         this.client = null;
         this.sftp = null;
+        this.remoteHome = null;
         if (wasAlive) {
           logger.warn(`SftpClient: connection closed (${profile.host})`);
           const unexpected = !this.intentionalDisconnect;
@@ -207,9 +209,39 @@ export class SftpClient {
     this.client = null;
     this.sftp = null;
     this.profile = null;
+    this.remoteHome = null;
     if (client) {
       try { client.end(); } catch (e) { logger.warn(`SftpClient.disconnect: ${(e as Error).message}`); }
     }
+  }
+
+  /**
+   * Resolve and cache the remote `$HOME` for the active connection.
+   *
+   * Needed because OpenSSH unix-socket forwarding (direct-streamlocal)
+   * does not chdir on the sshd side: a relative socket path passed to
+   * `openssh_forwardOutStreamLocal` is resolved against `/`, not the
+   * user's home, so callers that want "home-relative" paths must
+   * absolutise them client-side.
+   *
+   * The shape of `$HOME` is environment-dependent (`/home/<user>`,
+   * `/Users/<user>`, custom container paths, shell-overridden, etc.) —
+   * never assume; always ask the actual remote.
+   */
+  async getRemoteHome(): Promise<string> {
+    if (this.remoteHome) return this.remoteHome;
+    const r = await this.exec('echo "$HOME"');
+    if (r.exitCode !== 0) {
+      throw new Error(
+        `SftpClient.getRemoteHome: echo $HOME exited ${r.exitCode}: ${r.stderr.trim() || '(no stderr)'}`,
+      );
+    }
+    const home = r.stdout.trim();
+    if (!home) {
+      throw new Error('SftpClient.getRemoteHome: $HOME is empty on remote');
+    }
+    this.remoteHome = home;
+    return home;
   }
 
   // ─── read-side ───────────────────────────────────────────────────────────
