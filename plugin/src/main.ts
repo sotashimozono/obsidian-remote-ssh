@@ -642,7 +642,47 @@ export default class RemoteSshPlugin extends Plugin {
     if (this.rpcConnection) {
       void this.subscribeToFsChanged();
     }
+
+    // Force Obsidian to walk the vault root through the just-patched
+    // adapter so the in-memory file model matches the remote — without
+    // this, File Explorer keeps showing whatever local state it had
+    // when the vault opened (e.g. a dev-vault that's a copy of the
+    // user's main vault). Failure here is non-fatal; the adapter is
+    // already patched and reads will work.
+    await this.reconcileVaultRoot();
     return true;
+  }
+
+  /**
+   * Walk the vault root through `app.vault.adapter.reconcileFolder`
+   * so the vault's in-memory file model matches whatever the (now-
+   * possibly-patched-or-restored) adapter currently sees on disk.
+   *
+   * Used both right after a successful `patchAdapter` (so the file
+   * explorer reflects the remote vault immediately) and after a
+   * `restoreAdapter` (so the local view comes back).
+   *
+   * `reconcileFolder` is the same private FileSystemAdapter API used
+   * by the fs.changed handler — try-called with a defensive
+   * `typeof === 'function'` so an Obsidian build that drops it
+   * doesn't crash the patch flow.
+   */
+  private async reconcileVaultRoot(): Promise<void> {
+    const adapter = this.app.vault.adapter as unknown as ReconcileCapableAdapter;
+    if (typeof adapter.reconcileFolder !== 'function') {
+      logger.warn(
+        'adapter.reconcileFolder unavailable on this Obsidian build; '
+        + 'vault model not refreshed — File Explorer may stay on its '
+        + 'pre-connect listing until a reload',
+      );
+      return;
+    }
+    try {
+      await adapter.reconcileFolder('');
+      logger.info('Vault model reconciled with current adapter');
+    } catch (e) {
+      logger.warn(`reconcileVaultRoot failed: ${(e as Error).message}`);
+    }
   }
 
   /**
@@ -838,9 +878,10 @@ export default class RemoteSshPlugin extends Plugin {
     // any in-flight fs.changed callbacks find a still-valid adapter
     // (or, if the handler races, a null `dataAdapter` which it tolerates).
     this.unsubscribeFromFsChanged();
-    if (this.patcher?.isPatched()) {
+    const wasPatched = this.patcher?.isPatched() ?? false;
+    if (wasPatched) {
       try {
-        this.patcher.restore();
+        this.patcher!.restore();
         logger.info('Adapter restored');
       } catch (e) {
         logger.error(`Adapter restore failed: ${(e as Error).message}`);
@@ -853,6 +894,14 @@ export default class RemoteSshPlugin extends Plugin {
     // Bridge tears down asynchronously; we don't await here because
     // restoreAdapter must remain sync for the connection-close hook.
     void this.stopResourceBridge();
+    // Walk the vault root through the now-restored FileSystemAdapter
+    // so File Explorer goes back to showing local files (the model
+    // would otherwise stay frozen on whatever the patched remote view
+    // was reconciled to). Fire-and-forget — this method needs to stay
+    // sync for the SftpClient.onClose handler.
+    if (wasPatched) {
+      void this.reconcileVaultRoot();
+    }
   }
 
   /**
