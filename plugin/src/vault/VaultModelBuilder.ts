@@ -33,10 +33,18 @@ export interface BuildResult {
  * `obsidian` package ships only `.d.ts` — at test time we have no
  * runtime to `new TFile()` against, so we pass stubs; at plugin runtime
  * we pass the real constructors imported from `obsidian`.
+ *
+ * **Both constructors must take `(vault, path)`.** Discovered via
+ * devtools 2026-04-27: `new TFolder()` with no args throws
+ * `Cannot read properties of undefined (reading 'lastIndexOf')` from
+ * inside Obsidian — the constructor calls `path.lastIndexOf('/')` to
+ * derive `name`. `new TFile()` (no args) appeared to work in the
+ * earlier OQ2 test only because we never read the auto-derived
+ * fields; passing `(vault, path)` is the only safe form for both.
  */
 export interface ObsidianClassDeps {
-  TFile:   new () => TFile;
-  TFolder: new () => TFolder;
+  TFile:   new (vault: Vault, path: string) => TFile;
+  TFolder: new (vault: Vault, path: string) => TFolder;
 }
 
 /**
@@ -119,9 +127,14 @@ export class VaultModelBuilder {
   }
 
   private insertFile(entry: RemoteEntry, parent: TFolder): void {
-    const file = new this.deps.TFile();
+    // Pass (vault, path) to satisfy Obsidian's TFile constructor —
+    // see the doc comment on `ObsidianClassDeps` for why.
+    const file = new this.deps.TFile(this.vault, entry.path);
     const name = basename(entry.path);
     const dot = name.lastIndexOf('.');
+    // Override after construction in case the constructor's defaults
+    // for these fields don't match what we want (parent in particular —
+    // Obsidian may default it to null, we always want the real folder).
     file.vault     = this.vault;
     file.path      = entry.path;
     file.name      = name;
@@ -136,11 +149,13 @@ export class VaultModelBuilder {
   }
 
   private insertFolder(path: string, parent: TFolder): void {
-    const folder = new this.deps.TFolder();
+    const folder = new this.deps.TFolder(this.vault, path);
     folder.vault    = this.vault;
     folder.path     = path;
     folder.name     = basename(path);
     folder.parent   = parent;
+    // Constructor may have given us a children array already; reset
+    // to a known-empty state so callers don't see stale entries.
     folder.children = [];
 
     insertIntoFileMap(this.vault, path, folder);
