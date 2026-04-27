@@ -8,9 +8,10 @@
  *   node scripts/dev-install.mjs <vault-root>
  *
  * The default vault root is read from the `REMOTE_SSH_DEV_VAULT` env var
- * or falls back to `../../SelfArchive-dev` relative to this script
- * (i.e. a sibling of the repo root, since the plugin lives under
- * `<repo>/plugin/`).
+ * or falls back to `../../dev-vault` relative to this script (i.e. a
+ * sibling of the repo root, since the plugin lives under
+ * `<repo>/plugin/`). Set the env var in your shell rc to point at
+ * whatever vault you actually use for development.
  */
 
 import * as fs from 'node:fs';
@@ -23,7 +24,7 @@ const repoRoot   = path.resolve(pluginRoot, '..');    // <repo>
 
 const vaultRoot = process.argv[2]
   ?? process.env.REMOTE_SSH_DEV_VAULT
-  ?? path.resolve(repoRoot, '..', 'SelfArchive-dev');
+  ?? path.resolve(repoRoot, '..', 'dev-vault');
 
 const manifestPath = path.join(pluginRoot, 'manifest.json');
 if (!fs.existsSync(manifestPath)) {

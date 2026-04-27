@@ -12,7 +12,7 @@ describe('AdapterPatcher', () => {
     };
     const patcher = new AdapterPatcher(target, replacement);
     patcher.patch(['greet']);
-    expect(target.greet('souta')).toBe('hi souta!');
+    expect(target.greet('alice')).toBe('hi alice!');
   });
 
   it('binds the replacement to its own host so this resolves correctly', () => {
