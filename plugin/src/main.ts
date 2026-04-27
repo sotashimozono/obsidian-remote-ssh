@@ -1,4 +1,4 @@
-import { Plugin, Notice, FileSystemAdapter } from 'obsidian';
+import { Plugin, Notice, FileSystemAdapter, TFile, TFolder } from 'obsidian';
 import type { PluginSettings, SshProfile } from './types';
 import { SyncState } from './types';
 import { DEFAULT_SETTINGS } from './constants';
@@ -27,6 +27,7 @@ import { StatusBar } from './ui/StatusBar';
 import { ConnectModal } from './ui/ConnectModal';
 import { SettingsTab } from './settings/SettingsTab';
 import { logger } from './util/logger';
+import { VaultModelBuilder, type RemoteEntry } from './vault/VaultModelBuilder';
 import { installErrorHook, uninstallErrorHook } from './util/errorHook';
 import { normalizeRemotePath } from './util/pathUtils';
 import * as path from 'path';
@@ -159,6 +160,16 @@ export default class RemoteSshPlugin extends Plugin {
       id: 'debug-dump-api',
       name: 'Debug: dump adapter / vault API surface to console.log',
       callback: () => this.debugDumpVaultAdapterAPI(),
+    });
+
+    this.addCommand({
+      id: 'debug-build-vault-from-remote',
+      name: 'Debug: build vault model from remote (POC)',
+      checkCallback: (checking: boolean) => {
+        if (!this.client?.isAlive()) return false;
+        if (!checking) void this.debugBuildVaultFromRemote();
+        return true;
+      },
     });
   }
 
@@ -782,6 +793,68 @@ export default class RemoteSshPlugin extends Plugin {
     );
   }
 
+  /**
+   * POC for the shadow-vault architecture (see
+   * docs/architecture-shadow-vault.md, Phase 1): walk the patched
+   * adapter, then hand the resulting entry list to `VaultModelBuilder`
+   * which materialises TFile/TFolder objects in `app.vault.fileMap`
+   * and fires `vault.trigger('create', file)` for each new file. File
+   * Explorer should redraw with the remote tree.
+   *
+   * Stat is intentionally skipped per file in this POC — every entry
+   * lands with zero ctime/mtime/size. Shadow-vault Phase 4 will
+   * decide whether to batch-stat at walk time or stat lazily.
+   *
+   * Run from a vault that's already connected to a profile via the
+   * existing in-place patch flow (Tier 1-A); the command is hidden
+   * unless `this.client?.isAlive()`.
+   */
+  private async debugBuildVaultFromRemote(): Promise<void> {
+    const adapter = this.app.vault.adapter as unknown as {
+      list(p: string): Promise<{ files: string[]; folders: string[] }>;
+    };
+
+    const start = Date.now();
+    new Notice('Remote SSH POC: walking remote tree…');
+
+    const entries: RemoteEntry[] = [];
+    const queue: string[] = [''];
+    while (queue.length > 0) {
+      const folder = queue.shift()!;
+      let listing: { files: string[]; folders: string[] };
+      try {
+        listing = await adapter.list(folder);
+      } catch (e) {
+        logger.warn(`debug-build-vault: list("${folder}") failed: ${(e as Error).message}`);
+        continue;
+      }
+      for (const sub of listing.folders) {
+        if (!sub) continue;
+        entries.push({ path: sub, isDirectory: true, ctime: 0, mtime: 0, size: 0 });
+        queue.push(sub);
+      }
+      for (const file of listing.files) {
+        if (!file) continue;
+        entries.push({ path: file, isDirectory: false, ctime: 0, mtime: 0, size: 0 });
+      }
+    }
+    const walkMs = Date.now() - start;
+    logger.info(`debug-build-vault: walked ${entries.length} entries in ${walkMs}ms`);
+
+    const builder = new VaultModelBuilder(this.app.vault, { TFile, TFolder });
+    const result = await builder.build(entries);
+    const totalMs = Date.now() - start;
+
+    const summary =
+      `built ${result.filesAdded}f + ${result.foldersAdded}d, ` +
+      `skipped ${result.skipped}, errors ${result.errors.length} (${totalMs}ms)`;
+    new Notice(`Remote SSH POC: ${summary}`);
+    if (result.errors.length > 0) {
+      logger.warn(
+        `debug-build-vault: first 5 errors: ${JSON.stringify(result.errors.slice(0, 5), null, 2)}`,
+      );
+    }
+  }
 
   /**
    * Manual command-palette entry point for adapter patching. Used
