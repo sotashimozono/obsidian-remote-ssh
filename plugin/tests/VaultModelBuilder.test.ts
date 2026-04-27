@@ -181,7 +181,13 @@ describe('VaultModelBuilder.build', () => {
     expect(result.errors[0].message).toMatch(/empty path/);
   });
 
-  it('does not fire create for folders, only for files', async () => {
+  it('fires create for both files and folders, in folders-first order', async () => {
+    // Discovered during Phase 4 smoke: File Explorer\'s view.onCreate
+    // is the only path that registers a folder in view.fileItems, and
+    // without that the folder\'s DOM never gets built — so files
+    // inside also stay hidden even when correctly inserted into
+    // vault.fileMap. Fire create for folders too; sort guarantees
+    // each file\'s create event finds its parent already registered.
     const { vault, triggers } = makeFakeVault();
     const entries: RemoteEntry[] = [
       { path: 'd1',         isDirectory: true,  ctime: 0, mtime: 0, size: 0 },
@@ -190,9 +196,14 @@ describe('VaultModelBuilder.build', () => {
     ];
     await new VaultModelBuilder(vault as never, deps).build(entries);
 
-    // Only one create event — the file. Both folders are silent.
-    expect(triggers).toHaveLength(1);
-    expect(triggers[0].event).toBe('create');
+    // 3 create events, all named 'create'.
+    expect(triggers).toHaveLength(3);
+    expect(triggers.every(t => t.event === 'create')).toBe(true);
+    // Folders fire before the file inside them so File Explorer can
+    // build the parent DOM before adding children.
+    const paths = triggers.map(t => (t.args[0] as { path: string }).path);
+    expect(paths.indexOf('d1')).toBeLessThan(paths.indexOf('d1/file.md'));
+    expect(paths).toContain('d2');
   });
 
   it('correctly extracts basename and extension for files with multiple dots and no extension', async () => {
