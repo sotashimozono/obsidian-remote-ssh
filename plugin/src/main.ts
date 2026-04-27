@@ -660,63 +660,93 @@ export default class RemoteSshPlugin extends Plugin {
   }
 
   /**
-   * Walk the vault root through whichever private "reconcile" hook
-   * the running Obsidian build exposes, so the in-memory file model
-   * matches what the (now-possibly-patched-or-restored) adapter
-   * currently sees on disk.
+   * Bring the vault's in-memory file model in line with whatever the
+   * current adapter sees on disk. Used right after a successful
+   * `patchAdapter` (so File Explorer shows the remote vault) and
+   * after `restoreAdapter` (so the local view comes back).
    *
-   * Used both right after a successful `patchAdapter` (so the file
-   * explorer reflects the remote vault immediately) and after a
-   * `restoreAdapter` (so the local view comes back).
+   * The diagnostic dump in PR #54 confirmed `app.vault.adapter`
+   * exposes `reconcileFile(path)` but **not** `reconcileFolder` /
+   * `vault.scan` on the user's Obsidian build (1.5+ era), and that
+   * `reconcileFile('')` blows up with "startsWith of undefined" —
+   * the API expects an actual file path, not the root.
    *
-   * Obsidian doesn't ship reconcile in its public typings, and the
-   * actual location moves between builds. We try, in order:
-   *   1. `vault.adapter.reconcileFolder('')`  — old desktop builds
-   *   2. `vault.adapter.reconcileFile('')`    — same era, sometimes
-   *      only the file variant is exposed
-   *   3. `vault._fileChanged(...)` / `vault.scan()` family — deeper
-   *      private surface used by Obsidian's own watcher
+   * So we drive it ourselves:
+   *   1. Walk every file currently visible through the (patched)
+   *      adapter and call `reconcileFile(path)` for each. New files
+   *      land in the vault's TFile map; existing ones get their
+   *      mtime checked.
+   *   2. Iterate the vault's known TFile entries and call
+   *      `reconcileFile(path)` for every file the walk *didn't*
+   *      already touch. The adapter's stat returns "not found" for
+   *      those, and Obsidian fires the deletion path internally.
    *
-   * On no-match we log the available method names from both objects
-   * so the diagnostic command can surface what to target next.
+   * The 2-pass converges the model in both directions. Folders are
+   * derived from file paths, so we don't need a separate folder
+   * reconcile.
    */
   private async reconcileVaultRoot(): Promise<void> {
-    type Reconciler = (path: string, oldPath?: string) => void | Promise<void>;
-    const candidates: Array<{ label: string; fn: Reconciler | undefined }> = [
-      {
-        label: 'adapter.reconcileFolder',
-        fn: (this.app.vault.adapter as unknown as { reconcileFolder?: Reconciler })
-          .reconcileFolder?.bind(this.app.vault.adapter),
-      },
-      {
-        label: 'adapter.reconcileFile',
-        fn: (this.app.vault.adapter as unknown as { reconcileFile?: Reconciler })
-          .reconcileFile?.bind(this.app.vault.adapter),
-      },
-      {
-        label: 'vault.scan',
-        fn: (this.app.vault as unknown as { scan?: Reconciler })
-          .scan?.bind(this.app.vault),
-      },
-    ];
+    type ReconcileFile = (path: string, oldPath?: string) => void | Promise<void>;
+    const adapter = this.app.vault.adapter as unknown as {
+      reconcileFile?: ReconcileFile;
+    };
+    if (typeof adapter.reconcileFile !== 'function') {
+      logger.warn(
+        'app.vault.adapter.reconcileFile unavailable on this Obsidian build. '
+        + 'Run "Remote SSH: Debug: dump adapter / vault API surface" '
+        + 'and report back so we can target a different hook.',
+      );
+      return;
+    }
+    const reconcile = adapter.reconcileFile.bind(this.app.vault.adapter);
 
-    for (const c of candidates) {
-      if (typeof c.fn !== 'function') continue;
+    // Pass 1: walk the (patched) adapter's view, reconcile every
+    // file we find. We use a manual BFS over `list(folder)` rather
+    // than `listRecursive` because not every adapter implementation
+    // exposes the recursive flavour.
+    const seenRemote = new Set<string>();
+    const queue: string[] = [''];
+    while (queue.length > 0) {
+      const folder = queue.shift()!;
+      let listing: { files: string[]; folders: string[] };
       try {
-        await c.fn('');
-        logger.info(`Vault model reconciled via ${c.label}`);
-        return;
+        listing = await this.app.vault.adapter.list(folder);
       } catch (e) {
-        logger.warn(`reconcileVaultRoot: ${c.label} threw: ${(e as Error).message}`);
+        logger.warn(`reconcileVaultRoot: list("${folder}") failed: ${(e as Error).message}`);
+        continue;
+      }
+      for (const file of listing.files) {
+        seenRemote.add(file);
+        try {
+          await reconcile(file);
+        } catch (e) {
+          logger.warn(`reconcileVaultRoot: reconcileFile("${file}") threw: ${(e as Error).message}`);
+        }
+      }
+      for (const child of listing.folders) {
+        queue.push(child);
       }
     }
 
-    logger.warn(
-      'No reconcile hook found on this Obsidian build. '
-      + 'Run "Remote SSH: Debug: dump adapter / vault API surface" '
-      + 'to list available methods and report back.',
+    // Pass 2: anything in the vault model that the walk didn't see
+    // is a leftover from before the swap. reconcileFile sees a stat
+    // miss and fires the deletion path; the entry leaves the vault
+    // model on its own.
+    const known = this.app.vault.getFiles();
+    let dropped = 0;
+    for (const f of known) {
+      if (seenRemote.has(f.path)) continue;
+      try {
+        await reconcile(f.path);
+        dropped++;
+      } catch (e) {
+        logger.warn(`reconcileVaultRoot: drop reconcile("${f.path}") threw: ${(e as Error).message}`);
+      }
+    }
+    logger.info(
+      `Vault model reconciled: ${seenRemote.size} adapter files visited, `
+      + `${dropped} stale entries pruned`,
     );
-    return;
   }
 
   /**
