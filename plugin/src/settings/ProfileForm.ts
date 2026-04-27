@@ -25,6 +25,17 @@ export class ProfileForm extends Modal {
   }
 
   onOpen() {
+    this.renderBody();
+  }
+
+  /**
+   * Render the modal contents from scratch. Called on first open
+   * and again whenever an SSH-config import has populated fields,
+   * so the form picks up the new values without close + re-open
+   * (which used to flicker the modal and lose the dropdown's
+   * selection state).
+   */
+  private renderBody() {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl('h2', { text: this.isNew ? 'Add SSH Profile' : 'Edit Profile' });
@@ -33,7 +44,7 @@ export class ProfileForm extends Modal {
     if (sshEntries.length > 0) {
       new Setting(contentEl)
         .setName('Import from SSH config')
-        .setDesc('Pre-fill fields from ~/.ssh/config')
+        .setDesc('Pre-fill fields from ~/.ssh/config (HostName, User, Port, IdentityFile, ProxyJump).')
         .addDropdown(d => {
           d.addOption('', '— select host —');
           for (const e of sshEntries) d.addOption(e.alias, e.alias);
@@ -41,8 +52,7 @@ export class ProfileForm extends Modal {
             if (!alias) return;
             const e = sshEntries.find(x => x.alias === alias)!;
             this.applyConfigEntry(e);
-            this.close();
-            new ProfileForm(this.app, this.profile, this.onSave).open();
+            this.renderBody();
           });
         });
     }
@@ -142,7 +152,18 @@ export class ProfileForm extends Modal {
       this.profile.privateKeyPath = e.identityFile;
     }
     if (e.proxyJump) {
-      this.profile.jumpHost = { host: e.proxyJump, port: 22, username: e.user, authMethod: 'privateKey' };
+      // ProxyJump → JumpHostConfig. Auth defaults to agent when no
+      // identity is known (matches OpenSSH's typical bastion setup),
+      // privateKey when the referenced Host block had an IdentityFile.
+      this.profile.jumpHost = {
+        host:           e.proxyJump.host,
+        port:           e.proxyJump.port,
+        username:       e.proxyJump.user,
+        authMethod:     e.proxyJump.identityFile ? 'privateKey' : 'agent',
+        privateKeyPath: e.proxyJump.identityFile,
+      };
+    } else {
+      this.profile.jumpHost = undefined;
     }
   }
 
