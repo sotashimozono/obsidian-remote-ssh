@@ -154,6 +154,12 @@ export default class RemoteSshPlugin extends Plugin {
       name: 'Debug: test RPC tunnel against obsidian-remote-server',
       callback: () => this.debugTestRpcTunnel(),
     });
+
+    this.addCommand({
+      id: 'debug-dump-api',
+      name: 'Debug: dump adapter / vault API surface to console.log',
+      callback: () => this.debugDumpVaultAdapterAPI(),
+    });
   }
 
   async onunload() {
@@ -654,36 +660,98 @@ export default class RemoteSshPlugin extends Plugin {
   }
 
   /**
-   * Walk the vault root through `app.vault.adapter.reconcileFolder`
-   * so the vault's in-memory file model matches whatever the (now-
-   * possibly-patched-or-restored) adapter currently sees on disk.
+   * Walk the vault root through whichever private "reconcile" hook
+   * the running Obsidian build exposes, so the in-memory file model
+   * matches what the (now-possibly-patched-or-restored) adapter
+   * currently sees on disk.
    *
    * Used both right after a successful `patchAdapter` (so the file
    * explorer reflects the remote vault immediately) and after a
    * `restoreAdapter` (so the local view comes back).
    *
-   * `reconcileFolder` is the same private FileSystemAdapter API used
-   * by the fs.changed handler — try-called with a defensive
-   * `typeof === 'function'` so an Obsidian build that drops it
-   * doesn't crash the patch flow.
+   * Obsidian doesn't ship reconcile in its public typings, and the
+   * actual location moves between builds. We try, in order:
+   *   1. `vault.adapter.reconcileFolder('')`  — old desktop builds
+   *   2. `vault.adapter.reconcileFile('')`    — same era, sometimes
+   *      only the file variant is exposed
+   *   3. `vault._fileChanged(...)` / `vault.scan()` family — deeper
+   *      private surface used by Obsidian's own watcher
+   *
+   * On no-match we log the available method names from both objects
+   * so the diagnostic command can surface what to target next.
    */
   private async reconcileVaultRoot(): Promise<void> {
-    const adapter = this.app.vault.adapter as unknown as ReconcileCapableAdapter;
-    if (typeof adapter.reconcileFolder !== 'function') {
-      logger.warn(
-        'adapter.reconcileFolder unavailable on this Obsidian build; '
-        + 'vault model not refreshed — File Explorer may stay on its '
-        + 'pre-connect listing until a reload',
-      );
-      return;
+    type Reconciler = (path: string, oldPath?: string) => void | Promise<void>;
+    const candidates: Array<{ label: string; fn: Reconciler | undefined }> = [
+      {
+        label: 'adapter.reconcileFolder',
+        fn: (this.app.vault.adapter as unknown as { reconcileFolder?: Reconciler })
+          .reconcileFolder?.bind(this.app.vault.adapter),
+      },
+      {
+        label: 'adapter.reconcileFile',
+        fn: (this.app.vault.adapter as unknown as { reconcileFile?: Reconciler })
+          .reconcileFile?.bind(this.app.vault.adapter),
+      },
+      {
+        label: 'vault.scan',
+        fn: (this.app.vault as unknown as { scan?: Reconciler })
+          .scan?.bind(this.app.vault),
+      },
+    ];
+
+    for (const c of candidates) {
+      if (typeof c.fn !== 'function') continue;
+      try {
+        await c.fn('');
+        logger.info(`Vault model reconciled via ${c.label}`);
+        return;
+      } catch (e) {
+        logger.warn(`reconcileVaultRoot: ${c.label} threw: ${(e as Error).message}`);
+      }
     }
-    try {
-      await adapter.reconcileFolder('');
-      logger.info('Vault model reconciled with current adapter');
-    } catch (e) {
-      logger.warn(`reconcileVaultRoot failed: ${(e as Error).message}`);
-    }
+
+    logger.warn(
+      'No reconcile hook found on this Obsidian build. '
+      + 'Run "Remote SSH: Debug: dump adapter / vault API surface" '
+      + 'to list available methods and report back.',
+    );
+    return;
   }
+
+  /**
+   * Diagnostic command: log the method names on `app.vault.adapter`
+   * and `app.vault` (own + first-prototype) so we can target the
+   * right reconcile-equivalent on Obsidian builds where the usual
+   * suspects aren't reachable. Surfaces only function-typed members
+   * to keep the log readable.
+   */
+  private debugDumpVaultAdapterAPI(): void {
+    const fnsOn = (obj: object): string[] => {
+      const own = Object.getOwnPropertyNames(obj)
+        .filter(k => typeof (obj as Record<string, unknown>)[k] === 'function');
+      const proto = Object.getPrototypeOf(obj);
+      const inherited = proto
+        ? Object.getOwnPropertyNames(proto)
+            .filter(k => typeof (proto as Record<string, unknown>)[k] === 'function')
+        : [];
+      return [...new Set([...own, ...inherited])].sort();
+    };
+
+    const adapterFns = fnsOn(this.app.vault.adapter as unknown as object);
+    const vaultFns   = fnsOn(this.app.vault as unknown as object);
+
+    logger.info(`debug-api: app.vault.adapter functions (${adapterFns.length}):`);
+    for (const n of adapterFns) logger.info(`  - ${n}`);
+    logger.info(`debug-api: app.vault functions (${vaultFns.length}):`);
+    for (const n of vaultFns) logger.info(`  - ${n}`);
+
+    new Notice(
+      `Remote SSH: dumped ${adapterFns.length} adapter + ${vaultFns.length} `
+      + 'vault method names to console.log',
+    );
+  }
+
 
   /**
    * Manual command-palette entry point for adapter patching. Used
