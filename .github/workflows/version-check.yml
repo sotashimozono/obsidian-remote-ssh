@@ -1,0 +1,83 @@
+name: Version check
+
+# Reject any PR whose plugin version isn't a strict bump over the
+# base branch's. Enforces the "every merge = a release" model the
+# repo uses during development: the release-on-merge workflow tags
+# main using `plugin/manifest.json`, so a same-or-lower version
+# would either fail to tag or silently re-tag an existing release.
+#
+# Also asserts that `plugin/manifest.json` and `plugin/package.json`
+# agree, so the runtime log (which reads `manifest.json`) and the
+# npm-side metadata never drift apart.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: version-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # need both branches for `git show`
+
+      - name: Resolve versions
+        id: versions
+        run: |
+          set -euo pipefail
+          base_ref="${{ github.base_ref }}"
+          git fetch origin "$base_ref" --depth=1
+
+          base_manifest=$(git show "origin/${base_ref}:plugin/manifest.json" \
+            | jq -r '.version')
+          head_manifest=$(jq -r '.version' plugin/manifest.json)
+          head_package=$(jq -r '.version' plugin/package.json)
+
+          echo "base_manifest=$base_manifest" >> "$GITHUB_OUTPUT"
+          echo "head_manifest=$head_manifest" >> "$GITHUB_OUTPUT"
+          echo "head_package=$head_package"   >> "$GITHUB_OUTPUT"
+
+          echo "base manifest.json: $base_manifest"
+          echo "head manifest.json: $head_manifest"
+          echo "head package.json:  $head_package"
+
+      - name: manifest.json and package.json must agree
+        run: |
+          if [ "${{ steps.versions.outputs.head_manifest }}" \
+            != "${{ steps.versions.outputs.head_package }}" ]; then
+            echo "::error::plugin/manifest.json (${{ steps.versions.outputs.head_manifest }})"\
+              " and plugin/package.json (${{ steps.versions.outputs.head_package }}) disagree."\
+              " Run 'cd plugin && npm version <X.Y.Z>' to bump both at once."
+            exit 1
+          fi
+
+      - name: PR version must be strictly greater than base
+        run: |
+          # Pure-shell semver compare: strip pre-release suffix, split,
+          # compare numerically. A non-strict bump is rejected because
+          # the release-on-merge workflow tags main using this version
+          # and a same-or-lower version would either re-tag an existing
+          # release or fail the tag push.
+          base="${{ steps.versions.outputs.base_manifest }}"
+          head="${{ steps.versions.outputs.head_manifest }}"
+
+          base_core="${base%%-*}"
+          head_core="${head%%-*}"
+          IFS=. read -r bM bm bp <<< "$base_core"
+          IFS=. read -r hM hm hp <<< "$head_core"
+
+          if [ "$hM" -gt "$bM" ] \
+            || { [ "$hM" -eq "$bM" ] && [ "$hm" -gt "$bm" ]; } \
+            || { [ "$hM" -eq "$bM" ] && [ "$hm" -eq "$bm" ] && [ "$hp" -gt "$bp" ]; }
+          then
+            echo "OK: $base → $head"
+          else
+            echo "::error::PR version $head is not greater than base $base."\
+              " Bump with 'cd plugin && npm version patch' (or minor/major)."
+            exit 1
+          fi

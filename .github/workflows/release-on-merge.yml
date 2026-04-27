@@ -1,0 +1,93 @@
+name: Release on merge
+
+# Each merge to main publishes a GitHub Release. The version-check
+# workflow guarantees `plugin/manifest.json` is bumped on every PR,
+# so this just reads the version, pushes the matching tag, and
+# leans on the existing `release.yml` (which fires on tag push) to
+# do the actual build + release-notes generation.
+#
+# We mark every release as a pre-release while we're pre-1.0; the
+# existing release.yml already does the right thing for that based
+# on whether the version string contains a `-` suffix, but here we
+# force-prerelease so even clean `0.X.Y` tags publish under the
+# pre-release banner. Flip `IS_PRERELEASE` to `false` once the
+# plugin reaches 1.0.
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-on-merge
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  IS_PRERELEASE: 'true'
+
+jobs:
+  tag-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # need full history to detect existing tags
+
+      - name: Read manifest version
+        id: ver
+        run: |
+          v=$(jq -r '.version' plugin/manifest.json)
+          echo "version=$v"   >> "$GITHUB_OUTPUT"
+          echo "tag=$v"       >> "$GITHUB_OUTPUT"  # release.yml expects a bare X.Y.Z tag
+
+      - name: Skip if tag already exists
+        id: tag-check
+        run: |
+          if git rev-parse "refs/tags/${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${{ steps.ver.outputs.tag }} already exists — nothing to release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push tag
+        if: steps.tag-check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.ver.outputs.tag }}"
+          git push origin "${{ steps.ver.outputs.tag }}"
+
+      # The actual build + GitHub Release lives in `release.yml`,
+      # which triggers on the tag push above. We only need the
+      # manifest-version tag to land. The fallback below handles the
+      # rare case where the existing release.yml was disabled or the
+      # tag already exists for some other reason — we still want a
+      # release with auto-generated notes for visibility.
+      - name: Ensure GitHub Release exists for this tag
+        if: steps.tag-check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Wait briefly for release.yml to take over; if it doesn't,
+          # create a minimal release here so every merge surfaces in
+          # the Releases UI.
+          for _ in 1 2 3 4 5; do
+            sleep 6
+            if gh release view "${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+              echo "Release ${{ steps.ver.outputs.tag }} already created by release.yml."
+              exit 0
+            fi
+          done
+
+          echo "release.yml didn't create a release within 30 s; creating a minimal one."
+          flag=""
+          if [ "$IS_PRERELEASE" = "true" ]; then flag="--prerelease"; fi
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            --title "${{ steps.ver.outputs.tag }}" \
+            --generate-notes \
+            $flag
