@@ -107,35 +107,88 @@ export class ShadowVaultBootstrap {
 
   // ─── internals ──────────────────────────────────────────────────────────
 
+  /**
+   * Install the plugin per-file rather than as one big symlinked
+   * directory.
+   *
+   * The earlier "symlink the whole plugin dir" approach was tighter
+   * and one fewer step, but it sneakily broke the source vault: the
+   * shadow vault's plugin would write its own per-vault `data.json`
+   * THROUGH the symlink, clobbering the source vault's settings
+   * (hostKeyStore, secrets, …) on the very first connect.
+   *
+   * Fix: pluginDir is a **real directory**. Code + assets
+   * (`main.js`, `manifest.json`, `styles.css`, `server-bin/`) are
+   * symlinked individually so dev-build iterations land immediately,
+   * but `data.json` is **never touched** by install — the caller
+   * writes the per-vault data.json into pluginDir as a real file,
+   * leaving the source vault's data.json untouched.
+   */
   private installPlugin(pluginDir: string): 'symlink' | 'copy' {
-    fs.mkdirSync(path.dirname(pluginDir), { recursive: true });
-
-    // Remove any prior install at this path so symlink/copy starts clean.
+    // If pluginDir is a stale whole-dir symlink from an older build
+    // (or a previous run of this same code on an older version),
+    // unlink it — DO NOT rmSync, that would follow the link and
+    // recursively delete the source plugin dir.
     try {
       const stat = fs.lstatSync(pluginDir);
-      if (stat.isSymbolicLink() || stat.isDirectory() || stat.isFile()) {
-        fs.rmSync(pluginDir, { recursive: true, force: true });
+      if (stat.isSymbolicLink()) {
+        fs.unlinkSync(pluginDir);
       }
     } catch {
-      // Doesn't exist, nothing to clean up.
+      // Doesn't exist yet, fine.
     }
 
-    // Try symlink first. On Windows, 'junction' works without admin
-    // privileges for directories under the user's control.
-    try {
-      const symlinkType = process.platform === 'win32' ? 'junction' : 'dir';
-      fs.symlinkSync(this.sourcePluginDir, pluginDir, symlinkType);
-      return 'symlink';
-    } catch (e) {
-      logger.warn(
-        `ShadowVaultBootstrap: symlink failed (${(e as Error).message}); falling back to recursive copy`,
-      );
+    fs.mkdirSync(pluginDir, { recursive: true });
+
+    const sharedFiles = ['main.js', 'manifest.json', 'styles.css'];
+    const sharedDirs = ['server-bin'];
+
+    let useSymlink = true;
+
+    for (const f of sharedFiles) {
+      const src = path.join(this.sourcePluginDir, f);
+      const dst = path.join(pluginDir, f);
+      if (!fs.existsSync(src)) continue;
+      // Plain rmSync handles existing file or file-symlink — does NOT
+      // follow into directories.
+      try { fs.rmSync(dst, { force: true }); } catch { /* noop */ }
+      if (useSymlink) {
+        try { fs.symlinkSync(src, dst, 'file'); continue; }
+        catch (e) {
+          logger.warn(`ShadowVaultBootstrap: file symlink failed (${(e as Error).message}); falling back to copy`);
+          useSymlink = false;
+        }
+      }
+      fs.copyFileSync(src, dst);
     }
 
-    // dereference: true so a symlinked source still copies real files,
-    // not nested symlinks the shadow vault wouldn't resolve correctly.
-    fs.cpSync(this.sourcePluginDir, pluginDir, { recursive: true, dereference: true });
-    return 'copy';
+    for (const d of sharedDirs) {
+      const src = path.join(this.sourcePluginDir, d);
+      const dst = path.join(pluginDir, d);
+      if (!fs.existsSync(src)) continue;
+      // Use lstat + unlink for symlinks vs rmSync recursive for real
+      // dirs so we never accidentally recurse through a link.
+      try {
+        const stat = fs.lstatSync(dst);
+        if (stat.isSymbolicLink()) fs.unlinkSync(dst);
+        else                       fs.rmSync(dst, { recursive: true, force: true });
+      } catch { /* noop */ }
+      if (useSymlink) {
+        try {
+          const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+          fs.symlinkSync(src, dst, linkType);
+          continue;
+        } catch (e) {
+          logger.warn(`ShadowVaultBootstrap: dir symlink failed (${(e as Error).message}); falling back to copy`);
+          useSymlink = false;
+        }
+      }
+      // dereference so a symlinked source produces real files in the
+      // shadow vault rather than nested links that wouldn't resolve.
+      fs.cpSync(src, dst, { recursive: true, dereference: true });
+    }
+
+    return useSymlink ? 'symlink' : 'copy';
   }
 }
 
