@@ -280,3 +280,224 @@ describe('VaultModelBuilder.build', () => {
     expect(fileMap['parent.md/child.md']).toBeUndefined();
   });
 });
+
+describe('VaultModelBuilder.insertOne', () => {
+  it('inserts a single file at root and fires create', () => {
+    const { vault, root, fileMap, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    const out = builder.insertOne({ path: 'note.md', isDirectory: false, ctime: 1, mtime: 2, size: 3 });
+    expect(out).not.toBeNull();
+    expect(fileMap['note.md']).toBe(out);
+    expect(root.children).toContain(out);
+    expect(triggers).toEqual([{ event: 'create', args: [out] }]);
+  });
+
+  it('inserts a folder and fires create', () => {
+    const { vault, fileMap, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    const out = builder.insertOne({ path: 'sub', isDirectory: true, ctime: 0, mtime: 0, size: 0 });
+    expect(out).toBeInstanceOf(FakeTFolder);
+    expect(fileMap['sub']).toBe(out);
+    expect(triggers).toEqual([{ event: 'create', args: [out] }]);
+  });
+
+  it('returns null and does not fire create when the path is already in the model', () => {
+    const { vault, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    builder.insertOne({ path: 'note.md', isDirectory: false, ctime: 0, mtime: 0, size: 0 });
+    triggers.length = 0;
+    const second = builder.insertOne({ path: 'note.md', isDirectory: false, ctime: 0, mtime: 0, size: 0 });
+    expect(second).toBeNull();
+    expect(triggers).toEqual([]);
+  });
+
+  it('returns null when the parent folder is missing', () => {
+    const { vault, fileMap, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    const out = builder.insertOne({ path: 'orphan/file.md', isDirectory: false, ctime: 0, mtime: 0, size: 0 });
+    expect(out).toBeNull();
+    expect(fileMap['orphan/file.md']).toBeUndefined();
+    expect(triggers).toEqual([]);
+  });
+});
+
+describe('VaultModelBuilder.removeOne', () => {
+  it('removes a file from fileMap + parent.children and fires delete', async () => {
+    const { vault, root, fileMap, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    await builder.build([
+      { path: 'note.md', isDirectory: false, ctime: 0, mtime: 0, size: 0 },
+    ]);
+    const file = fileMap['note.md'];
+    triggers.length = 0;
+
+    const removed = builder.removeOne('note.md');
+    expect(removed).toBe(true);
+    expect(fileMap['note.md']).toBeUndefined();
+    expect(root.children).not.toContain(file);
+    expect(triggers).toEqual([{ event: 'delete', args: [file] }]);
+  });
+
+  it('removes a folder AND every descendant from fileMap', async () => {
+    const { vault, fileMap } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    await builder.build([
+      { path: 'sub',          isDirectory: true,  ctime: 0, mtime: 0, size: 0 },
+      { path: 'sub/note.md',  isDirectory: false, ctime: 0, mtime: 0, size: 0 },
+      { path: 'sub/inner',    isDirectory: true,  ctime: 0, mtime: 0, size: 0 },
+      { path: 'sub/inner/x.md', isDirectory: false, ctime: 0, mtime: 0, size: 0 },
+      { path: 'other.md',     isDirectory: false, ctime: 0, mtime: 0, size: 0 },
+    ]);
+
+    builder.removeOne('sub');
+
+    expect(fileMap['sub']).toBeUndefined();
+    expect(fileMap['sub/note.md']).toBeUndefined();
+    expect(fileMap['sub/inner']).toBeUndefined();
+    expect(fileMap['sub/inner/x.md']).toBeUndefined();
+    // Sibling untouched.
+    expect(fileMap['other.md']).toBeDefined();
+  });
+
+  it('returns false and does not fire delete when the path is not in the model', () => {
+    const { vault, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    expect(builder.removeOne('does-not-exist.md')).toBe(false);
+    expect(triggers).toEqual([]);
+  });
+});
+
+describe('VaultModelBuilder.modifyOne', () => {
+  it('updates stat and fires modify for an existing file', async () => {
+    const { vault, fileMap, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    await builder.build([
+      { path: 'note.md', isDirectory: false, ctime: 1, mtime: 2, size: 3 },
+    ]);
+    triggers.length = 0;
+
+    const ok = builder.modifyOne('note.md', { ctime: 10, mtime: 20, size: 30 });
+    expect(ok).toBe(true);
+    const file = fileMap['note.md'] as FakeTFile;
+    expect(file.stat).toEqual({ ctime: 10, mtime: 20, size: 30 });
+    expect(triggers).toEqual([{ event: 'modify', args: [file] }]);
+  });
+
+  it('fires modify but leaves stat untouched when called without a stat arg', async () => {
+    const { vault, fileMap, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    await builder.build([
+      { path: 'note.md', isDirectory: false, ctime: 1, mtime: 2, size: 3 },
+    ]);
+    triggers.length = 0;
+
+    builder.modifyOne('note.md');
+    expect((fileMap['note.md'] as FakeTFile).stat).toEqual({ ctime: 1, mtime: 2, size: 3 });
+    expect(triggers).toHaveLength(1);
+    expect(triggers[0].event).toBe('modify');
+  });
+
+  it('returns false for folders and missing paths', async () => {
+    const { vault, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    await builder.build([
+      { path: 'sub', isDirectory: true, ctime: 0, mtime: 0, size: 0 },
+    ]);
+    triggers.length = 0;
+
+    expect(builder.modifyOne('sub')).toBe(false);
+    expect(builder.modifyOne('does-not-exist')).toBe(false);
+    expect(triggers).toEqual([]);
+  });
+});
+
+describe('VaultModelBuilder.renameOne', () => {
+  it('renames a file in fileMap + parent.children and fires rename with the old path', async () => {
+    const { vault, root, fileMap, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    await builder.build([
+      { path: 'old.md', isDirectory: false, ctime: 0, mtime: 0, size: 0 },
+    ]);
+    const file = fileMap['old.md'] as FakeTFile;
+    triggers.length = 0;
+
+    const ok = builder.renameOne('old.md', 'new.md');
+    expect(ok).toBe(true);
+    expect(fileMap['old.md']).toBeUndefined();
+    expect(fileMap['new.md']).toBe(file);
+    expect(file.path).toBe('new.md');
+    expect(file.name).toBe('new.md');
+    expect(file.basename).toBe('new');
+    expect(file.extension).toBe('md');
+    expect(root.children).toContain(file);
+    expect(triggers).toEqual([{ event: 'rename', args: [file, 'old.md'] }]);
+  });
+
+  it('moves a file across folders and updates parent references', async () => {
+    const { vault, fileMap } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    await builder.build([
+      { path: 'src',         isDirectory: true,  ctime: 0, mtime: 0, size: 0 },
+      { path: 'dst',         isDirectory: true,  ctime: 0, mtime: 0, size: 0 },
+      { path: 'src/note.md', isDirectory: false, ctime: 0, mtime: 0, size: 0 },
+    ]);
+    const src = fileMap['src'] as FakeTFolder;
+    const dst = fileMap['dst'] as FakeTFolder;
+    const file = fileMap['src/note.md'] as FakeTFile;
+
+    expect(src.children).toContain(file);
+    expect(dst.children).not.toContain(file);
+
+    builder.renameOne('src/note.md', 'dst/note.md');
+
+    expect(src.children).not.toContain(file);
+    expect(dst.children).toContain(file);
+    expect(file.parent).toBe(dst);
+    expect(file.path).toBe('dst/note.md');
+  });
+
+  it('renames a folder AND rewrites every descendant\'s path', async () => {
+    const { vault, fileMap } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    await builder.build([
+      { path: 'old',          isDirectory: true,  ctime: 0, mtime: 0, size: 0 },
+      { path: 'old/note.md',  isDirectory: false, ctime: 0, mtime: 0, size: 0 },
+      { path: 'old/inner',    isDirectory: true,  ctime: 0, mtime: 0, size: 0 },
+      { path: 'old/inner/x.md', isDirectory: false, ctime: 0, mtime: 0, size: 0 },
+    ]);
+
+    builder.renameOne('old', 'new');
+
+    expect(fileMap['old']).toBeUndefined();
+    expect(fileMap['old/note.md']).toBeUndefined();
+    expect(fileMap['old/inner']).toBeUndefined();
+    expect(fileMap['old/inner/x.md']).toBeUndefined();
+    expect(fileMap['new']).toBeDefined();
+    expect(fileMap['new/note.md']).toBeDefined();
+    expect(fileMap['new/inner']).toBeDefined();
+    expect(fileMap['new/inner/x.md']).toBeDefined();
+    // Path field on each descendant matches the new key.
+    expect(fileMap['new/note.md'].path).toBe('new/note.md');
+    expect(fileMap['new/inner/x.md'].path).toBe('new/inner/x.md');
+  });
+
+  it('returns false when the source is missing or the destination has no parent', async () => {
+    const { vault, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    await builder.build([
+      { path: 'note.md', isDirectory: false, ctime: 0, mtime: 0, size: 0 },
+    ]);
+    triggers.length = 0;
+
+    expect(builder.renameOne('missing.md', 'whatever.md')).toBe(false);
+    expect(builder.renameOne('note.md', 'no-such-folder/note.md')).toBe(false);
+    expect(triggers).toEqual([]);
+  });
+
+  it('is a no-op when oldPath === newPath', () => {
+    const { vault, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    expect(builder.renameOne('x', 'x')).toBe(false);
+    expect(triggers).toEqual([]);
+  });
+});

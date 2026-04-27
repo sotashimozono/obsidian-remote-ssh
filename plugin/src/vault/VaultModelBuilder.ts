@@ -126,7 +126,170 @@ export class VaultModelBuilder {
     return parent;
   }
 
-  private insertFile(entry: RemoteEntry, parent: TFolder): void {
+  // ─── single-entry mutations (Phase 6A: live updates) ───────────────────
+
+  /**
+   * Insert one entry into the vault model and fire `vault.trigger('create')`.
+   *
+   * - Returns the inserted `TFile` / `TFolder` on success.
+   * - Returns `null` if the path was already registered (idempotent).
+   * - Returns `null` and warns if the entry's parent folder is missing
+   *   from the vault (the caller should typically insert parents
+   *   first; for `fs.watch`-driven creates the watcher fires for
+   *   parent before children, so this is rare).
+   *
+   * Used by both the bulk `build()` path and the `fs.watch` live-update
+   * handler — same insertion semantics regardless of source.
+   */
+  insertOne(entry: RemoteEntry): TFile | TFolder | null {
+    if (!entry.path) return null;
+    if (this.vault.getAbstractFileByPath(entry.path)) return null;
+    const parent = this.resolveParent(entry.path);
+    if (!parent) {
+      logger.warn(`VaultModelBuilder.insertOne: parent missing for "${entry.path}"`);
+      return null;
+    }
+    return entry.isDirectory
+      ? this.insertFolder(entry.path, parent)
+      : this.insertFile(entry, parent);
+  }
+
+  /**
+   * Remove one path from the vault model and fire `vault.trigger('delete')`.
+   *
+   * - Removes from both `vault.fileMap` and the parent folder's
+   *   `children` array.
+   * - For folders, also recursively removes descendants from
+   *   `vault.fileMap` (their parent's `children` array is already
+   *   gone, so they become unreachable).
+   * - Returns `true` if removed, `false` if the path wasn't in the model.
+   */
+  removeOne(path: string): boolean {
+    if (!path) return false;
+    const target = this.vault.getAbstractFileByPath(path) as TAbstractFile | null;
+    if (!target) return false;
+
+    // Pull out of parent.children if any.
+    const parent = target.parent as TFolder | null;
+    if (parent && Array.isArray(parent.children)) {
+      const idx = parent.children.indexOf(target);
+      if (idx >= 0) parent.children.splice(idx, 1);
+    }
+
+    const map = (this.vault as unknown as { fileMap: Record<string, TAbstractFile> }).fileMap;
+
+    // Folders: also drop every descendant from fileMap so we don't
+    // leak orphan TFile entries that File Explorer will keep in its
+    // own model.
+    if (isFolder(target)) {
+      const prefix = target.path + '/';
+      for (const key of Object.keys(map)) {
+        if (key.startsWith(prefix)) delete map[key];
+      }
+    }
+    delete map[path];
+
+    this.vault.trigger('delete', target);
+    return true;
+  }
+
+  /**
+   * Update an existing file's stat and fire `vault.trigger('modify')`.
+   *
+   * Folder paths are silently ignored — Obsidian doesn't fire
+   * `modify` for folders, and file-explorer / metadata-cache plugins
+   * don't expect to see one.
+   *
+   * Returns `true` if the file existed (and was updated), `false`
+   * otherwise.
+   */
+  modifyOne(path: string, stat?: { ctime: number; mtime: number; size: number }): boolean {
+    const target = this.vault.getAbstractFileByPath(path) as TAbstractFile | null;
+    if (!target) return false;
+    if (isFolder(target)) return false;
+    const file = target as TFile;
+    if (stat) {
+      file.stat = stat;
+    }
+    this.vault.trigger('modify', file);
+    return true;
+  }
+
+  /**
+   * Move/rename one path in the vault model and fire
+   * `vault.trigger('rename', file, oldPath)`.
+   *
+   * Updates `path`, `name`, and (for files) `basename`/`extension`
+   * fields, moves the entry between `vault.fileMap` keys, and shifts
+   * it between parent.children arrays if the parent changed.
+   *
+   * For folders, recursively rewrites descendant paths so they keep
+   * pointing at the new parent.
+   *
+   * Returns `true` if the rename happened, `false` if the source
+   * wasn't in the model or the destination's parent is missing.
+   */
+  renameOne(oldPath: string, newPath: string): boolean {
+    if (!oldPath || !newPath || oldPath === newPath) return false;
+    const target = this.vault.getAbstractFileByPath(oldPath) as TAbstractFile | null;
+    if (!target) return false;
+    const newParent = this.resolveParent(newPath);
+    if (!newParent) {
+      logger.warn(`VaultModelBuilder.renameOne: parent missing for "${newPath}"`);
+      return false;
+    }
+
+    const map = (this.vault as unknown as { fileMap: Record<string, TAbstractFile> }).fileMap;
+    const oldParent = target.parent as TFolder | null;
+
+    // Detach from old parent's children.
+    if (oldParent && Array.isArray(oldParent.children)) {
+      const idx = oldParent.children.indexOf(target);
+      if (idx >= 0) oldParent.children.splice(idx, 1);
+    }
+
+    // Update path-derived fields on the entry itself.
+    const newName = basename(newPath);
+    const oldPaths: Array<{ entry: TAbstractFile; oldKey: string; newKey: string }> = [
+      { entry: target, oldKey: oldPath, newKey: newPath },
+    ];
+    target.path   = newPath;
+    target.name   = newName;
+    target.parent = newParent;
+    if (!isFolder(target)) {
+      const file = target as TFile;
+      const dot = newName.lastIndexOf('.');
+      file.basename  = dot > 0 ? newName.slice(0, dot) : newName;
+      file.extension = dot > 0 ? newName.slice(dot + 1) : '';
+    } else {
+      // For a folder, also rewrite every descendant's path so
+      // fileMap keys + entry.path stay in sync. Collect first, then
+      // mutate, so the iteration doesn't re-scan our own changes.
+      const prefix = oldPath + '/';
+      for (const key of Object.keys(map)) {
+        if (!key.startsWith(prefix)) continue;
+        const desc = map[key];
+        const newKey = newPath + '/' + key.slice(prefix.length);
+        oldPaths.push({ entry: desc, oldKey: key, newKey });
+        desc.path = newKey;
+      }
+    }
+
+    // Apply fileMap key moves (delete olds, then set news, so a
+    // self-overlap can't lose entries).
+    for (const m of oldPaths) delete map[m.oldKey];
+    for (const m of oldPaths) map[m.newKey] = m.entry;
+
+    // Attach to new parent's children.
+    newParent.children.push(target);
+
+    this.vault.trigger('rename', target, oldPath);
+    return true;
+  }
+
+  // ─── internals ──────────────────────────────────────────────────────────
+
+  private insertFile(entry: RemoteEntry, parent: TFolder): TFile {
     // Pass (vault, path) to satisfy Obsidian's TFile constructor —
     // see the doc comment on `ObsidianClassDeps` for why.
     const file = new this.deps.TFile(this.vault, entry.path);
@@ -146,9 +309,10 @@ export class VaultModelBuilder {
     insertIntoFileMap(this.vault, entry.path, file);
     parent.children.push(file);
     this.vault.trigger('create', file);
+    return file;
   }
 
-  private insertFolder(path: string, parent: TFolder): void {
+  private insertFolder(path: string, parent: TFolder): TFolder {
     const folder = new this.deps.TFolder(this.vault, path);
     folder.vault    = this.vault;
     folder.path     = path;
@@ -170,6 +334,7 @@ export class VaultModelBuilder {
     // before their files (per `byFoldersFirstThenDepth`) means each
     // file's `create` event finds its parent already registered.
     this.vault.trigger('create', folder);
+    return folder;
   }
 }
 
