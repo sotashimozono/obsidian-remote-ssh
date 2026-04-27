@@ -28,6 +28,11 @@ import { ConnectModal } from './ui/ConnectModal';
 import { SettingsTab } from './settings/SettingsTab';
 import { logger } from './util/logger';
 import { VaultModelBuilder, type RemoteEntry } from './vault/VaultModelBuilder';
+import { ObsidianRegistry } from './shadow/ObsidianRegistry';
+import { ShadowVaultBootstrap } from './shadow/ShadowVaultBootstrap';
+import { ShadowVaultManager } from './shadow/ShadowVaultManager';
+import { WindowSpawner } from './shadow/WindowSpawner';
+import * as os from 'os';
 import { installErrorHook, uninstallErrorHook } from './util/errorHook';
 import { normalizeRemotePath } from './util/pathUtils';
 import * as path from 'path';
@@ -168,6 +173,17 @@ export default class RemoteSshPlugin extends Plugin {
       checkCallback: (checking: boolean) => {
         if (!this.client?.isAlive()) return false;
         if (!checking) void this.debugBuildVaultFromRemote();
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: 'debug-open-shadow-vault',
+      name: 'Debug: open shadow vault for active profile (Phase 2 POC)',
+      checkCallback: (checking: boolean) => {
+        // No active profile = nothing to shadow.
+        if (!this.settings.activeProfileId) return false;
+        if (!checking) void this.debugOpenShadowVault();
         return true;
       },
     });
@@ -863,6 +879,64 @@ export default class RemoteSshPlugin extends Plugin {
       logger.warn(
         `debug-build-vault: first 5 errors: ${JSON.stringify(result.errors.slice(0, 5), null, 2)}`,
       );
+    }
+  }
+
+  /**
+   * POC for the shadow-vault flow (Phase 2 in
+   * docs/architecture-shadow-vault.md): bootstrap the shadow vault
+   * for the active profile and open it in a new Obsidian window.
+   * Phase 4 will wire the new window's plugin onload to auto-connect
+   * and run VaultModelBuilder; here we only verify Phase 2's half:
+   * the dir gets created with the right contents and Obsidian opens
+   * a window pointed at it.
+   *
+   * Does NOT require an SSH connection — the shadow vault setup is
+   * a local-disk operation; the connect happens later, in the
+   * shadow window.
+   */
+  private async debugOpenShadowVault(): Promise<void> {
+    const profileId = this.settings.activeProfileId;
+    if (!profileId) {
+      new Notice('Remote SSH POC: no active profile selected');
+      return;
+    }
+    const profile = this.settings.profiles.find(p => p.id === profileId);
+    if (!profile) {
+      new Notice(`Remote SSH POC: active profile id ${profileId} not found in profiles list`);
+      return;
+    }
+
+    // Source dir: where this running plugin lives, so the shadow
+    // vault's plugin install symlinks/copies the same bundle.
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) {
+      new Notice('Remote SSH POC: vault is not FileSystemAdapter-backed; cannot locate plugin source');
+      return;
+    }
+    const sourcePluginDir = path.join(adapter.getBasePath(), '.obsidian', 'plugins', this.manifest.id);
+
+    // Shadow vaults live under ~/.obsidian-remote/vaults/ on every
+    // OS (per the architecture doc). os.homedir() resolves at
+    // runtime — no hardcoded user.
+    const baseDir = path.join(os.homedir(), '.obsidian-remote', 'vaults');
+
+    const registry = new ObsidianRegistry(ObsidianRegistry.defaultConfigPath());
+    const bootstrap = new ShadowVaultBootstrap(baseDir, sourcePluginDir, registry);
+    const spawner = new WindowSpawner();
+    const manager = new ShadowVaultManager(bootstrap, spawner);
+
+    try {
+      const result = await manager.openShadowFor(profile, this.settings.profiles);
+      const where = result.layout.vaultDir;
+      const how = result.pluginInstallMethod;
+      const reg = result.registryCreated ? 'newly registered' : 'reused';
+      new Notice(`Remote SSH POC: opened shadow vault for ${profile.name} (${how}, ${reg})`);
+      logger.info(`debug-open-shadow-vault: vault=${where}, registry id=${result.registryId} (${reg}), plugin=${how}`);
+    } catch (e) {
+      const msg = (e as Error).message;
+      logger.error(`debug-open-shadow-vault: ${msg}`);
+      new Notice(`Remote SSH POC: shadow vault failed — ${msg}`);
     }
   }
 
