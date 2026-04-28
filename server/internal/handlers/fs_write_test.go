@@ -23,7 +23,7 @@ func writeVault(t *testing.T) string {
 
 func TestFsWrite_CreatesFile(t *testing.T) {
 	root := writeVault(t)
-	h := FsWrite(root)
+	h := FsWrite(root, nil)
 	raw, _ := json.Marshal(proto.WriteTextParams{Path: "note.md", Content: "# hello"})
 	result, rerr := h(context.Background(), raw)
 	if rerr != nil {
@@ -47,7 +47,7 @@ func TestFsWrite_CreatesFile(t *testing.T) {
 
 func TestFsWrite_AutoCreatesParentDirs(t *testing.T) {
 	root := writeVault(t)
-	h := FsWrite(root)
+	h := FsWrite(root, nil)
 	raw, _ := json.Marshal(proto.WriteTextParams{Path: "docs/sub/a.md", Content: "x"})
 	_, rerr := h(context.Background(), raw)
 	if rerr != nil {
@@ -60,7 +60,7 @@ func TestFsWrite_AutoCreatesParentDirs(t *testing.T) {
 
 func TestFsWrite_Overwrites(t *testing.T) {
 	root := writeVault(t)
-	h := FsWrite(root)
+	h := FsWrite(root, nil)
 	raw1, _ := json.Marshal(proto.WriteTextParams{Path: "a.md", Content: "one"})
 	if _, err := h(context.Background(), raw1); err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestFsWrite_Overwrites(t *testing.T) {
 
 func TestFsWrite_ExpectedMtimeFailsWhenDrifted(t *testing.T) {
 	root := writeVault(t)
-	h := FsWrite(root)
+	h := FsWrite(root, nil)
 	// Seed an existing file, then attempt a write with a bogus mtime.
 	if err := os.WriteFile(filepath.Join(root, "a.md"), []byte("seed"), 0o644); err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestFsWrite_ExpectedMtimeAcceptsNewFile(t *testing.T) {
 	// semantics where the client assumes "I think this file is new; create
 	// it atomically".
 	root := writeVault(t)
-	h := FsWrite(root)
+	h := FsWrite(root, nil)
 	raw, _ := json.Marshal(proto.WriteTextParams{Path: "new.md", Content: "fresh", ExpectedMtime: 12345})
 	if _, rerr := h(context.Background(), raw); rerr != nil {
 		t.Fatalf("unexpected error: %+v", rerr)
@@ -109,7 +109,7 @@ func TestFsWrite_ExpectedMtimeAcceptsNewFile(t *testing.T) {
 
 func TestFsWrite_PathOutsideVault(t *testing.T) {
 	root := writeVault(t)
-	h := FsWrite(root)
+	h := FsWrite(root, nil)
 	raw, _ := json.Marshal(proto.WriteTextParams{Path: "../sneaky.txt", Content: "x"})
 	_, rerr := h(context.Background(), raw)
 	if rerr == nil || rerr.Code != proto.ErrorPathOutsideVault {
@@ -121,7 +121,7 @@ func TestFsWrite_PathOutsideVault(t *testing.T) {
 
 func TestFsWriteBinary_RoundTrip(t *testing.T) {
 	root := writeVault(t)
-	h := FsWriteBinary(root)
+	h := FsWriteBinary(root, nil)
 	bytes := []byte{0x00, 0x01, 0x02, 0xff, 0xfe}
 	raw, _ := json.Marshal(proto.WriteBinaryParams{
 		Path:          "blob.bin",
@@ -143,7 +143,7 @@ func TestFsWriteBinary_RoundTrip(t *testing.T) {
 
 func TestFsWriteBinary_RejectsInvalidBase64(t *testing.T) {
 	root := writeVault(t)
-	h := FsWriteBinary(root)
+	h := FsWriteBinary(root, nil)
 	raw, _ := json.Marshal(proto.WriteBinaryParams{
 		Path:          "blob.bin",
 		ContentBase64: "not-valid-base64-@@@",
@@ -221,7 +221,7 @@ func TestFsAppendBinary_Concatenates(t *testing.T) {
 // failing write.
 func TestAtomicWriteFile_NoTmpLeftovers(t *testing.T) {
 	root := writeVault(t)
-	h := FsWrite(root)
+	h := FsWrite(root, nil)
 	raw, _ := json.Marshal(proto.WriteTextParams{Path: "docs/a.md", Content: "hi"})
 	if _, rerr := h(context.Background(), raw); rerr != nil {
 		t.Fatal(rerr)

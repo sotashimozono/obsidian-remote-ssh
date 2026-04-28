@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/correlator"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/proto"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/rpc"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/server"
@@ -25,7 +26,14 @@ type WatcherCore interface {
 // Resolved subscription ids are tracked on the Session so the server
 // can drop them via SubscriptionCleaner when the connection closes
 // — the watcher must not keep firing callbacks against a dead writer.
-func FsWatch(w WatcherCore) rpc.Handler {
+//
+// `cor` (optional) is the per-daemon Correlator: when an inbound
+// fs.write* (or remove/rename) registered a cid for the path the
+// watcher just fired on, the resulting `fs.changed` notification
+// carries the same cid in its envelope-level meta. Pass nil to
+// disable cid threading entirely (notifications go out without meta,
+// pre-Phase-C wire shape).
+func FsWatch(w WatcherCore, cor *correlator.Correlator) rpc.Handler {
 	return func(ctx context.Context, params json.RawMessage) (interface{}, *rpc.Error) {
 		var p proto.WatchParams
 		if e := decodeParams("fs.watch", params, &p); e != nil {
@@ -41,10 +49,11 @@ func FsWatch(w WatcherCore) rpc.Handler {
 				Path:           ev.Path,
 				Event:          mapEventType(ev.Type),
 			}
+			meta := takeCidMeta(cor, ev.Path)
 			// We deliberately ignore SendNotification errors: the
 			// connection has likely gone away, in which case the
 			// watcher will be unsubscribed shortly anyway.
-			_ = session.SendNotification("fs.changed", notifyParams)
+			_ = session.SendNotificationWithMeta("fs.changed", notifyParams, meta)
 		})
 		if setupErr != nil {
 			return nil, rpc.ErrInternal("fs.watch: " + setupErr.Error())
@@ -52,6 +61,23 @@ func FsWatch(w WatcherCore) rpc.Handler {
 		session.AddSubscription(subID)
 		return proto.WatchResult{SubscriptionID: subID}, nil
 	}
+}
+
+// takeCidMeta consults the Correlator for a registered cid keyed by
+// `path` and packages it into a *proto.Meta the notifier accepts.
+// Returns nil when the daemon was built without a correlator, when
+// no cid was registered for the path, or when the registration
+// expired — in all those cases the notification goes out without
+// envelope meta (pre-Phase-C shape, fully back-compat).
+func takeCidMeta(cor *correlator.Correlator, path string) *proto.Meta {
+	if cor == nil {
+		return nil
+	}
+	cid := cor.Take(path)
+	if cid == "" {
+		return nil
+	}
+	return &proto.Meta{Cid: cid}
 }
 
 func mapEventType(t watcher.EventType) proto.FsChangeEvent {

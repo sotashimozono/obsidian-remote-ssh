@@ -79,7 +79,7 @@ func TestFsRemove_DeletesFile(t *testing.T) {
 	if err := os.WriteFile(p, []byte("bye"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := FsRemove(root)
+	h := FsRemove(root, nil)
 	raw, _ := json.Marshal(proto.PathOnlyParams{Path: "doomed.md"})
 	if _, rerr := h(context.Background(), raw); rerr != nil {
 		t.Fatalf("unexpected error: %+v", rerr)
@@ -94,7 +94,7 @@ func TestFsRemove_RefusesDirectory(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h := FsRemove(root)
+	h := FsRemove(root, nil)
 	raw, _ := json.Marshal(proto.PathOnlyParams{Path: "docs"})
 	_, rerr := h(context.Background(), raw)
 	if rerr == nil || rerr.Code != proto.ErrorIsADirectory {
@@ -104,7 +104,7 @@ func TestFsRemove_RefusesDirectory(t *testing.T) {
 
 func TestFsRemove_MissingReturnsFileNotFound(t *testing.T) {
 	root := t.TempDir()
-	h := FsRemove(root)
+	h := FsRemove(root, nil)
 	raw, _ := json.Marshal(proto.PathOnlyParams{Path: "ghost.md"})
 	_, rerr := h(context.Background(), raw)
 	if rerr == nil || rerr.Code != proto.ErrorFileNotFound {
@@ -178,7 +178,7 @@ func TestFsRename_MovesFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "old.md"), []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := FsRename(root)
+	h := FsRename(root, nil)
 	raw, _ := json.Marshal(proto.RenameParams{OldPath: "old.md", NewPath: "new.md"})
 	result, rerr := h(context.Background(), raw)
 	if rerr != nil {
@@ -200,7 +200,7 @@ func TestFsRename_CreatesDestinationParents(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "a.md"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := FsRename(root)
+	h := FsRename(root, nil)
 	raw, _ := json.Marshal(proto.RenameParams{OldPath: "a.md", NewPath: "archived/2026/a.md"})
 	if _, rerr := h(context.Background(), raw); rerr != nil {
 		t.Fatalf("unexpected error: %+v", rerr)
@@ -212,7 +212,7 @@ func TestFsRename_CreatesDestinationParents(t *testing.T) {
 
 func TestFsRename_MissingSource(t *testing.T) {
 	root := t.TempDir()
-	h := FsRename(root)
+	h := FsRename(root, nil)
 	raw, _ := json.Marshal(proto.RenameParams{OldPath: "ghost.md", NewPath: "new.md"})
 	_, rerr := h(context.Background(), raw)
 	if rerr == nil || rerr.Code != proto.ErrorFileNotFound {

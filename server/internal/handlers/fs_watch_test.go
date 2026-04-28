@@ -45,13 +45,13 @@ func jsonNumber(n int) string {
 
 func TestFsWatch_RegistersSubscriptionAndTracksItOnSession(t *testing.T) {
 	fake := &fakeWatcher{}
-	h := FsWatch(fake)
+	h := FsWatch(fake, nil)
 	sess := server.NewSession()
 
 	// Capture push notifications via the session's notifier.
 	type push struct{ method string; params interface{} }
 	pushes := []push{}
-	sess.SetNotifier(func(method string, params interface{}) error {
+	sess.SetNotifier(func(method string, params interface{}, _ *proto.Meta) error {
 		pushes = append(pushes, push{method, params})
 		return nil
 	})
@@ -95,7 +95,7 @@ func TestFsWatch_RegistersSubscriptionAndTracksItOnSession(t *testing.T) {
 
 func TestFsWatch_SurfacesSubscribeError(t *testing.T) {
 	fake := &fakeWatcher{subscribeErr: errors.New("boom")}
-	h := FsWatch(fake)
+	h := FsWatch(fake, nil)
 	ctx := server.WithSession(context.Background(), server.NewSession())
 	raw, _ := json.Marshal(proto.WatchParams{Path: "x"})
 	_, rerr := h(ctx, raw)

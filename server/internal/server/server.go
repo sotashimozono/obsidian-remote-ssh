@@ -142,7 +142,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	// `conn` without grabbing private fields. JSON marshalling lives
 	// in this closure so we depend on `proto` here rather than in
 	// every handler that wants to push.
-	session.SetNotifier(func(method string, params interface{}) error {
+	session.SetNotifier(func(method string, params interface{}, meta *proto.Meta) error {
 		paramsBytes, err := json.Marshal(params)
 		if err != nil {
 			return fmt.Errorf("server: marshal notification params: %w", err)
@@ -151,6 +151,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			JSONRPC: proto.JSONRPCVersion,
 			Method:  method,
 			Params:  paramsBytes,
+			Meta:    meta, // omitempty when nil — pre-meta wire shape preserved
 		}
 		body, err := json.Marshal(envelope)
 		if err != nil {
