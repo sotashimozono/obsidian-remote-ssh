@@ -1165,4 +1165,93 @@ describe('SftpDataAdapter (offline queue while reconnecting)', () => {
     const ops = reopened.pending().map(e => e.op.kind);
     expect(ops).toEqual(['write', 'mkdir']);
   });
+
+  // ─── replayQueuedOp (E2-β.3 entry point used by QueueReplayer) ─────────
+
+  it('replayQueuedOp(write) honours the queued expectedMtime, not the cached one', async () => {
+    const fake = makeFakeClient({
+      files: { '/v/a.md': { data: Buffer.from('initial'), mtime: 100 } },
+    });
+    const adapter = makeAdapterWithQueue({ client: fake.client });
+    // Replay scenario: caller passes the mtime captured at enqueue
+    // time. We assert the spy received it as expectedMtime.
+    const result = await adapter.replayQueuedOp({
+      kind: 'write',
+      path: 'a.md',
+      contentBase64: Buffer.from('replayed', 'utf8').toString('base64'),
+      expectedMtime: 42,
+    });
+    expect(result).toEqual({ result: 'ok' });
+    expect(fake.spies.writeBinary).toHaveBeenCalledWith('/v/a.md', expect.any(Buffer), 42);
+  });
+
+  it('replayQueuedOp returns conflict on PreconditionFailed without an ancestor', async () => {
+    const fake = makeFakeClient({
+      files: { '/v/a.md': { data: Buffer.from('initial'), mtime: 100 } },
+    });
+    fake.spies.writeBinary.mockImplementation(async (_p: string, _data: Buffer, expectedMtime?: number) => {
+      if (expectedMtime !== undefined) {
+        const err = new Error('precondition failed') as Error & { code: number };
+        err.code = -32020;
+        throw err;
+      }
+    });
+    const adapter = makeAdapterWithQueue({ client: fake.client });
+    // No prior read → no ancestor → adapter falls through to the
+    // legacy two-choice path. Without an `onWriteConflict` callback,
+    // the precondition error rethrows; replayQueuedOp surfaces it as
+    // 'conflict' (= a user-decided outcome, queue moves on).
+    const result = await adapter.replayQueuedOp({
+      kind: 'write',
+      path: 'a.md',
+      contentBase64: Buffer.from('replayed', 'utf8').toString('base64'),
+      expectedMtime: 42,
+    });
+    expect(result).toEqual({ result: 'conflict' });
+  });
+
+  it('replayQueuedOp dispatches mkdir / remove / rename / copy to the underlying client', async () => {
+    // Pre-populate source files so the fake's rename/copy don't bail
+    // with "no such file" — the adapter just relays the call.
+    const fake = makeFakeClient({
+      files: {
+        '/v/old.md': { data: Buffer.from('x'), mtime: 1 },
+        '/v/a':     { data: Buffer.from('a'), mtime: 1 },
+        '/v/c':     { data: Buffer.from('c'), mtime: 1 },
+      },
+    });
+    const adapter = makeAdapterWithQueue({ client: fake.client });
+
+    expect((await adapter.replayQueuedOp({ kind: 'mkdir', path: 'newdir' })).result).toBe('ok');
+    expect(fake.spies.mkdirp).toHaveBeenCalledWith('/v/newdir');
+
+    expect((await adapter.replayQueuedOp({ kind: 'remove', path: 'old.md' })).result).toBe('ok');
+    expect(fake.spies.remove).toHaveBeenCalledWith('/v/old.md');
+
+    expect((await adapter.replayQueuedOp({ kind: 'rename', oldPath: 'a', newPath: 'b' })).result).toBe('ok');
+    expect(fake.spies.rename).toHaveBeenCalledWith('/v/a', '/v/b');
+
+    expect((await adapter.replayQueuedOp({ kind: 'copy', srcPath: 'c', dstPath: 'd' })).result).toBe('ok');
+    expect(fake.spies.copy).toHaveBeenCalledWith('/v/c', '/v/d');
+  });
+
+  it('replayQueuedOp returns error when the underlying client throws non-precondition', async () => {
+    const fake = makeFakeClient({});
+    fake.spies.writeBinary.mockImplementation(async () => { throw new Error('disk full'); });
+    const adapter = makeAdapterWithQueue({ client: fake.client });
+    const result = await adapter.replayQueuedOp({
+      kind: 'write',
+      path: 'a.md',
+      contentBase64: 'YQ==',
+    });
+    expect(result).toEqual({ result: 'error', message: expect.stringMatching(/disk full/) });
+  });
+
+  it('replayQueuedOp refuses to run while reconnecting', async () => {
+    const fake = makeFakeClient({});
+    const adapter = makeAdapterWithQueue({ client: fake.client });
+    adapter.setReconnecting(true);
+    const result = await adapter.replayQueuedOp({ kind: 'mkdir', path: 'x' });
+    expect(result).toMatchObject({ result: 'error' });
+  });
 });

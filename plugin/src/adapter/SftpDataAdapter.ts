@@ -526,6 +526,85 @@ export class SftpDataAdapter {
 
   // ─── internals ───────────────────────────────────────────────────────────
 
+  // ─── offline queue replay (E2-β.3) ─────────────────────────────────────
+
+  /**
+   * Drive a single queued op against the live remote. Used by
+   * `QueueReplayer` once the SSH session has recovered. Differs from
+   * the regular write path in that it honours the queued op's
+   * `expectedMtime` (= the mtime the file had when the user started
+   * typing) rather than whatever the cache currently holds.
+   *
+   * Outcomes:
+   *
+   *   - `ok` — the op landed cleanly (or the user picked
+   *     `keep-mine` / `merged` in the 3-way modal).
+   *   - `conflict` — the user cancelled the conflict modal or chose
+   *     `keep-theirs`; the op should be considered NOT-fulfilled,
+   *     but the queue entry can still be marked completed because
+   *     the user has actively decided not to apply it.
+   *   - `error` — anything else (network, permission, etc.). The
+   *     queue entry stays pending so the next reconnect can retry.
+   */
+  async replayQueuedOp(op: QueuedOp): Promise<{ result: 'ok' } | { result: 'conflict' } | { result: 'error'; message: string }> {
+    if (this.reconnecting) {
+      return { result: 'error', message: 'replayQueuedOp called while reconnecting' };
+    }
+    try {
+      switch (op.kind) {
+        case 'write': {
+          const data = Buffer.from(op.contentBase64, 'base64');
+          await this.writeBuffer(op.path, data, true, op.expectedMtime);
+          return { result: 'ok' };
+        }
+        case 'writeBinary': {
+          const data = Buffer.from(op.contentBase64, 'base64');
+          await this.writeBuffer(op.path, data, false, op.expectedMtime);
+          return { result: 'ok' };
+        }
+        case 'append': {
+          const data = Buffer.from(op.contentBase64, 'base64').toString('utf8');
+          await this.append(op.path, data);
+          return { result: 'ok' };
+        }
+        case 'appendBinary': {
+          const data = Buffer.from(op.contentBase64, 'base64');
+          const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+          await this.appendBinary(op.path, ab);
+          return { result: 'ok' };
+        }
+        case 'mkdir':
+          await this.mkdir(op.path);
+          return { result: 'ok' };
+        case 'remove':
+          await this.remove(op.path);
+          return { result: 'ok' };
+        case 'rmdir':
+          await this.rmdir(op.path, op.recursive);
+          return { result: 'ok' };
+        case 'rename':
+          await this.rename(op.oldPath, op.newPath);
+          return { result: 'ok' };
+        case 'copy':
+          await this.copy(op.srcPath, op.dstPath);
+          return { result: 'ok' };
+        case 'trashLocal':
+          await this.trashLocal(op.path);
+          return { result: 'ok' };
+      }
+    } catch (e) {
+      const msg = (e as Error).message;
+      // The 3-way merge path's `cancel` and `keep-theirs` branches
+      // rethrow the original PreconditionFailed; treat that as a
+      // user-driven decision rather than an error so the queue can
+      // mark the entry done and move on.
+      if (isPreconditionFailed(e)) {
+        return { result: 'conflict' };
+      }
+      return { result: 'error', message: msg };
+    }
+  }
+
   // ─── offline queue helpers (E2-β) ──────────────────────────────────────
 
   /**
@@ -534,8 +613,15 @@ export class SftpDataAdapter {
    * legacy `reconnecting` error when no queue is wired.
    *
    * The queued op carries `expectedMtime` (the cached mtime at
-   * enqueue time) so the replayer can route through the 3-way merge
-   * UI on conflict-during-replay.
+   * enqueue time — i.e. the mtime the file had when the user started
+   * typing) so the replayer can route through the 3-way merge UI on
+   * conflict-during-replay.
+   *
+   * The ancestor tracker is intentionally NOT refreshed here:
+   * keeping the original "what user read" snapshot is what makes the
+   * eventual conflict modal useful. Refreshing it would erase the
+   * pre-edit content and the user would see (mine, mine, theirs) —
+   * useless for a real merge decision.
    */
   private async queueOrThrowText(normalizedPath: string, data: string): Promise<void> {
     if (!this.offlineQueue) throw reconnectingError();
@@ -550,7 +636,6 @@ export class SftpDataAdapter {
     });
     const synthMtime = Date.now();
     this.readCache.put(remote, buf, synthMtime);
-    this.ancestorTracker?.remember(normalizedPath, data, synthMtime);
   }
 
   /** Binary equivalent of `queueOrThrowText`; the ancestor tracker is text-only so it's left alone. */
@@ -650,8 +735,18 @@ export class SftpDataAdapter {
    *
    * `data` may be reassigned in the merged-decision branch so the
    * post-write cache update reflects what actually landed on disk.
+   *
+   * `expectedMtimeOverride` lets the offline-queue replayer
+   * (E2-β.3) feed in the mtime captured at *enqueue* time rather
+   * than whatever the cache holds now (which is the synthetic
+   * mtime from the offline cache update).
    */
-  private async writeBuffer(normalizedPath: string, data: Buffer, isText: boolean): Promise<void> {
+  private async writeBuffer(
+    normalizedPath: string,
+    data: Buffer,
+    isText: boolean,
+    expectedMtimeOverride?: number,
+  ): Promise<void> {
     const remote = this.toRemote(normalizedPath);
     const parent = parentDirRemote(remote);
     if (parent && parent !== remote) {
@@ -659,7 +754,7 @@ export class SftpDataAdapter {
     }
 
     const cached = this.readCache.peek(remote);
-    const expectedMtime = cached?.mtime;
+    const expectedMtime = expectedMtimeOverride ?? cached?.mtime;
     let writtenData = data;
     try {
       await this.client.writeBinary(remote, writtenData, expectedMtime);
