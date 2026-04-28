@@ -129,6 +129,7 @@ func run(args []string) (int, error) {
 	disp.Handle("fs.stat", handlers.RequireAuth(handlers.FsStat(absRoot)))
 	disp.Handle("fs.exists", handlers.RequireAuth(handlers.FsExists(absRoot)))
 	disp.Handle("fs.list", handlers.RequireAuth(handlers.FsList(absRoot)))
+	disp.Handle("fs.walk", handlers.RequireAuth(handlers.FsWalk(absRoot)))
 	disp.Handle("fs.readText", handlers.RequireAuth(handlers.FsReadText(absRoot)))
 	disp.Handle("fs.readBinary", handlers.RequireAuth(handlers.FsReadBinary(absRoot)))
 	// Write side.
