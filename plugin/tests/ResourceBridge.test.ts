@@ -153,6 +153,87 @@ describe('ResourceBridge', () => {
   });
 });
 
+describe('ResourceBridge — thumbnail path', () => {
+  let bridge: ResourceBridge;
+  beforeEach(() => { bridge = new ResourceBridge(); });
+  afterEach(async () => { await bridge.stop(); });
+
+  it('urlFor adds ?thumb=N when opts.thumbMaxDim is set', async () => {
+    await bridge.start(async () => new Uint8Array());
+    const url = bridge.urlFor('photos/cover.jpg', { thumbMaxDim: 1024 });
+    expect(url).toMatch(/[?&]thumb=1024(&|$)/);
+  });
+
+  it('urlFor omits the thumb param when no opts are passed', async () => {
+    await bridge.start(async () => new Uint8Array());
+    const url = bridge.urlFor('photos/cover.jpg');
+    expect(url).not.toMatch(/[?&]thumb=/);
+  });
+
+  it('serves the thumbnail bytes when ?thumb=N is set and a fetcher is wired', async () => {
+    const jpegBytes = new TextEncoder().encode('fake-jpeg-bytes');
+    const fetchBinary = async () => { throw new Error('binary path should not be called'); };
+    const fetchThumbnail = async (path: string, maxDim: number) => {
+      expect(path).toBe('photos/cover.jpg');
+      expect(maxDim).toBe(512);
+      return { bytes: jpegBytes, format: 'jpeg' as const };
+    };
+    await bridge.start(fetchBinary, fetchThumbnail);
+    const url = bridge.urlFor('photos/cover.jpg', { thumbMaxDim: 512 });
+    const r = await fetchUrl(url);
+    expect(r.statusCode).toBe(200);
+    expect(r.headers['content-type']).toBe('image/jpeg');
+    expect(r.body.toString('utf8')).toBe('fake-jpeg-bytes');
+  });
+
+  it('serves PNG content-type when fetcher reports format=png', async () => {
+    const pngBytes = new TextEncoder().encode('fake-png-bytes');
+    const fetchThumbnail = async () => ({ bytes: pngBytes, format: 'png' as const });
+    await bridge.start(async () => new Uint8Array(), fetchThumbnail);
+    const r = await fetchUrl(bridge.urlFor('logo.png', { thumbMaxDim: 256 }));
+    expect(r.headers['content-type']).toBe('image/png');
+  });
+
+  it('falls back to fetchBinary when fetchThumbnail throws', async () => {
+    const fullBytes = new TextEncoder().encode('original-jpeg');
+    const fetchBinary = async (path: string) => {
+      expect(path).toBe('photos/cover.jpg');
+      return fullBytes;
+    };
+    const fetchThumbnail = async () => { throw new Error('daemon refused'); };
+    await bridge.start(fetchBinary, fetchThumbnail);
+    const r = await fetchUrl(bridge.urlFor('photos/cover.jpg', { thumbMaxDim: 1024 }));
+    expect(r.statusCode).toBe(200);
+    expect(r.body.toString('utf8')).toBe('original-jpeg');
+    // MIME guess by extension survives the fallback.
+    expect(r.headers['content-type']).toBe('image/jpeg');
+  });
+
+  it('falls back to fetchBinary when no thumbnail fetcher was wired (= SFTP transport)', async () => {
+    const fullBytes = new TextEncoder().encode('original');
+    await bridge.start(async () => fullBytes /* no fetchThumbnail */);
+    const r = await fetchUrl(bridge.urlFor('photos/cover.jpg', { thumbMaxDim: 1024 }));
+    expect(r.statusCode).toBe(200);
+    expect(r.body.toString('utf8')).toBe('original');
+  });
+
+  it('rejects ?thumb=0 with 400', async () => {
+    await bridge.start(async () => new Uint8Array(), async () => ({ bytes: new Uint8Array(), format: 'jpeg' }));
+    const real = new URL(bridge.urlFor('x.jpg'));
+    const url = `http://127.0.0.1:${real.port}${real.pathname}?p=x.jpg&thumb=0`;
+    const r = await fetchUrl(url);
+    expect(r.statusCode).toBe(400);
+  });
+
+  it('rejects non-numeric ?thumb with 400', async () => {
+    await bridge.start(async () => new Uint8Array(), async () => ({ bytes: new Uint8Array(), format: 'jpeg' }));
+    const real = new URL(bridge.urlFor('x.jpg'));
+    const url = `http://127.0.0.1:${real.port}${real.pathname}?p=x.jpg&thumb=abc`;
+    const r = await fetchUrl(url);
+    expect(r.statusCode).toBe(400);
+  });
+});
+
 /**
  * Tiny GET helper that resolves with status + headers + body. Avoids
  * pulling in a fetch polyfill — vitest's `node` environment doesn't

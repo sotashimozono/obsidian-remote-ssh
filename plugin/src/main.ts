@@ -874,10 +874,19 @@ export default class RemoteSshPlugin extends Plugin {
     // Spin up the localhost binary bridge so getResourcePath has
     // somewhere to send Obsidian. The bridge is best-effort: if it
     // fails to bind we still patch and just lose image rendering.
+    //
+    // When the active session is RPC AND the daemon advertises
+    // `fs.thumbnail`, also wire the thumbnail fetcher — image-extension
+    // requests get served from the daemon's resize path (small, cached)
+    // instead of pulling the full original on every <img>.
     const bridge = new ResourceBridge();
+    const fetchThumbnail = this.makeThumbnailFetcherIfSupported();
     try {
-      await bridge.start(p => this.fetchBinaryForBridge(p));
+      await bridge.start(p => this.fetchBinaryForBridge(p), fetchThumbnail ?? undefined);
       this.resourceBridge = bridge;
+      if (fetchThumbnail) {
+        logger.info('ResourceBridge: thumbnail fast path enabled (daemon supports fs.thumbnail)');
+      }
     } catch (e) {
       logger.warn(`ResourceBridge: start failed: ${(e as Error).message}`);
       this.resourceBridge = null;
@@ -1279,6 +1288,26 @@ export default class RemoteSshPlugin extends Plugin {
       throw new Error('adapter is not patched');
     }
     return this.dataAdapter.fetchBinaryForBridge(vaultPath);
+  }
+
+  /**
+   * Build the bridge's thumbnail fetcher when the active session can
+   * support it. Returns `null` for SFTP transports or for daemons
+   * that don't advertise `fs.thumbnail` — the bridge then transparently
+   * falls back to the full-binary path on `<img>` requests.
+   */
+  private makeThumbnailFetcherIfSupported(): null | ((vaultPath: string, maxDim: number) => Promise<{ bytes: Uint8Array; format: 'jpeg' | 'png' }>) {
+    const conn = this.rpcConnection;
+    if (!conn) return null;
+    if (!conn.info.capabilities.includes('fs.thumbnail')) return null;
+    return async (vaultPath, maxDim) => {
+      const result = await conn.rpc.call('fs.thumbnail', { path: vaultPath, maxDim });
+      const buf = Buffer.from(result.contentBase64, 'base64');
+      return {
+        bytes:  new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength),
+        format: result.format,
+      };
+    };
   }
 
   /** Stop the resource bridge if running. Idempotent. */

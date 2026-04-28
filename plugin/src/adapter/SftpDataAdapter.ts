@@ -1,4 +1,26 @@
 import type { DataWriteOptions, ListedFiles, Stat } from 'obsidian';
+
+/**
+ * Source extensions whose `getResourcePath` hits the daemon's
+ * `fs.thumbnail` path instead of pulling the full original. Matches
+ * the daemon's supported decoder set (jpg / png / gif via image.Decode);
+ * webp / heic land later (cgo / external libs).
+ */
+const THUMBNAIL_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif']);
+
+/**
+ * Default longer-side cap for `getResourcePath` thumbnails. 1024 px
+ * is sharp on Retina displays without sending camera-original sizes;
+ * a 8 MB JPEG resizes to ~150 KB. Click-to-zoom flows that want the
+ * original go through `readBinary`, which never adds the thumb hint.
+ */
+const DEFAULT_THUMB_MAX_DIM = 1024;
+
+function isThumbnailEligible(vaultPath: string): boolean {
+  const dot = vaultPath.lastIndexOf('.');
+  if (dot < 0) return false;
+  return THUMBNAIL_EXTENSIONS.has(vaultPath.slice(dot + 1).toLowerCase());
+}
 import type { RemoteFsClient } from './RemoteFsClient';
 import type { ReadCache } from '../cache/ReadCache';
 import type { DirCache } from '../cache/DirCache';
@@ -226,7 +248,12 @@ export class SftpDataAdapter {
    */
   getResourcePath(normalizedPath: string): string {
     if (this.resourceBridge && this.resourceBridge.isRunning()) {
-      return this.resourceBridge.urlFor(normalizedPath);
+      // Image extensions get a thumbnail hint so the bridge can route
+      // through the daemon's resize path. The bridge falls back to the
+      // full binary transparently on SFTP sessions or pre-thumbnail
+      // daemons, so this is safe regardless of transport.
+      const thumbMaxDim = isThumbnailEligible(normalizedPath) ? DEFAULT_THUMB_MAX_DIM : undefined;
+      return this.resourceBridge.urlFor(normalizedPath, { thumbMaxDim });
     }
     return 'data:application/octet-stream;base64,';
   }

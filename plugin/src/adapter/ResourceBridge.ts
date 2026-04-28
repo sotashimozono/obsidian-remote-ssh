@@ -10,6 +10,21 @@ import { logger } from '../util/logger';
  */
 export type FetchBinaryFn = (vaultPath: string) => Promise<Uint8Array>;
 
+/**
+ * Async fetcher for daemon-resized image thumbnails. Optional: the
+ * bridge falls back to `FetchBinaryFn` when the request asks for a
+ * thumbnail but no fetcher is wired (= SFTP transport, or a daemon
+ * that doesn't advertise `fs.thumbnail`).
+ *
+ * The returned `format` lets the bridge set the right MIME type
+ * without re-sniffing; PNG is used when the source had alpha so
+ * transparency survives.
+ */
+export type FetchThumbnailFn = (
+  vaultPath: string,
+  maxDim: number,
+) => Promise<{ bytes: Uint8Array; format: 'jpeg' | 'png' }>;
+
 export interface StartResult {
   port: number;
   /** Hex token embedded in every URL the bridge hands out. */
@@ -35,17 +50,28 @@ export class ResourceBridge {
   private token: string | null = null;
   private port: number | null = null;
   private fetchBinary: FetchBinaryFn | null = null;
+  private fetchThumbnail: FetchThumbnailFn | null = null;
 
   /**
    * Start the HTTP server and return the chosen port + token. Calling
    * `start` while already running is an error; `stop` first.
+   *
+   * `fetchThumbnail` is optional: when supplied, requests with a
+   * `?thumb=N` query string get served from the daemon's resize path;
+   * when omitted, the bridge falls back to `fetchBinary` for the same
+   * URL (so the webview's `<img>` still renders, just without the
+   * bandwidth + CPU savings).
    */
-  async start(fetchBinary: FetchBinaryFn): Promise<StartResult> {
+  async start(
+    fetchBinary: FetchBinaryFn,
+    fetchThumbnail?: FetchThumbnailFn,
+  ): Promise<StartResult> {
     if (this.server) {
       throw new Error('ResourceBridge already started');
     }
     this.token = randomBytes(32).toString('hex');
     this.fetchBinary = fetchBinary;
+    this.fetchThumbnail = fetchThumbnail ?? null;
 
     const server = http.createServer((req, res) => {
       void this.handleRequest(req, res);
@@ -78,6 +104,7 @@ export class ResourceBridge {
     this.token = null;
     this.port = null;
     this.fetchBinary = null;
+    this.fetchThumbnail = null;
 
     return new Promise<void>(resolve => {
       // Force-close any in-flight responses so we don't hang on a slow
@@ -99,13 +126,23 @@ export class ResourceBridge {
    * form (post `PathMapper.toVault`) — translation back to the
    * per-client subtree is handled by the `fetchBinary` callback when
    * it goes through `SftpDataAdapter.readBinary`.
+   *
+   * Pass `opts.thumbMaxDim` to ask for a daemon-resized thumbnail
+   * (longer side capped at that many pixels). The bridge serves the
+   * resized bytes if `fetchThumbnail` is wired and the daemon honours
+   * the request; otherwise it transparently falls back to the full
+   * binary so the webview still renders something.
    */
-  urlFor(vaultPath: string): string {
+  urlFor(vaultPath: string, opts?: { thumbMaxDim?: number }): string {
     if (!this.server || !this.token || this.port === null) {
       throw new Error('ResourceBridge not started');
     }
     const encoded = encodeURIComponent(vaultPath);
-    return `http://127.0.0.1:${this.port}/r/${this.token}?p=${encoded}`;
+    const thumb =
+      opts?.thumbMaxDim != null && opts.thumbMaxDim > 0
+        ? `&thumb=${opts.thumbMaxDim}`
+        : '';
+    return `http://127.0.0.1:${this.port}/r/${this.token}?p=${encoded}${thumb}`;
   }
 
   // ─── internals ───────────────────────────────────────────────────────────
@@ -143,6 +180,43 @@ export class ResourceBridge {
     if (!fetchBinary) {
       res.writeHead(503).end();
       return;
+    }
+
+    // Thumbnail short-circuit: when the URL was minted with `?thumb=N`
+    // and a thumbnail fetcher is wired (= RPC daemon advertises
+    // `fs.thumbnail`), serve the daemon-resized bytes directly. Range
+    // doesn't apply (thumbnails are tiny + we send Cache-Control:
+    // no-store; the webview re-requests if it needs another size).
+    // Failure falls through to the full-binary path so the webview
+    // still gets *something* even if resize broke server-side.
+    const thumbStr = url.searchParams.get('thumb');
+    if (thumbStr !== null && this.fetchThumbnail) {
+      const maxDim = parseInt(thumbStr, 10);
+      if (!Number.isFinite(maxDim) || maxDim <= 0) {
+        res.writeHead(400).end('bad thumb');
+        return;
+      }
+      try {
+        const { bytes, format } = await this.fetchThumbnail(rawPath, maxDim);
+        const contentType = format === 'png' ? 'image/png' : 'image/jpeg';
+        res.writeHead(200, {
+          'Content-Type': contentType,
+          'Content-Length': bytes.byteLength,
+          'Cache-Control': 'no-store',
+        });
+        if (req.method === 'HEAD') {
+          res.end();
+        } else {
+          res.end(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+        }
+        return;
+      } catch (e) {
+        logger.warn(
+          `ResourceBridge: thumbnail failed for "${rawPath}" maxDim=${maxDim}: ` +
+          `${(e as Error).message}; falling back to full binary`,
+        );
+        // fall through to fetchBinary
+      }
     }
 
     let bytes: Uint8Array;
