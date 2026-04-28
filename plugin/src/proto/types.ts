@@ -202,11 +202,27 @@ export type ServerNotificationName = keyof ServerNotificationMap;
 
 // ─── JSON-RPC envelopes ──────────────────────────────────────────────────────
 
+/**
+ * Optional out-of-band metadata attached to any RPC envelope.
+ *
+ * `cid` is a 16-char hex correlation id minted by the writer side
+ * (typically by `PerfTracer.newCid()`); the daemon echoes it back on
+ * the `fs.changed` notification triggered by that write so end-to-end
+ * latency spans can be reconstructed across processes. The field is
+ * additive and strictly optional — older clients/servers that don't
+ * understand it ignore it (`json.Unmarshal` skips unknown fields, and
+ * `omitempty` keeps it off the wire when unset).
+ */
+export interface RpcMeta {
+  cid?: string;
+}
+
 export interface JsonRpcRequest<M extends MethodName = MethodName> {
   jsonrpc: '2.0';
   id: number | string;
   method: M;
   params: Params<M>;
+  meta?: RpcMeta;
 }
 
 export interface JsonRpcSuccess<M extends MethodName = MethodName> {
@@ -225,6 +241,7 @@ export interface JsonRpcNotification<N extends ServerNotificationName = ServerNo
   jsonrpc: '2.0';
   method: N;
   params: ServerNotificationMap[N];
+  meta?: RpcMeta;
 }
 
 export type JsonRpcMessage =
