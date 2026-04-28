@@ -1,13 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'node:fs';
-import { SftpClient } from '../../src/ssh/SftpClient';
-import { AuthResolver } from '../../src/ssh/AuthResolver';
-import { SecretStore } from '../../src/ssh/SecretStore';
-import { HostKeyStore } from '../../src/ssh/HostKeyStore';
-import { establishRpcConnection, type RpcConnection } from '../../src/transport/RpcConnection';
 import { deployTestDaemon, LOCAL_DAEMON_BINARY, type DeployedDaemon } from './helpers/deployDaemonOnce';
-import { buildTestProfile, TEST_PRIVATE_KEY, TEST_VAULT } from './helpers/makeAdapter';
-import type { FsChangedParams } from '../../src/proto/types';
+import { TEST_PRIVATE_KEY, TEST_VAULT } from './helpers/makeAdapter';
+import { buildRpcClient, watchFor, type RpcClientHandle } from './helpers/multiclientRpc';
 
 /**
  * Phase A3 — multi-client convergence over the RPC transport.
@@ -24,6 +19,10 @@ import type { FsChangedParams } from '../../src/proto/types';
  * Skipped automatically when the test keypair or daemon binary isn't
  * present; both come from `npm run sshd:start` + `npm run build:server`
  * (which the integration CI workflow also wires up).
+ *
+ * The RPC-client / fs.watch wiring lives in `helpers/multiclientRpc.ts`
+ * so Phase C's perf bench (M6) and E2E suite (M9) can reuse the same
+ * primitives without duplicating session/handshake plumbing.
  */
 
 if (!fs.existsSync(TEST_PRIVATE_KEY)) {
@@ -39,96 +38,6 @@ if (!fs.existsSync(LOCAL_DAEMON_BINARY)) {
   );
 }
 
-/** One client's RPC stack: dedicated SSH session + auth-handshaken RPC connection. */
-interface RpcClientHandle {
-  ssh: SftpClient;
-  conn: RpcConnection;
-  /** Disconnect both layers. */
-  close(): Promise<void>;
-}
-
-/**
- * Build one RPC client against an already-deployed daemon. Each call
- * spins up its own SSH session so the two clients don't share a TCP
- * channel — closer to two real devices.
- */
-async function buildRpcClient(
-  socketPath: string,
-  token: string,
-  label: string,
-): Promise<RpcClientHandle> {
-  const ssh = new SftpClient(new AuthResolver(new SecretStore()), new HostKeyStore());
-  await ssh.connect(buildTestProfile(label));
-  const stream = await ssh.openUnixStream(socketPath);
-  const conn = await establishRpcConnection({ stream, token });
-  return {
-    ssh,
-    conn,
-    async close() {
-      try { conn.close();        } catch { /* best effort */ }
-      try { await ssh.disconnect(); } catch { /* best effort */ }
-    },
-  };
-}
-
-/**
- * Subscribe `client` to `fs.watch` on the given path and return a
- * helper that resolves the next notification matching `predicate`.
- * Times out (default 5 s) so a missing notification fails fast
- * instead of hanging the whole suite.
- *
- * The returned `cleanup` unsubscribes + drops the local handler so
- * stale notifications from earlier tests don't leak into later ones.
- */
-async function watchFor(
-  client: RpcClientHandle,
-  path: string,
-): Promise<{
-  awaitNext: (predicate: (n: FsChangedParams) => boolean, timeoutMs?: number) => Promise<FsChangedParams>;
-  cleanup: () => Promise<void>;
-}> {
-  const subId: string = (await client.conn.rpc.call('fs.watch', { path, recursive: true })).subscriptionId;
-  const queue: FsChangedParams[] = [];
-  const waiters: Array<{ predicate: (n: FsChangedParams) => boolean; resolve: (n: FsChangedParams) => void }> = [];
-  const dispose = client.conn.rpc.onNotification('fs.changed', (n) => {
-    if (n.subscriptionId !== subId) return;
-    // Fan out to anyone whose predicate matches; drain the queue so
-    // late-arriving waiters can still pick up earlier matches.
-    queue.push(n);
-    for (const w of waiters.splice(0)) {
-      const idx = queue.findIndex(w.predicate);
-      if (idx >= 0) {
-        const [hit] = queue.splice(idx, 1);
-        w.resolve(hit);
-      } else {
-        waiters.push(w);
-      }
-    }
-  });
-
-  return {
-    awaitNext(predicate, timeoutMs = 5_000) {
-      const idx = queue.findIndex(predicate);
-      if (idx >= 0) return Promise.resolve(queue.splice(idx, 1)[0]);
-      return new Promise<FsChangedParams>((resolve, reject) => {
-        const timer = setTimeout(
-          () => reject(new Error(`watchFor: no matching fs.changed within ${timeoutMs}ms; queue=${JSON.stringify(queue)}`)),
-          timeoutMs,
-        );
-        waiters.push({
-          predicate,
-          resolve: (n) => { clearTimeout(timer); resolve(n); },
-        });
-      });
-    },
-    async cleanup() {
-      try { await client.conn.rpc.call('fs.unwatch', { subscriptionId: subId }); }
-      catch { /* daemon may already be torn down */ }
-      dispose();
-    },
-  };
-}
-
 describe('integration: multi-client convergence (RPC transport, fs.watch)', () => {
   let daemon: DeployedDaemon;
   let a: RpcClientHandle;
@@ -138,6 +47,7 @@ describe('integration: multi-client convergence (RPC transport, fs.watch)', () =
   const subdirAbs = `${TEST_VAULT}/multiclient-rpc-${stamp}`;
   /** Daemon paths are vault-root-relative; the daemon's --vault-root is TEST_VAULT, so subtract that prefix. */
   const subdirRel = `multiclient-rpc-${stamp}`;
+  void subdirAbs; // retained for future debugging — daemon paths are relative
 
   beforeAll(async () => {
     daemon = await deployTestDaemon({ label: 'rpc-multiclient' });
