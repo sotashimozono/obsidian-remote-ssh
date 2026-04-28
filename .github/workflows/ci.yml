@@ -60,8 +60,14 @@ jobs:
           cache: npm
           cache-dependency-path: plugin/package-lock.json
       - run: npm ci
-      - name: Run tests${{ matrix.os == 'ubuntu-latest' && ' with coverage' || '' }}
-        run: node node_modules/vitest/vitest.mjs run${{ matrix.os == 'ubuntu-latest' && ' --coverage' || '' }}
+      # Coverage is only useful from one OS; run plain `vitest` on the
+      # others so we don't pay the instrumentation cost everywhere.
+      - name: Run tests with coverage
+        if: matrix.os == 'ubuntu-latest'
+        run: node node_modules/vitest/vitest.mjs run --coverage
+      - name: Run tests
+        if: matrix.os != 'ubuntu-latest'
+        run: node node_modules/vitest/vitest.mjs run
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v6
