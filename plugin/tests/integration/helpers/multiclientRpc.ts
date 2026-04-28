@@ -55,6 +55,10 @@ export async function buildRpcClient(
  *
  * `awaitNext` walks the queue first so a notification that arrived
  * before the caller registered its predicate is still picked up.
+ * `drain` empties the queue and returns whatever was buffered — used
+ * by callers that need a fresh starting point (e.g. after a setup
+ * write whose own notifications would otherwise false-match the next
+ * `awaitNext`).
  * `cleanup` unsubscribes + drops the local handler so stale events
  * from earlier tests don't leak into later ones.
  *
@@ -66,6 +70,7 @@ export async function watchFor(
   path: string,
 ): Promise<{
   awaitNext: (predicate: (n: FsChangedParams) => boolean, timeoutMs?: number) => Promise<FsChangedParams>;
+  drain: () => FsChangedParams[];
   cleanup: () => Promise<void>;
 }> {
   const subId: string = (await client.conn.rpc.call('fs.watch', { path, recursive: true })).subscriptionId;
@@ -101,6 +106,10 @@ export async function watchFor(
           resolve: (n) => { clearTimeout(timer); resolve(n); },
         });
       });
+    },
+    drain() {
+      const out = queue.splice(0);
+      return out;
     },
     async cleanup() {
       try { await client.conn.rpc.call('fs.unwatch', { subscriptionId: subId }); }
