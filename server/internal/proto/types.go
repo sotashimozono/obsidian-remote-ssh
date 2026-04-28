@@ -161,6 +161,36 @@ type WalkResult struct {
 	Truncated bool        `json:"truncated"`
 }
 
+// ThumbnailParams are the inputs to fs.thumbnail. The daemon decodes
+// the source image, resizes so the longer side is at most MaxDim
+// pixels (preserving aspect ratio), and re-encodes. Sources smaller
+// than MaxDim are returned re-encoded but not upscaled.
+type ThumbnailParams struct {
+	Path string `json:"path"`
+	// MaxDim is the longer-side cap in pixels. Required (no default
+	// here; the plugin picks per-call so the daemon stays stateless).
+	MaxDim int `json:"maxDim"`
+}
+
+// ThumbnailResult mirrors ReadBinaryResult: base64 payload + the
+// SOURCE file's mtime (so client-side caches can invalidate on edit)
+// + the SOURCE file's size for diagnostics. The Format field tells
+// the caller what to set Content-Type to when serving.
+type ThumbnailResult struct {
+	ContentBase64 string `json:"contentBase64"`
+	Mtime         int64  `json:"mtime"`
+	// SourceSize is the on-disk size of the source image in bytes —
+	// useful for logging the bandwidth saved versus a raw fs.readBinary.
+	SourceSize int64 `json:"sourceSize"`
+	// Format is the encoded format of the returned bytes: "jpeg" or
+	// "png". JPEG is preferred; PNG is used when the source has alpha
+	// so transparency survives.
+	Format string `json:"format"`
+	// Width / Height of the returned image (post-resize), in pixels.
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
 type WatchParams struct {
 	Path      string `json:"path"`
 	Recursive bool   `json:"recursive,omitempty"`

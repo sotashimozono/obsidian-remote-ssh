@@ -51,6 +51,7 @@ export type MethodName =
   | 'fs.walk'
   | 'fs.readText'
   | 'fs.readBinary'
+  | 'fs.thumbnail'
   | 'fs.write'
   | 'fs.writeBinary'
   | 'fs.append'
@@ -75,6 +76,7 @@ export interface MethodMap {
 
   'fs.readText':     { params: ReadTextParams;        result: ReadTextResult };
   'fs.readBinary':   { params: PathOnlyParams;        result: ReadBinaryResult };
+  'fs.thumbnail':    { params: ThumbnailParams;       result: ThumbnailResult };
 
   'fs.write':        { params: WriteTextParams;       result: MtimeResult };
   'fs.writeBinary':  { params: WriteBinaryParams;     result: MtimeResult };
@@ -151,6 +153,29 @@ export interface MkdirParams { path: string; recursive?: boolean }
 export interface RmdirParams { path: string; recursive?: boolean }
 export interface RenameParams { oldPath: string; newPath: string }
 export interface CopyParams { srcPath: string; destPath: string }
+
+/**
+ * fs.thumbnail — server-side image resize. Source format auto-detected
+ * (jpg / png / gif). Returned bytes are JPEG q=80 unless the source
+ * was PNG, in which case they're PNG to preserve any alpha channel.
+ */
+export interface ThumbnailParams {
+  path: string;
+  /** Longer-side cap in pixels. Required (no daemon-side default). */
+  maxDim: number;
+}
+export interface ThumbnailResult {
+  contentBase64: string;
+  /** Source file's mtime — clients key local caches off this so an edit invalidates the thumbnail. */
+  mtime: number;
+  /** Source file's on-disk size — for diagnostic logging vs raw fs.readBinary cost. */
+  sourceSize: number;
+  /** Encoded format of the returned bytes: 'jpeg' or 'png'. */
+  format: 'jpeg' | 'png';
+  /** Post-resize dimensions, in pixels. */
+  width: number;
+  height: number;
+}
 
 export interface WatchParams { path: string; recursive?: boolean }
 export interface WatchResult { subscriptionId: string }
