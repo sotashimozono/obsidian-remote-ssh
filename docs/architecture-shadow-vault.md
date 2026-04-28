@@ -495,13 +495,6 @@ captured `view.fileItems` before/after manual `view.onCreate(folder)`
 calls, which is what surfaced the "fire create for folders too"
 fix in PR #68.
 
-### Plan file
-
-Maintainer's local plan file at
-`C:\Users\souta\.claude\plans\self-archive-obsidian-staged-nova.md`
-gets rewritten alongside this PR to reflect the post-pivot reality
-(it was a pre-pivot handoff snapshot).
-
 ## 9. Post-MVP backlog
 
 Captured during the Phase 4 verification session — both items

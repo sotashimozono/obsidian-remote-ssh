@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { ServerDeployer, resolveRemotePath, buildKillPattern, type DeployerSshClient } from '../src/transport/ServerDeployer';
 
 /**
- * Generic remote home used in mocks. Deliberately not the maintainer's
- * actual home (`/home/souta`) — the deployer must never assume any
- * particular shape, and tests should reflect that.
+ * Generic remote home used in mocks. Deliberately a fake path — the
+ * deployer must never assume any particular shape (`/home/...`,
+ * `/Users/...`, container paths) and tests should reflect that.
  */
 const FAKE_HOME = '/home/alice';
 
