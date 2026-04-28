@@ -65,12 +65,26 @@ export class ShadowVaultBootstrap {
     fs.mkdirSync(layout.vaultDir, { recursive: true });
     fs.mkdirSync(layout.configDir, { recursive: true });
 
-    // Tell Obsidian to enable our plugin in the shadow vault.
-    const communityPluginsPath = path.join(layout.configDir, 'community-plugins.json');
-    fs.writeFileSync(communityPluginsPath, JSON.stringify(['remote-ssh']) + '\n', 'utf-8');
+    // Seed `community-plugins.json` from source on first bootstrap so
+    // the shadow vault opens with the same plugin set the user runs in
+    // their main vault. Re-bootstrap leaves shadow's existing list
+    // untouched — the user can enable/disable plugins inside the
+    // shadow window without us reverting them. `remote-ssh` is always
+    // present regardless.
+    const seededPluginIds = this.seedCommunityPlugins(layout.configDir);
 
-    // Install plugin source (symlink preferred so dev iterations
-    // appear immediately; copy as a Windows fallback).
+    // Recursively copy each non-remote-ssh plugin's source dir into
+    // the shadow vault. Each copy is independent of the source dir
+    // (no symlinks for these — per-plugin data.json must stay
+    // separate, same lesson PR #65 learned for our own plugin).
+    // Idempotent: skips plugin dirs that already exist in shadow,
+    // so re-bootstrap doesn't blow away the shadow's accumulated
+    // per-plugin settings.
+    this.seedThirdPartyPluginDirs(layout, seededPluginIds);
+
+    // Install our own plugin source (symlink preferred so dev
+    // iterations appear immediately; copy as a Windows fallback).
+    // Per-file install means data.json stays per-vault.
     const pluginInstallMethod = this.installPlugin(layout.pluginDir);
 
     // data.json strategy: MERGE rather than overwrite, so accumulated
@@ -117,6 +131,115 @@ export class ShadowVaultBootstrap {
   }
 
   // ─── internals ──────────────────────────────────────────────────────────
+
+  /**
+   * Materialise `<configDir>/community-plugins.json`. On first
+   * bootstrap (file doesn't exist) seed from the source vault's
+   * `community-plugins.json` plus our own id; on re-bootstrap leave
+   * the shadow's file alone. Returns the union of plugin ids that
+   * should now be present in shadow's `.obsidian/plugins/` for
+   * Obsidian to actually load them.
+   */
+  private seedCommunityPlugins(configDir: string): string[] {
+    const shadowPath = path.join(configDir, 'community-plugins.json');
+    let ids: string[];
+
+    if (fs.existsSync(shadowPath)) {
+      // Re-bootstrap: trust whatever the user has accumulated in
+      // shadow. Only ensure remote-ssh is in the list.
+      try {
+        const existing = JSON.parse(fs.readFileSync(shadowPath, 'utf-8'));
+        if (Array.isArray(existing)) {
+          ids = existing.filter((s): s is string => typeof s === 'string');
+          if (!ids.includes('remote-ssh')) {
+            ids.push('remote-ssh');
+            fs.writeFileSync(shadowPath, JSON.stringify(ids) + '\n', 'utf-8');
+          }
+          return ids;
+        }
+      } catch (e) {
+        logger.warn(
+          `ShadowVaultBootstrap: failed to parse shadow community-plugins.json ` +
+          `(${(e as Error).message}); reseeding from source`,
+        );
+      }
+    }
+
+    // First bootstrap (or unparseable shadow file): seed from source.
+    // Source vault's enabled plugin set becomes shadow's starting point.
+    const sourcePath = path.join(this.sourceConfigDir(), 'community-plugins.json');
+    let sourceIds: string[] = [];
+    if (fs.existsSync(sourcePath)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(sourcePath, 'utf-8'));
+        if (Array.isArray(parsed)) {
+          sourceIds = parsed.filter((s): s is string => typeof s === 'string');
+        }
+      } catch (e) {
+        logger.warn(
+          `ShadowVaultBootstrap: failed to parse source community-plugins.json ` +
+          `(${(e as Error).message}); seeding shadow with [remote-ssh] only`,
+        );
+      }
+    }
+    ids = sourceIds.includes('remote-ssh') ? sourceIds : [...sourceIds, 'remote-ssh'];
+    fs.writeFileSync(shadowPath, JSON.stringify(ids) + '\n', 'utf-8');
+    return ids;
+  }
+
+  /**
+   * For every plugin id in `seededIds` (other than our own
+   * `remote-ssh`, which is installed separately via per-file
+   * symlink), recursively copy the source plugin's directory into
+   * the shadow vault. Skips ids whose source dir is missing (plugin
+   * not installed at source) or whose shadow dir already exists
+   * (idempotent re-bootstrap; keeps shadow's accumulated per-plugin
+   * data.json untouched).
+   */
+  private seedThirdPartyPluginDirs(layout: ShadowVaultLayout, seededIds: ReadonlyArray<string>): void {
+    const sourcePluginsRoot = path.join(this.sourceConfigDir(), 'plugins');
+    const shadowPluginsRoot = path.join(layout.configDir, 'plugins');
+    fs.mkdirSync(shadowPluginsRoot, { recursive: true });
+
+    for (const id of seededIds) {
+      if (id === 'remote-ssh') continue;
+      const src = path.join(sourcePluginsRoot, id);
+      const dst = path.join(shadowPluginsRoot, id);
+      if (!fs.existsSync(src)) {
+        logger.warn(
+          `ShadowVaultBootstrap: source plugin "${id}" listed in community-plugins.json ` +
+          `but source dir ${src} is missing; shadow will skip it`,
+        );
+        continue;
+      }
+      if (fs.existsSync(dst)) {
+        // Re-bootstrap: shadow already has this plugin, possibly
+        // with diverged data.json / settings. Don't overwrite.
+        continue;
+      }
+      try {
+        // dereference: true so a symlinked source produces real
+        // files (relevant when source vault's plugin dirs are
+        // themselves symlinks for dev).
+        fs.cpSync(src, dst, { recursive: true, dereference: true });
+      } catch (e) {
+        logger.warn(
+          `ShadowVaultBootstrap: failed to copy source plugin "${id}" to shadow ` +
+          `(${(e as Error).message}); shadow will skip it`,
+        );
+      }
+    }
+  }
+
+  /**
+   * `.obsidian/` of the source vault — derived from
+   * `sourcePluginDir` which lives at `<source-vault>/.obsidian/plugins/remote-ssh`.
+   */
+  private sourceConfigDir(): string {
+    // sourcePluginDir = <vault>/.obsidian/plugins/remote-ssh
+    // → walk up two levels for .obsidian/.
+    return path.dirname(path.dirname(this.sourcePluginDir));
+  }
 
   /**
    * Decide what to use as the base for the shadow vault's
