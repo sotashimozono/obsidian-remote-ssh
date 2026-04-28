@@ -27,11 +27,33 @@ function makeProfile(overrides: Partial<SshProfile> = {}): SshProfile {
 /**
  * Each test gets its own scratch tree so they can't cross-pollute and
  * the developer's real `~/.obsidian-remote/` is never touched.
+ *
+ * The source side mirrors a real vault layout:
+ *
+ *   <root>/source-vault/.obsidian/
+ *     community-plugins.json                   ← optional, tests opt in
+ *     plugins/
+ *       remote-ssh/main.js, manifest.json     ← always staged
+ *       <other-id>/...                         ← optional, tests opt in
+ *
+ * `sourceDir` is the path the production code calls `sourcePluginDir`
+ * — the running plugin's own dir, two levels under `.obsidian/`. Tests
+ * that need source community-plugins.json or third-party plugin dirs
+ * can write them directly under `<root>/source-vault/.obsidian/`.
  */
-function makeScratch(): { baseDir: string; sourceDir: string; configPath: string; cleanup(): void } {
+function makeScratch(): {
+  baseDir: string;
+  sourceDir: string;
+  sourceVaultDir: string;
+  sourceConfigDir: string;
+  configPath: string;
+  cleanup(): void;
+} {
   const root = path.join(os.tmpdir(), `shadow-vault-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const baseDir = path.join(root, 'vaults');
-  const sourceDir = path.join(root, 'plugin-source');
+  const sourceVaultDir = path.join(root, 'source-vault');
+  const sourceConfigDir = path.join(sourceVaultDir, '.obsidian');
+  const sourceDir = path.join(sourceConfigDir, 'plugins', 'remote-ssh');
   const configPath = path.join(root, 'obsidian.json');
   fs.mkdirSync(sourceDir, { recursive: true });
   // Stage a couple of plugin files so install actually has something
@@ -40,7 +62,7 @@ function makeScratch(): { baseDir: string; sourceDir: string; configPath: string
   fs.writeFileSync(path.join(sourceDir, 'manifest.json'), JSON.stringify({ id: 'remote-ssh', version: '0.0.0' }));
   fs.writeFileSync(configPath, JSON.stringify({ vaults: {} }));
   return {
-    baseDir, sourceDir, configPath,
+    baseDir, sourceDir, sourceVaultDir, sourceConfigDir, configPath,
     cleanup() {
       try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* ignore */ }
     },
@@ -256,6 +278,142 @@ describe('ShadowVaultBootstrap.bootstrap', () => {
     const stat = fs.lstatSync(layout.pluginDir);
     expect(stat.isSymbolicLink()).toBe(false);
     expect(stat.isDirectory()).toBe(true);
+  });
+
+  it('seeds community-plugins.json from source on first bootstrap', async () => {
+    // Source vault has dataview, templater, and remote-ssh enabled.
+    fs.writeFileSync(
+      path.join(scratch.sourceConfigDir, 'community-plugins.json'),
+      JSON.stringify(['dataview', 'templater-obsidian', 'remote-ssh']),
+    );
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const result = await r.bootstrap(profile, [profile]);
+
+    const shadowList = JSON.parse(fs.readFileSync(
+      path.join(result.layout.configDir, 'community-plugins.json'),
+      'utf-8',
+    ));
+    expect(shadowList).toEqual(['dataview', 'templater-obsidian', 'remote-ssh']);
+  });
+
+  it('always includes remote-ssh in shadow community-plugins.json even when source list omits it', async () => {
+    fs.writeFileSync(
+      path.join(scratch.sourceConfigDir, 'community-plugins.json'),
+      JSON.stringify(['dataview']),
+    );
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const result = await r.bootstrap(profile, [profile]);
+
+    const shadowList = JSON.parse(fs.readFileSync(
+      path.join(result.layout.configDir, 'community-plugins.json'),
+      'utf-8',
+    ));
+    expect(shadowList).toContain('dataview');
+    expect(shadowList).toContain('remote-ssh');
+  });
+
+  it('falls back to [remote-ssh] only when source has no community-plugins.json', async () => {
+    // No community-plugins.json staged at source.
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const result = await r.bootstrap(profile, [profile]);
+
+    const shadowList = JSON.parse(fs.readFileSync(
+      path.join(result.layout.configDir, 'community-plugins.json'),
+      'utf-8',
+    ));
+    expect(shadowList).toEqual(['remote-ssh']);
+  });
+
+  it('preserves shadow community-plugins.json on re-bootstrap (does not reset to source\'s)', async () => {
+    fs.writeFileSync(
+      path.join(scratch.sourceConfigDir, 'community-plugins.json'),
+      JSON.stringify(['dataview', 'remote-ssh']),
+    );
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const first = await r.bootstrap(profile, [profile]);
+
+    // Simulate the user disabling dataview and enabling templater
+    // inside the shadow window.
+    fs.writeFileSync(
+      path.join(first.layout.configDir, 'community-plugins.json'),
+      JSON.stringify(['templater-obsidian', 'remote-ssh']),
+    );
+
+    const second = await r.bootstrap(profile, [profile]);
+    const shadowList = JSON.parse(fs.readFileSync(
+      path.join(second.layout.configDir, 'community-plugins.json'),
+      'utf-8',
+    ));
+    expect(shadowList).toEqual(['templater-obsidian', 'remote-ssh']);
+  });
+
+  it('seeds third-party plugin dirs from source on first bootstrap', async () => {
+    // Stage source vault with two extra plugins.
+    fs.writeFileSync(
+      path.join(scratch.sourceConfigDir, 'community-plugins.json'),
+      JSON.stringify(['dataview', 'remote-ssh']),
+    );
+    const sourceDataviewDir = path.join(scratch.sourceConfigDir, 'plugins', 'dataview');
+    fs.mkdirSync(sourceDataviewDir, { recursive: true });
+    fs.writeFileSync(path.join(sourceDataviewDir, 'main.js'), '// dataview bundle');
+    fs.writeFileSync(path.join(sourceDataviewDir, 'data.json'), JSON.stringify({ pref: 'value' }));
+
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const result = await r.bootstrap(profile, [profile]);
+
+    const shadowDataviewDir = path.join(result.layout.configDir, 'plugins', 'dataview');
+    expect(fs.existsSync(shadowDataviewDir)).toBe(true);
+    expect(fs.readFileSync(path.join(shadowDataviewDir, 'main.js'), 'utf-8')).toBe('// dataview bundle');
+    // Per-plugin data.json copied so the shadow starts with the
+    // user's preferences; subsequent shadow-side writes don't bleed
+    // back to source because the file is a real copy, not a link.
+    expect(JSON.parse(fs.readFileSync(path.join(shadowDataviewDir, 'data.json'), 'utf-8'))).toEqual({ pref: 'value' });
+  });
+
+  it('does not overwrite existing shadow plugin dirs on re-bootstrap', async () => {
+    fs.writeFileSync(
+      path.join(scratch.sourceConfigDir, 'community-plugins.json'),
+      JSON.stringify(['dataview', 'remote-ssh']),
+    );
+    const sourceDataviewDir = path.join(scratch.sourceConfigDir, 'plugins', 'dataview');
+    fs.mkdirSync(sourceDataviewDir, { recursive: true });
+    fs.writeFileSync(path.join(sourceDataviewDir, 'data.json'), JSON.stringify({ from: 'source' }));
+
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const first = await r.bootstrap(profile, [profile]);
+    const shadowDataviewData = path.join(first.layout.configDir, 'plugins', 'dataview', 'data.json');
+
+    // Simulate the user changing dataview's settings inside the shadow.
+    fs.writeFileSync(shadowDataviewData, JSON.stringify({ from: 'shadow' }));
+
+    await r.bootstrap(profile, [profile]);
+    expect(JSON.parse(fs.readFileSync(shadowDataviewData, 'utf-8'))).toEqual({ from: 'shadow' });
+  });
+
+  it('skips plugins listed in community-plugins.json whose source dir is missing', async () => {
+    // List references a plugin we haven't staged at source.
+    fs.writeFileSync(
+      path.join(scratch.sourceConfigDir, 'community-plugins.json'),
+      JSON.stringify(['ghost-plugin', 'remote-ssh']),
+    );
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const result = await r.bootstrap(profile, [profile]);
+
+    // List was still seeded (Obsidian will skip the missing plugin
+    // gracefully on its side); but no shadow dir got created for it.
+    const shadowList = JSON.parse(fs.readFileSync(
+      path.join(result.layout.configDir, 'community-plugins.json'),
+      'utf-8',
+    ));
+    expect(shadowList).toContain('ghost-plugin');
+    expect(fs.existsSync(path.join(result.layout.configDir, 'plugins', 'ghost-plugin'))).toBe(false);
   });
 
   it('refreshes plugin install on bootstrap so plugin updates land immediately', async () => {
