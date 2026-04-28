@@ -31,7 +31,19 @@ jobs:
           cache: npm
           cache-dependency-path: plugin/package-lock.json
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.22'
+          cache: false
+
       - run: npm ci
+
+      # Stage the linux/amd64 daemon binary at <plugin>/server-bin/.
+      # The daemon-deploy integration test (Phase A2) and the upcoming
+      # multi-client RPC test (Phase A3) need this present at the path
+      # `helpers/deployDaemonOnce.ts` looks up.
+      - name: Build server daemon
+        run: npm run build:server
 
       - name: Bring up test sshd
         run: npm run sshd:start
