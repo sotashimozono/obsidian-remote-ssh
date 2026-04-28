@@ -1,5 +1,5 @@
 import { Plugin, Notice, FileSystemAdapter, TFile, TFolder, requestUrl } from 'obsidian';
-import type { PluginSettings, SshProfile } from './types';
+import type { PluginSettings, SshProfile, PendingPluginSuggestion } from './types';
 import { SyncState } from './types';
 import { DEFAULT_SETTINGS } from './constants';
 import { SftpClient } from './ssh/SftpClient';
@@ -33,6 +33,7 @@ import { ShadowVaultBootstrap } from './shadow/ShadowVaultBootstrap';
 import { ShadowVaultManager } from './shadow/ShadowVaultManager';
 import { WindowSpawner } from './shadow/WindowSpawner';
 import { PluginMarketplaceInstaller, type PluginsApi } from './shadow/PluginMarketplaceInstaller';
+import { PendingPluginsModal } from './ui/PendingPluginsModal';
 import * as os from 'os';
 import { installErrorHook, uninstallErrorHook } from './util/errorHook';
 import { normalizeRemotePath } from './util/pathUtils';
@@ -193,22 +194,95 @@ export default class RemoteSshPlugin extends Plugin {
   }
 
   /**
-   * Shadow window startup orchestration: marketplace-install missing
-   * plugins, then auto-connect. Split from `runAutoConnect` so the
-   * Reconnect command can re-run just the connect half without
-   * re-fetching the master plugin list every time.
+   * Shadow window startup orchestration: prompt the user about any
+   * pending plugin suggestions captured at bootstrap, fill in any
+   * binaries missing from the shadow's community-plugins.json (safety
+   * net for re-bootstraps), then auto-connect. Split from
+   * `runAutoConnect` so the Reconnect command can re-run just the
+   * connect half without re-fetching anything.
    */
   private async runShadowStartup(): Promise<void> {
+    await this.handlePendingPluginSuggestions();
     await this.installMissingShadowPlugins();
     await this.runAutoConnect('layout-ready');
   }
 
   /**
+   * If `bootstrap()` left a snapshot of source's enabled community
+   * plugins on this shadow's `data.json`, surface a selection modal so
+   * the user opts in to which ones get installed (and whether to seed
+   * each installed plugin's `data.json` from the source snapshot). On
+   * a definitive "install" / "skip" decision we clear the snapshot so
+   * the modal doesn't return on the next reload. "Ask later" leaves it
+   * in place.
+   */
+  private async handlePendingPluginSuggestions(): Promise<void> {
+    const suggestions = this.settings.pendingPluginSuggestions;
+    if (!suggestions || suggestions.length === 0) return;
+
+    const decision = await new PendingPluginsModal(this.app, suggestions).prompt();
+    if (decision.decision === 'later') {
+      logger.info('handlePendingPluginSuggestions: user picked "ask later"');
+      return;
+    }
+
+    if (decision.decision === 'skip') {
+      logger.info('handlePendingPluginSuggestions: user picked skip — clearing snapshot');
+      this.settings.pendingPluginSuggestions = undefined;
+      await this.saveSettings();
+      return;
+    }
+
+    // decision.decision === 'install'
+    const selectedSet = new Set(decision.selected);
+    const selected = suggestions.filter(s => selectedSet.has(s.id));
+    logger.info(
+      `handlePendingPluginSuggestions: install ${selected.length}/${suggestions.length} ` +
+      `(copyConfig=${decision.copyConfig})`,
+    );
+
+    if (selected.length > 0) {
+      const installer = this.makeMarketplaceInstaller();
+      const report = await installer.installMissing(selected.map(s => s.id));
+      const summary =
+        `pendingPluginSuggestions install: installed=${report.installed.length} ` +
+        `(${report.installed.join(', ')}), skipped=${report.skipped.length}, ` +
+        `failed=${report.failed.length}`;
+      logger.info(summary);
+      if (report.installed.length > 0) {
+        new Notice(
+          `Remote SSH: installed ${report.installed.length} plugin` +
+          `${report.installed.length === 1 ? '' : 's'} from marketplace`,
+        );
+      }
+      if (report.failed.length > 0) {
+        logger.warn(
+          `pendingPluginSuggestions install failures: ${JSON.stringify(report.failed, null, 2)}`,
+        );
+        new Notice(
+          `Remote SSH: ${report.failed.length} plugin install failure` +
+          `${report.failed.length === 1 ? '' : 's'} — see console.log`,
+        );
+      }
+      if (decision.copyConfig) {
+        // Only seed configs for plugins we actually installed in this
+        // run — if installPlugin failed, writing data.json to a
+        // half-empty plugin dir would just confuse the next load.
+        this.copyPluginConfigsForInstalled(selected, new Set(report.installed));
+      }
+    }
+
+    this.settings.pendingPluginSuggestions = undefined;
+    await this.saveSettings();
+  }
+
+  /**
    * Read this shadow vault's community-plugins.json, find ids whose
    * binaries aren't yet installed, and download them from Obsidian's
-   * community marketplace. Idempotent: if everything is already
-   * installed, returns immediately. Failures are reported via Notice
-   * but don't block the subsequent auto-connect.
+   * community marketplace. On first bootstrap this is a no-op (the
+   * list is just `["remote-ssh"]`); the path matters on re-bootstrap
+   * where the user has accumulated a real list and a binary went
+   * missing (vault moved disks, plugin dir purged, …).
    */
   private async installMissingShadowPlugins(): Promise<void> {
     const adapter = this.app.vault.adapter;
@@ -228,7 +302,28 @@ export default class RemoteSshPlugin extends Plugin {
       return;
     }
 
-    const installer = new PluginMarketplaceInstaller({
+    const installer = this.makeMarketplaceInstaller();
+    const report = await installer.installMissing(wantedIds);
+    const summary =
+      `installMissingShadowPlugins: installed=${report.installed.length} ` +
+      `(${report.installed.join(', ')}), skipped=${report.skipped.length}, ` +
+      `failed=${report.failed.length}`;
+    logger.info(summary);
+    if (report.installed.length > 0) {
+      new Notice(
+        `Remote SSH: re-installed ${report.installed.length} missing plugin` +
+        `${report.installed.length === 1 ? '' : 's'} from marketplace`,
+      );
+    }
+    if (report.failed.length > 0) {
+      logger.warn(
+        `installMissingShadowPlugins: failures: ${JSON.stringify(report.failed, null, 2)}`,
+      );
+    }
+  }
+
+  private makeMarketplaceInstaller(): PluginMarketplaceInstaller {
+    return new PluginMarketplaceInstaller({
       // `requestUrl` is Obsidian's own cross-origin-friendly fetch.
       // Plain `fetch` to raw.githubusercontent.com is blocked by
       // Electron's renderer CORS in some Obsidian versions.
@@ -242,24 +337,38 @@ export default class RemoteSshPlugin extends Plugin {
       // the community plugin browser modal calls.
       pluginApi: (this.app as unknown as { plugins: PluginsApi }).plugins,
     });
+  }
 
-    const report = await installer.installMissing(wantedIds);
-    const summary =
-      `installMissingShadowPlugins: installed=${report.installed.length} ` +
-      `(${report.installed.join(', ')}), skipped=${report.skipped.length}, ` +
-      `failed=${report.failed.length}`;
-    logger.info(summary);
-    if (report.installed.length > 0) {
-      new Notice(
-        `Remote SSH: installed ${report.installed.length} plugin` +
-        `${report.installed.length === 1 ? '' : 's'} from marketplace`,
-      );
+  /**
+   * Seed each successfully-installed plugin's `data.json` from the
+   * snapshot we captured in source at bootstrap time. Per-plugin
+   * failures are logged but don't abort — a missing seed just means
+   * the user gets out-of-the-box defaults for that plugin.
+   */
+  private copyPluginConfigsForInstalled(
+    suggestions: ReadonlyArray<PendingPluginSuggestion>,
+    installedIds: Set<string>,
+  ): void {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) {
+      logger.warn('copyPluginConfigsForInstalled: vault is not FileSystemAdapter-backed; skipping');
+      return;
     }
-    if (report.failed.length > 0) {
-      logger.warn(
-        `installMissingShadowPlugins: failures: ${JSON.stringify(report.failed, null, 2)}`,
-      );
+    const pluginsRoot = path.join(adapter.getBasePath(), '.obsidian', 'plugins');
+    let written = 0;
+    for (const s of suggestions) {
+      if (!installedIds.has(s.id)) continue;
+      if (s.sourceData == null) continue;
+      const dataPath = path.join(pluginsRoot, s.id, 'data.json');
+      try {
+        fs.mkdirSync(path.dirname(dataPath), { recursive: true });
+        fs.writeFileSync(dataPath, JSON.stringify(s.sourceData, null, 2) + '\n', 'utf-8');
+        written++;
+      } catch (e) {
+        logger.warn(`copyPluginConfigsForInstalled: failed for ${s.id}: ${(e as Error).message}`);
+      }
     }
+    logger.info(`copyPluginConfigsForInstalled: wrote ${written} data.json file(s)`);
   }
 
   async onunload() {
