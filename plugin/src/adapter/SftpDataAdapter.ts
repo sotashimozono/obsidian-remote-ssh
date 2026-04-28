@@ -28,6 +28,7 @@ import type { PathMapper } from '../path/PathMapper';
 import type { ResourceBridge } from './ResourceBridge';
 import type { RemoteEntry } from '../types';
 import type { AncestorTracker } from '../conflict/AncestorTracker';
+import type { OfflineQueue, QueuedOp } from '../offline/OfflineQueue';
 import { logger } from '../util/logger';
 
 /**
@@ -134,6 +135,15 @@ export class SftpDataAdapter {
     private onTextConflict:
       | ((vaultPath: string, panes: ThreeWayPanes) => Promise<TextConflictDecision>)
       | null = null,
+    /**
+     * Optional persistent queue. When supplied, write-side calls that
+     * land while `setReconnecting(true)` succeed synthetically (the
+     * editor sees the new content via the local read cache) and the
+     * op is appended to the queue. The replayer (E2-β.3) drains the
+     * queue when the session recovers. When omitted, writes during
+     * reconnect throw — the legacy behaviour.
+     */
+    private offlineQueue: OfflineQueue | null = null,
   ) {}
 
   /**
@@ -322,7 +332,10 @@ export class SftpDataAdapter {
   // ─── DataAdapter (write-side) ────────────────────────────────────────────
 
   async write(normalizedPath: string, data: string, _options?: DataWriteOptions): Promise<void> {
-    if (this.reconnecting) throw reconnectingError();
+    if (this.reconnecting) {
+      await this.queueOrThrowText(normalizedPath, data);
+      return;
+    }
     await this.writeBuffer(normalizedPath, Buffer.from(data, 'utf8'), true);
     // After a successful text write, the file we just wrote IS the
     // new ancestor for any later edit cycle.
@@ -333,12 +346,25 @@ export class SftpDataAdapter {
   }
 
   async writeBinary(normalizedPath: string, data: ArrayBuffer, _options?: DataWriteOptions): Promise<void> {
-    if (this.reconnecting) throw reconnectingError();
+    if (this.reconnecting) {
+      await this.queueOrThrowBinary(normalizedPath, Buffer.from(data));
+      return;
+    }
     await this.writeBuffer(normalizedPath, Buffer.from(data), false);
   }
 
   async append(normalizedPath: string, data: string, options?: DataWriteOptions): Promise<void> {
-    if (this.reconnecting) throw reconnectingError();
+    if (this.reconnecting) {
+      // Read locally (cache-only via readBuffer's reconnecting branch),
+      // splice, then queue as a full write. Reading + writing as
+      // separate ops would explode the queue size when the editor
+      // appends in a tight loop.
+      let existing = '';
+      try { existing = await this.read(normalizedPath); }
+      catch { /* file did not exist; start empty so append acts like create */ }
+      await this.queueOrThrowText(normalizedPath, existing + data);
+      return;
+    }
     let existing = '';
     try { existing = await this.read(normalizedPath); }
     catch { /* file did not exist; start empty so append acts like create */ }
@@ -346,7 +372,14 @@ export class SftpDataAdapter {
   }
 
   async appendBinary(normalizedPath: string, data: ArrayBuffer, options?: DataWriteOptions): Promise<void> {
-    if (this.reconnecting) throw reconnectingError();
+    if (this.reconnecting) {
+      let existing: Buffer;
+      try { existing = await this.readBuffer(normalizedPath); }
+      catch { existing = Buffer.alloc(0); }
+      const merged = Buffer.concat([existing, Buffer.from(data)]);
+      await this.queueOrThrowBinary(normalizedPath, merged);
+      return;
+    }
     let existing: Buffer;
     try { existing = await this.readBuffer(normalizedPath); }
     catch { existing = Buffer.alloc(0); }
@@ -365,7 +398,12 @@ export class SftpDataAdapter {
     fn: (data: string) => string,
     options?: DataWriteOptions,
   ): Promise<string> {
-    if (this.reconnecting) throw reconnectingError();
+    if (this.reconnecting) {
+      const current = await this.read(normalizedPath);
+      const next = fn(current);
+      await this.queueOrThrowText(normalizedPath, next);
+      return next;
+    }
     const current = await this.read(normalizedPath);
     const next = fn(current);
     await this.write(normalizedPath, next, options);
@@ -373,14 +411,24 @@ export class SftpDataAdapter {
   }
 
   async mkdir(normalizedPath: string): Promise<void> {
-    if (this.reconnecting) throw reconnectingError();
+    if (this.reconnecting) {
+      await this.queueOrThrowMutation({ kind: 'mkdir', path: normalizedPath });
+      return;
+    }
     const remote = this.toRemote(normalizedPath);
     await this.client.mkdirp(remote);
     this.dirCache.invalidate(parentDirRemote(remote));
   }
 
   async remove(normalizedPath: string): Promise<void> {
-    if (this.reconnecting) throw reconnectingError();
+    if (this.reconnecting) {
+      await this.queueOrThrowMutation({ kind: 'remove', path: normalizedPath });
+      const remote = this.toRemote(normalizedPath);
+      this.readCache.invalidate(remote);
+      this.dirCache.invalidate(parentDirRemote(remote));
+      this.ancestorTracker?.invalidate(normalizedPath);
+      return;
+    }
     const remote = this.toRemote(normalizedPath);
     await this.client.remove(remote);
     this.readCache.invalidate(remote);
@@ -389,7 +437,14 @@ export class SftpDataAdapter {
   }
 
   async rmdir(normalizedPath: string, recursive: boolean): Promise<void> {
-    if (this.reconnecting) throw reconnectingError();
+    if (this.reconnecting) {
+      await this.queueOrThrowMutation({ kind: 'rmdir', path: normalizedPath, recursive });
+      const remote = this.toRemote(normalizedPath);
+      this.readCache.invalidatePrefix(remote);
+      this.dirCache.invalidatePrefix(remote);
+      this.dirCache.invalidate(parentDirRemote(remote));
+      return;
+    }
     const remote = this.toRemote(normalizedPath);
     await this.client.rmdir(remote, recursive);
     this.readCache.invalidatePrefix(remote);
@@ -402,7 +457,18 @@ export class SftpDataAdapter {
   }
 
   async rename(oldPath: string, newPath: string): Promise<void> {
-    if (this.reconnecting) throw reconnectingError();
+    if (this.reconnecting) {
+      await this.queueOrThrowMutation({ kind: 'rename', oldPath, newPath });
+      const oldRemote = this.toRemote(oldPath);
+      const newRemote = this.toRemote(newPath);
+      this.readCache.invalidatePrefix(oldRemote);
+      this.readCache.invalidate(newRemote);
+      this.dirCache.invalidatePrefix(oldRemote);
+      this.dirCache.invalidate(parentDirRemote(oldRemote));
+      this.dirCache.invalidate(parentDirRemote(newRemote));
+      this.ancestorTracker?.invalidate(oldPath);
+      return;
+    }
     const oldRemote = this.toRemote(oldPath);
     const newRemote = this.toRemote(newPath);
     await this.client.mkdirp(parentDirRemote(newRemote));
@@ -420,7 +486,13 @@ export class SftpDataAdapter {
   }
 
   async copy(oldPath: string, newPath: string): Promise<void> {
-    if (this.reconnecting) throw reconnectingError();
+    if (this.reconnecting) {
+      await this.queueOrThrowMutation({ kind: 'copy', srcPath: oldPath, dstPath: newPath });
+      const newRemote = this.toRemote(newPath);
+      this.readCache.invalidate(newRemote);
+      this.dirCache.invalidate(parentDirRemote(newRemote));
+      return;
+    }
     const oldRemote = this.toRemote(oldPath);
     const newRemote = this.toRemote(newPath);
     await this.client.mkdirp(parentDirRemote(newRemote));
@@ -445,12 +517,66 @@ export class SftpDataAdapter {
    * matches the desktop behaviour).
    */
   async trashLocal(normalizedPath: string): Promise<void> {
-    if (this.reconnecting) throw reconnectingError();
+    // Implemented as a rename under .trash/; the rename method
+    // already handles the reconnecting → queue path on its own, so we
+    // just delegate.
     const trashedPath = '.trash/' + normalizedPath;
     await this.rename(normalizedPath, trashedPath);
   }
 
   // ─── internals ───────────────────────────────────────────────────────────
+
+  // ─── offline queue helpers (E2-β) ──────────────────────────────────────
+
+  /**
+   * Append a text write to the offline queue and refresh local
+   * caches so the editor sees the just-written content. Throws the
+   * legacy `reconnecting` error when no queue is wired.
+   *
+   * The queued op carries `expectedMtime` (the cached mtime at
+   * enqueue time) so the replayer can route through the 3-way merge
+   * UI on conflict-during-replay.
+   */
+  private async queueOrThrowText(normalizedPath: string, data: string): Promise<void> {
+    if (!this.offlineQueue) throw reconnectingError();
+    const remote = this.toRemote(normalizedPath);
+    const cached = this.readCache.peek(remote);
+    const buf = Buffer.from(data, 'utf8');
+    await this.offlineQueue.enqueue({
+      kind: 'write',
+      path: normalizedPath,
+      contentBase64: buf.toString('base64'),
+      expectedMtime: cached?.mtime,
+    });
+    const synthMtime = Date.now();
+    this.readCache.put(remote, buf, synthMtime);
+    this.ancestorTracker?.remember(normalizedPath, data, synthMtime);
+  }
+
+  /** Binary equivalent of `queueOrThrowText`; the ancestor tracker is text-only so it's left alone. */
+  private async queueOrThrowBinary(normalizedPath: string, buf: Buffer): Promise<void> {
+    if (!this.offlineQueue) throw reconnectingError();
+    const remote = this.toRemote(normalizedPath);
+    const cached = this.readCache.peek(remote);
+    await this.offlineQueue.enqueue({
+      kind: 'writeBinary',
+      path: normalizedPath,
+      contentBase64: buf.toString('base64'),
+      expectedMtime: cached?.mtime,
+    });
+    const synthMtime = Date.now();
+    this.readCache.put(remote, buf, synthMtime);
+  }
+
+  /**
+   * Append a non-write mutation (mkdir / remove / rmdir / rename /
+   * copy) to the offline queue. Cache invalidation lives in each
+   * caller because the right invalidation differs by op shape.
+   */
+  private async queueOrThrowMutation(op: QueuedOp): Promise<void> {
+    if (!this.offlineQueue) throw reconnectingError();
+    await this.offlineQueue.enqueue(op);
+  }
 
   /**
    * Fetch (or revalidate) the file's contents.

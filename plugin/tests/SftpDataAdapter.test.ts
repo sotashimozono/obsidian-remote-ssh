@@ -4,6 +4,10 @@ import { ReadCache } from '../src/cache/ReadCache';
 import { DirCache } from '../src/cache/DirCache';
 import { PathMapper } from '../src/path/PathMapper';
 import { AncestorTracker } from '../src/conflict/AncestorTracker';
+import { OfflineQueue } from '../src/offline/OfflineQueue';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import * as os from 'node:os';
 import type { RemoteEntry, RemoteStat } from '../src/types';
 
 /** Minimal stand-in for SftpClient covering both read- and write-side calls. */
@@ -1024,5 +1028,141 @@ describe('SftpDataAdapter (read-side)', () => {
       expect(onLegacy).toHaveBeenCalledWith('note.md');
       expect(writeCalls).toHaveLength(2);
     });
+  });
+});
+
+describe('SftpDataAdapter (offline queue while reconnecting)', () => {
+  let readCache: ReadCache;
+  let dirCache: DirCache;
+  let queue: OfflineQueue;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    readCache = new ReadCache();
+    dirCache = new DirCache();
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'remote-ssh-adapter-queue-'));
+    queue = await OfflineQueue.open(tmpDir);
+  });
+
+  function makeAdapterWithQueue(opts: {
+    client: ReturnType<typeof makeFakeClient>['client'];
+    tracker?: AncestorTracker;
+  }) {
+    const tracker = opts.tracker ?? new AncestorTracker();
+    return new SftpDataAdapter(
+      opts.client, '/v', readCache, dirCache, 'v',
+      null, null, null, tracker, null,
+      queue,
+    );
+  }
+
+  it('queues a text write instead of throwing while reconnecting', async () => {
+    const fake = makeFakeClient({});
+    const adapter = makeAdapterWithQueue({ client: fake.client });
+    adapter.setReconnecting(true);
+
+    await adapter.write('a.md', 'hello');
+    expect(fake.spies.writeBinary).not.toHaveBeenCalled();
+
+    const pending = queue.pending();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].op).toMatchObject({
+      kind: 'write',
+      path: 'a.md',
+      contentBase64: Buffer.from('hello', 'utf8').toString('base64'),
+    });
+  });
+
+  it('post-queue read returns the just-written content from local cache', async () => {
+    const fake = makeFakeClient({});
+    const adapter = makeAdapterWithQueue({ client: fake.client });
+    adapter.setReconnecting(true);
+
+    await adapter.write('a.md', 'queued content');
+    expect(await adapter.read('a.md')).toBe('queued content');
+    // No remote call happened — the read served from the cache the
+    // queue path populated.
+    expect(fake.client.readBinary).not.toHaveBeenCalled();
+  });
+
+  it('captures expectedMtime from the existing read cache entry', async () => {
+    const fake = makeFakeClient({
+      files: { '/v/a.md': { data: Buffer.from('v0'), mtime: 100 } },
+    });
+    const adapter = makeAdapterWithQueue({ client: fake.client });
+    await adapter.read('a.md'); // primes cache with mtime=100
+    adapter.setReconnecting(true);
+
+    await adapter.write('a.md', 'v1');
+    const op = queue.pending()[0].op as { expectedMtime?: number };
+    expect(op.expectedMtime).toBe(100);
+  });
+
+  it('queues writeBinary as kind=writeBinary', async () => {
+    const fake = makeFakeClient({});
+    const adapter = makeAdapterWithQueue({ client: fake.client });
+    adapter.setReconnecting(true);
+    await adapter.writeBinary('img.png', new Uint8Array([1, 2, 3]).buffer);
+    expect(queue.pending()[0].op.kind).toBe('writeBinary');
+  });
+
+  it('queues append as a single full-content write (no separate read+write entries)', async () => {
+    const fake = makeFakeClient({
+      files: { '/v/log.md': { data: Buffer.from('one\n'), mtime: 1 } },
+    });
+    const adapter = makeAdapterWithQueue({ client: fake.client });
+    await adapter.read('log.md'); // prime cache
+    adapter.setReconnecting(true);
+
+    await adapter.append('log.md', 'two\n');
+    const pending = queue.pending();
+    expect(pending).toHaveLength(1);
+    const op = pending[0].op as { kind: string; contentBase64: string };
+    expect(op.kind).toBe('write');
+    expect(Buffer.from(op.contentBase64, 'base64').toString('utf8')).toBe('one\ntwo\n');
+  });
+
+  it('queues mkdir / remove / rmdir / rename / copy with their right shapes', async () => {
+    const fake = makeFakeClient({});
+    const adapter = makeAdapterWithQueue({ client: fake.client });
+    adapter.setReconnecting(true);
+
+    await adapter.mkdir('newdir');
+    await adapter.remove('a.md');
+    await adapter.rmdir('newdir', true);
+    await adapter.rename('old.md', 'new.md');
+    await adapter.copy('src.md', 'dst.md');
+
+    const ops = queue.pending().map(e => e.op);
+    expect(ops).toEqual([
+      { kind: 'mkdir', path: 'newdir' },
+      { kind: 'remove', path: 'a.md' },
+      { kind: 'rmdir', path: 'newdir', recursive: true },
+      { kind: 'rename', oldPath: 'old.md', newPath: 'new.md' },
+      { kind: 'copy', srcPath: 'src.md', dstPath: 'dst.md' },
+    ]);
+  });
+
+  it('still throws when no offline queue is wired', async () => {
+    const fake = makeFakeClient({});
+    // Adapter built WITHOUT the queue arg — the legacy reconnecting
+    // behaviour kicks in.
+    const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+    adapter.setReconnecting(true);
+    await expect(adapter.write('a.md', 'x')).rejects.toThrow(/reconnecting/i);
+  });
+
+  it('queued ops persist across re-opens of the queue (round-trip via disk)', async () => {
+    const fake = makeFakeClient({});
+    const adapter = makeAdapterWithQueue({ client: fake.client });
+    adapter.setReconnecting(true);
+    await adapter.write('a.md', 'hello');
+    await adapter.mkdir('sub');
+
+    // Re-open the queue from the same dir to confirm the on-disk log
+    // round-trips the adapter's enqueues.
+    const reopened = await OfflineQueue.open(tmpDir);
+    const ops = reopened.pending().map(e => e.op.kind);
+    expect(ops).toEqual(['write', 'mkdir']);
   });
 });
