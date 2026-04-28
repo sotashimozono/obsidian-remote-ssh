@@ -70,17 +70,12 @@ export class ShadowVaultBootstrap {
     // their main vault. Re-bootstrap leaves shadow's existing list
     // untouched — the user can enable/disable plugins inside the
     // shadow window without us reverting them. `remote-ssh` is always
-    // present regardless.
-    const seededPluginIds = this.seedCommunityPlugins(layout.configDir);
-
-    // Recursively copy each non-remote-ssh plugin's source dir into
-    // the shadow vault. Each copy is independent of the source dir
-    // (no symlinks for these — per-plugin data.json must stay
-    // separate, same lesson PR #65 learned for our own plugin).
-    // Idempotent: skips plugin dirs that already exist in shadow,
-    // so re-bootstrap doesn't blow away the shadow's accumulated
-    // per-plugin settings.
-    this.seedThirdPartyPluginDirs(layout, seededPluginIds);
+    // present regardless. Plugin BINARIES are not copied here:
+    // `PluginMarketplaceInstaller` (called from main.ts on shadow
+    // window startup) downloads them from Obsidian's community
+    // marketplace instead, so each shadow vault always gets the
+    // latest published version regardless of what's stale in source.
+    this.seedCommunityPlugins(layout.configDir);
 
     // Install our own plugin source (symlink preferred so dev
     // iterations appear immediately; copy as a Windows fallback).
@@ -185,50 +180,6 @@ export class ShadowVaultBootstrap {
     ids = sourceIds.includes('remote-ssh') ? sourceIds : [...sourceIds, 'remote-ssh'];
     fs.writeFileSync(shadowPath, JSON.stringify(ids) + '\n', 'utf-8');
     return ids;
-  }
-
-  /**
-   * For every plugin id in `seededIds` (other than our own
-   * `remote-ssh`, which is installed separately via per-file
-   * symlink), recursively copy the source plugin's directory into
-   * the shadow vault. Skips ids whose source dir is missing (plugin
-   * not installed at source) or whose shadow dir already exists
-   * (idempotent re-bootstrap; keeps shadow's accumulated per-plugin
-   * data.json untouched).
-   */
-  private seedThirdPartyPluginDirs(layout: ShadowVaultLayout, seededIds: ReadonlyArray<string>): void {
-    const sourcePluginsRoot = path.join(this.sourceConfigDir(), 'plugins');
-    const shadowPluginsRoot = path.join(layout.configDir, 'plugins');
-    fs.mkdirSync(shadowPluginsRoot, { recursive: true });
-
-    for (const id of seededIds) {
-      if (id === 'remote-ssh') continue;
-      const src = path.join(sourcePluginsRoot, id);
-      const dst = path.join(shadowPluginsRoot, id);
-      if (!fs.existsSync(src)) {
-        logger.warn(
-          `ShadowVaultBootstrap: source plugin "${id}" listed in community-plugins.json ` +
-          `but source dir ${src} is missing; shadow will skip it`,
-        );
-        continue;
-      }
-      if (fs.existsSync(dst)) {
-        // Re-bootstrap: shadow already has this plugin, possibly
-        // with diverged data.json / settings. Don't overwrite.
-        continue;
-      }
-      try {
-        // dereference: true so a symlinked source produces real
-        // files (relevant when source vault's plugin dirs are
-        // themselves symlinks for dev).
-        fs.cpSync(src, dst, { recursive: true, dereference: true });
-      } catch (e) {
-        logger.warn(
-          `ShadowVaultBootstrap: failed to copy source plugin "${id}" to shadow ` +
-          `(${(e as Error).message}); shadow will skip it`,
-        );
-      }
-    }
   }
 
   /**
