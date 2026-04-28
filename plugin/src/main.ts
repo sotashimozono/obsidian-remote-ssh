@@ -33,6 +33,7 @@ import { StatusBar } from './ui/StatusBar';
 import { ConnectModal } from './ui/ConnectModal';
 import { SettingsTab } from './settings/SettingsTab';
 import { logger } from './util/logger';
+import { perfTracer } from './util/PerfTracer';
 import { VaultModelBuilder } from './vault/VaultModelBuilder';
 import { BulkWalker } from './vault/BulkWalker';
 import { ObsidianRegistry } from './shadow/ObsidianRegistry';
@@ -1186,6 +1187,18 @@ export default class RemoteSshPlugin extends Plugin {
    * Obsidian's own filesystem watcher would.
    */
   private handleFsChanged(params: FsChangedParams): void {
+    // T4a — first thing the reader sees after the daemon push frame
+    // is decoded. Stamping here (before any per-handler short-circuits)
+    // gives PerfAggregator the cleanest reader-side latency anchor.
+    // M3 will swap perfTracer.newCid() for the cid carried on the
+    // notification's envelope meta so this point joins the writer's
+    // S.adp/S.rpc spans on the same correlation id.
+    perfTracer.point('T4a', perfTracer.newCid(), {
+      path: params.path,
+      event: params.event,
+      subscriptionId: params.subscriptionId,
+    });
+
     if (!this.dataAdapter) return;
     if (this.rpcWatchSubscriptionId && params.subscriptionId !== this.rpcWatchSubscriptionId) {
       return;
@@ -1230,6 +1243,11 @@ export default class RemoteSshPlugin extends Plugin {
     newVaultPath: string | undefined,
     event: FsChangedParams['event'],
   ): Promise<void> {
+    // T4b → T5a — the model-mutation half of the reader-side pipeline.
+    // S.app spans the entry into applyFsChange through every
+    // VaultModelBuilder mutator (which emit T5a points just before
+    // their `vault.trigger(...)` calls).
+    const __t4b = perfTracer.begin('S.app');
     const builder = new VaultModelBuilder(this.app.vault, { TFile, TFolder });
 
     try {
@@ -1282,6 +1300,8 @@ export default class RemoteSshPlugin extends Plugin {
       }
     } catch (e) {
       logger.warn(`applyFsChange(${event}) failed for ${oldVaultPath}: ${(e as Error).message}`);
+    } finally {
+      perfTracer.end(__t4b, { event, path: oldVaultPath, newPath: newVaultPath });
     }
   }
 
