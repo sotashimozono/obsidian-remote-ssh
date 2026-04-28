@@ -30,6 +30,7 @@ import type { RemoteEntry } from '../types';
 import type { AncestorTracker } from '../conflict/AncestorTracker';
 import type { OfflineQueue, QueuedOp } from '../offline/OfflineQueue';
 import { logger } from '../util/logger';
+import { perfTracer } from '../util/PerfTracer';
 
 /**
  * Inputs to a 3-way conflict prompt. The adapter assembles these
@@ -332,60 +333,80 @@ export class SftpDataAdapter {
   // ─── DataAdapter (write-side) ────────────────────────────────────────────
 
   async write(normalizedPath: string, data: string, _options?: DataWriteOptions): Promise<void> {
-    if (this.reconnecting) {
-      await this.queueOrThrowText(normalizedPath, data);
-      return;
-    }
-    await this.writeBuffer(normalizedPath, Buffer.from(data, 'utf8'), true);
-    // After a successful text write, the file we just wrote IS the
-    // new ancestor for any later edit cycle.
-    if (this.ancestorTracker) {
-      const cached = this.readCache.peek(this.toRemote(normalizedPath));
-      this.ancestorTracker.remember(normalizedPath, data, cached?.mtime ?? 0);
+    const __t1 = perfTracer.begin('S.adp');
+    try {
+      if (this.reconnecting) {
+        await this.queueOrThrowText(normalizedPath, data);
+        return;
+      }
+      await this.writeBuffer(normalizedPath, Buffer.from(data, 'utf8'), true);
+      // After a successful text write, the file we just wrote IS the
+      // new ancestor for any later edit cycle.
+      if (this.ancestorTracker) {
+        const cached = this.readCache.peek(this.toRemote(normalizedPath));
+        this.ancestorTracker.remember(normalizedPath, data, cached?.mtime ?? 0);
+      }
+    } finally {
+      perfTracer.end(__t1, { op: 'write', path: normalizedPath, bytes: data.length });
     }
   }
 
   async writeBinary(normalizedPath: string, data: ArrayBuffer, _options?: DataWriteOptions): Promise<void> {
-    if (this.reconnecting) {
-      await this.queueOrThrowBinary(normalizedPath, Buffer.from(data));
-      return;
+    const __t1 = perfTracer.begin('S.adp');
+    try {
+      if (this.reconnecting) {
+        await this.queueOrThrowBinary(normalizedPath, Buffer.from(data));
+        return;
+      }
+      await this.writeBuffer(normalizedPath, Buffer.from(data), false);
+    } finally {
+      perfTracer.end(__t1, { op: 'writeBinary', path: normalizedPath, bytes: data.byteLength });
     }
-    await this.writeBuffer(normalizedPath, Buffer.from(data), false);
   }
 
   async append(normalizedPath: string, data: string, options?: DataWriteOptions): Promise<void> {
-    if (this.reconnecting) {
-      // Read locally (cache-only via readBuffer's reconnecting branch),
-      // splice, then queue as a full write. Reading + writing as
-      // separate ops would explode the queue size when the editor
-      // appends in a tight loop.
+    const __t1 = perfTracer.begin('S.adp');
+    try {
+      if (this.reconnecting) {
+        // Read locally (cache-only via readBuffer's reconnecting branch),
+        // splice, then queue as a full write. Reading + writing as
+        // separate ops would explode the queue size when the editor
+        // appends in a tight loop.
+        let existing = '';
+        try { existing = await this.read(normalizedPath); }
+        catch { /* file did not exist; start empty so append acts like create */ }
+        await this.queueOrThrowText(normalizedPath, existing + data);
+        return;
+      }
       let existing = '';
       try { existing = await this.read(normalizedPath); }
       catch { /* file did not exist; start empty so append acts like create */ }
-      await this.queueOrThrowText(normalizedPath, existing + data);
-      return;
+      await this.write(normalizedPath, existing + data, options);
+    } finally {
+      perfTracer.end(__t1, { op: 'append', path: normalizedPath, bytes: data.length });
     }
-    let existing = '';
-    try { existing = await this.read(normalizedPath); }
-    catch { /* file did not exist; start empty so append acts like create */ }
-    await this.write(normalizedPath, existing + data, options);
   }
 
   async appendBinary(normalizedPath: string, data: ArrayBuffer, options?: DataWriteOptions): Promise<void> {
-    if (this.reconnecting) {
+    const __t1 = perfTracer.begin('S.adp');
+    try {
+      if (this.reconnecting) {
+        let existing: Buffer;
+        try { existing = await this.readBuffer(normalizedPath); }
+        catch { existing = Buffer.alloc(0); }
+        const merged = Buffer.concat([existing, Buffer.from(data)]);
+        await this.queueOrThrowBinary(normalizedPath, merged);
+        return;
+      }
       let existing: Buffer;
       try { existing = await this.readBuffer(normalizedPath); }
       catch { existing = Buffer.alloc(0); }
       const merged = Buffer.concat([existing, Buffer.from(data)]);
-      await this.queueOrThrowBinary(normalizedPath, merged);
-      return;
+      await this.writeBuffer(normalizedPath, merged, false);
+      void options;
+    } finally {
+      perfTracer.end(__t1, { op: 'appendBinary', path: normalizedPath, bytes: data.byteLength });
     }
-    let existing: Buffer;
-    try { existing = await this.readBuffer(normalizedPath); }
-    catch { existing = Buffer.alloc(0); }
-    const merged = Buffer.concat([existing, Buffer.from(data)]);
-    await this.writeBuffer(normalizedPath, merged, false);
-    void options;
   }
 
   /**
@@ -398,16 +419,21 @@ export class SftpDataAdapter {
     fn: (data: string) => string,
     options?: DataWriteOptions,
   ): Promise<string> {
-    if (this.reconnecting) {
+    const __t1 = perfTracer.begin('S.adp');
+    try {
+      if (this.reconnecting) {
+        const current = await this.read(normalizedPath);
+        const next = fn(current);
+        await this.queueOrThrowText(normalizedPath, next);
+        return next;
+      }
       const current = await this.read(normalizedPath);
       const next = fn(current);
-      await this.queueOrThrowText(normalizedPath, next);
+      await this.write(normalizedPath, next, options);
       return next;
+    } finally {
+      perfTracer.end(__t1, { op: 'process', path: normalizedPath });
     }
-    const current = await this.read(normalizedPath);
-    const next = fn(current);
-    await this.write(normalizedPath, next, options);
-    return next;
   }
 
   async mkdir(normalizedPath: string): Promise<void> {
@@ -421,19 +447,24 @@ export class SftpDataAdapter {
   }
 
   async remove(normalizedPath: string): Promise<void> {
-    if (this.reconnecting) {
-      await this.queueOrThrowMutation({ kind: 'remove', path: normalizedPath });
+    const __t1 = perfTracer.begin('S.adp');
+    try {
+      if (this.reconnecting) {
+        await this.queueOrThrowMutation({ kind: 'remove', path: normalizedPath });
+        const remote = this.toRemote(normalizedPath);
+        this.readCache.invalidate(remote);
+        this.dirCache.invalidate(parentDirRemote(remote));
+        this.ancestorTracker?.invalidate(normalizedPath);
+        return;
+      }
       const remote = this.toRemote(normalizedPath);
+      await this.client.remove(remote);
       this.readCache.invalidate(remote);
       this.dirCache.invalidate(parentDirRemote(remote));
       this.ancestorTracker?.invalidate(normalizedPath);
-      return;
+    } finally {
+      perfTracer.end(__t1, { op: 'remove', path: normalizedPath });
     }
-    const remote = this.toRemote(normalizedPath);
-    await this.client.remove(remote);
-    this.readCache.invalidate(remote);
-    this.dirCache.invalidate(parentDirRemote(remote));
-    this.ancestorTracker?.invalidate(normalizedPath);
   }
 
   async rmdir(normalizedPath: string, recursive: boolean): Promise<void> {
@@ -457,32 +488,37 @@ export class SftpDataAdapter {
   }
 
   async rename(oldPath: string, newPath: string): Promise<void> {
-    if (this.reconnecting) {
-      await this.queueOrThrowMutation({ kind: 'rename', oldPath, newPath });
+    const __t1 = perfTracer.begin('S.adp');
+    try {
+      if (this.reconnecting) {
+        await this.queueOrThrowMutation({ kind: 'rename', oldPath, newPath });
+        const oldRemote = this.toRemote(oldPath);
+        const newRemote = this.toRemote(newPath);
+        this.readCache.invalidatePrefix(oldRemote);
+        this.readCache.invalidate(newRemote);
+        this.dirCache.invalidatePrefix(oldRemote);
+        this.dirCache.invalidate(parentDirRemote(oldRemote));
+        this.dirCache.invalidate(parentDirRemote(newRemote));
+        this.ancestorTracker?.invalidate(oldPath);
+        return;
+      }
       const oldRemote = this.toRemote(oldPath);
       const newRemote = this.toRemote(newPath);
+      await this.client.mkdirp(parentDirRemote(newRemote));
+      await this.client.rename(oldRemote, newRemote);
       this.readCache.invalidatePrefix(oldRemote);
       this.readCache.invalidate(newRemote);
       this.dirCache.invalidatePrefix(oldRemote);
       this.dirCache.invalidate(parentDirRemote(oldRemote));
       this.dirCache.invalidate(parentDirRemote(newRemote));
+      // Keep the ancestor for `newPath` if one happens to exist (e.g.
+      // rename onto an open file) — the user's edit cycle is against
+      // whatever they last read at that path, regardless of how the
+      // file got there.
       this.ancestorTracker?.invalidate(oldPath);
-      return;
+    } finally {
+      perfTracer.end(__t1, { op: 'rename', path: oldPath, newPath });
     }
-    const oldRemote = this.toRemote(oldPath);
-    const newRemote = this.toRemote(newPath);
-    await this.client.mkdirp(parentDirRemote(newRemote));
-    await this.client.rename(oldRemote, newRemote);
-    this.readCache.invalidatePrefix(oldRemote);
-    this.readCache.invalidate(newRemote);
-    this.dirCache.invalidatePrefix(oldRemote);
-    this.dirCache.invalidate(parentDirRemote(oldRemote));
-    this.dirCache.invalidate(parentDirRemote(newRemote));
-    // Keep the ancestor for `newPath` if one happens to exist (e.g.
-    // rename onto an open file) — the user's edit cycle is against
-    // whatever they last read at that path, regardless of how the
-    // file got there.
-    this.ancestorTracker?.invalidate(oldPath);
   }
 
   async copy(oldPath: string, newPath: string): Promise<void> {

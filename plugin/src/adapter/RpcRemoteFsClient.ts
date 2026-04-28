@@ -3,6 +3,7 @@ import type { RpcClient } from '../transport/RpcClient';
 import type { CloseListener, RemoteFsClient } from './RemoteFsClient';
 import type { Entry, Stat } from '../proto/types';
 import { RpcError } from '../transport/RpcError';
+import { perfTracer } from '../util/PerfTracer';
 
 /**
  * RpcRemoteFsClient speaks to the Go daemon (obsidian-remote-server)
@@ -57,31 +58,61 @@ export class RpcRemoteFsClient implements RemoteFsClient {
   // ─── write side ───────────────────────────────────────────────────────
 
   async writeBinary(path: string, data: Buffer, expectedMtime?: number): Promise<void> {
-    await this.rpc.call('fs.writeBinary', {
-      path,
-      contentBase64: data.toString('base64'),
-      ...(expectedMtime !== undefined ? { expectedMtime } : {}),
-    });
+    const __t2a = perfTracer.begin('S.rpc');
+    try {
+      await this.rpc.call('fs.writeBinary', {
+        path,
+        contentBase64: data.toString('base64'),
+        ...(expectedMtime !== undefined ? { expectedMtime } : {}),
+      });
+    } finally {
+      perfTracer.end(__t2a, { method: 'fs.writeBinary', path, bytes: data.length });
+    }
   }
 
   async mkdirp(path: string): Promise<void> {
-    await this.rpc.call('fs.mkdir', { path, recursive: true });
+    const __t2a = perfTracer.begin('S.rpc');
+    try {
+      await this.rpc.call('fs.mkdir', { path, recursive: true });
+    } finally {
+      perfTracer.end(__t2a, { method: 'fs.mkdir', path });
+    }
   }
 
   async remove(path: string): Promise<void> {
-    await this.rpc.call('fs.remove', { path });
+    const __t2a = perfTracer.begin('S.rpc');
+    try {
+      await this.rpc.call('fs.remove', { path });
+    } finally {
+      perfTracer.end(__t2a, { method: 'fs.remove', path });
+    }
   }
 
   async rmdir(path: string, recursive = false): Promise<void> {
-    await this.rpc.call('fs.rmdir', { path, recursive });
+    const __t2a = perfTracer.begin('S.rpc');
+    try {
+      await this.rpc.call('fs.rmdir', { path, recursive });
+    } finally {
+      perfTracer.end(__t2a, { method: 'fs.rmdir', path });
+    }
   }
 
   async rename(oldPath: string, newPath: string): Promise<void> {
-    await this.rpc.call('fs.rename', { oldPath, newPath });
+    const __t2a = perfTracer.begin('S.rpc');
+    try {
+      await this.rpc.call('fs.rename', { oldPath, newPath });
+    } finally {
+      perfTracer.end(__t2a, { method: 'fs.rename', path: oldPath, newPath });
+    }
   }
 
   async copy(srcPath: string, destPath: string): Promise<void> {
-    await this.rpc.call('fs.copy', { srcPath, destPath });
+    const __t2a = perfTracer.begin('S.rpc');
+    try {
+      await this.rpc.call('fs.copy', { srcPath, destPath });
+    } finally {
+      perfTracer.end(__t2a, { method: 'fs.copy', path: srcPath, destPath });
+    }
   }
 }
 

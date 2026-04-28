@@ -1,5 +1,6 @@
 import type { TAbstractFile, TFile, TFolder, Vault } from 'obsidian';
 import { logger } from '../util/logger';
+import { perfTracer } from '../util/PerfTracer';
 
 /**
  * One entry the builder needs in order to materialise a TFile or
@@ -189,6 +190,7 @@ export class VaultModelBuilder {
     }
     delete map[path];
 
+    perfTracer.point('T5a', perfTracer.newCid(), { op: 'delete', path });
     this.vault.trigger('delete', target);
     return true;
   }
@@ -211,6 +213,7 @@ export class VaultModelBuilder {
     if (stat) {
       file.stat = stat;
     }
+    perfTracer.point('T5a', perfTracer.newCid(), { op: 'modify', path });
     this.vault.trigger('modify', file);
     return true;
   }
@@ -283,6 +286,7 @@ export class VaultModelBuilder {
     // Attach to new parent's children.
     newParent.children.push(target);
 
+    perfTracer.point('T5a', perfTracer.newCid(), { op: 'rename', path: oldPath, newPath });
     this.vault.trigger('rename', target, oldPath);
     return true;
   }
@@ -308,6 +312,7 @@ export class VaultModelBuilder {
 
     insertIntoFileMap(this.vault, entry.path, file);
     parent.children.push(file);
+    perfTracer.point('T5a', perfTracer.newCid(), { op: 'create', path: entry.path });
     this.vault.trigger('create', file);
     return file;
   }
@@ -324,6 +329,7 @@ export class VaultModelBuilder {
 
     insertIntoFileMap(this.vault, path, folder);
     parent.children.push(folder);
+    perfTracer.point('T5a', perfTracer.newCid(), { op: 'create', path });
     // Fire `create` for folders too. The original Phase 1 design
     // assumed File Explorer would discover folders via parent's
     // children array, but Phase 4 smoke proved that wrong: File
