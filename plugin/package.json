@@ -1,6 +1,6 @@
 {
   "name": "obsidian-remote-ssh",
-  "version": "0.4.47",
+  "version": "0.4.48",
   "description": "VS Code Remote SSH-like experience for Obsidian",
   "main": "main.js",
   "scripts": {
@@ -13,7 +13,8 @@
     "cdp:tail": "node scripts/cdp-tail.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts --exclude **/perf.sync.bench.test.ts",
+    "test:integration:bench": "vitest run --config vitest.integration.config.ts tests/integration/perf.sync.bench.test.ts",
     "sshd:start": "node scripts/start-test-sshd.mjs",
     "sshd:stop": "node scripts/stop-test-sshd.mjs",
     "lint": "eslint src --ext .ts",

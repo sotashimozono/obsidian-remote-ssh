@@ -1,0 +1,155 @@
+name: Perf bench
+
+# Phase C M10 — sync-latency microbench, off the PR critical path.
+#
+# The bench (`plugin/tests/integration/perf.sync.bench.test.ts`)
+# takes ~6 minutes per run (200 iters × 6 cells over an SSH-tunneled
+# RPC, where the RPC RTT itself is ~41 ms). Running it on every PR
+# was 96 % of integration CI wall time and the per-PR feedback was
+# noise (the M10 gate is currently comment-only). Per the bench's
+# own purpose — trend tracking + regression detection — running it
+# nightly + on demand is the right cadence.
+#
+# Triggers:
+#   - schedule (nightly UTC 19:00 = JST 04:00) — keeps the
+#     perf-baseline branch fresh for trend graphs.
+#   - workflow_dispatch — manual trigger from the Actions UI when
+#     you want to see a number after a perf-relevant change.
+#   - push to main — bootstraps the perf-baseline orphan branch on
+#     first run + re-pins it after each merge so the baseline tracks
+#     main, not stale snapshots.
+#
+# What it does NOT do:
+#   - Run on PRs (`integration.yml` covers PR-time integration tests
+#     without the bench).
+#   - Comment on PRs (no PR context on most triggers; the artifact
+#     + Markdown table in the run log is the surface).
+
+on:
+  schedule:
+    - cron: '0 19 * * *'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Optional PR number to post the diff comment to (leave blank for log-only)'
+        required: false
+        type: string
+  push:
+    branches: [main]
+
+concurrency:
+  # One bench run at a time per ref — concurrent runs would race on
+  # the perf-baseline push.
+  group: bench-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  # contents:write to push the perf-baseline orphan branch;
+  # pull-requests:write so the optional workflow_dispatch
+  # `pr_number` input can post a diff comment.
+  contents: write
+  pull-requests: write
+
+jobs:
+  bench:
+    name: Perf bench (sync latency)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    env:
+      # Make the bench's PerfTracer light up; M2 / M6 spans are
+      # otherwise zero-allocation no-ops by default.
+      REMOTE_SSH_PERF: '1'
+      REMOTE_SSH_PERF_BRANCH: ${{ github.head_ref || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: plugin/package-lock.json
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.22'
+          cache: false
+
+      - run: npm ci
+
+      - name: Build server daemon
+        run: npm run build:server
+
+      - name: Bring up test sshd
+        run: npm run sshd:start
+
+      - name: Run perf bench
+        run: npm run test:integration:bench
+
+      - name: Tear down test sshd
+        if: always()
+        run: npm run sshd:stop
+
+      - name: Upload perf-bench NDJSON artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-results-${{ github.run_id }}
+          path: plugin/perf-results/
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # Optional: when triggered manually with a `pr_number` input,
+      # diff this run's NDJSON against the current baseline and
+      # comment the Markdown table on the named PR. Useful for
+      # spot-checking a perf-relevant change without waiting for
+      # the next nightly. Falls back to log-only when the input is
+      # blank or no baseline exists yet.
+      - name: Fetch perf-baseline (workflow_dispatch with PR number)
+        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != ''
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --heads origin perf-baseline | grep -q perf-baseline; then
+            mkdir -p perf-baseline
+            git fetch --depth=1 origin perf-baseline:perf-baseline
+            git --git-dir=.git --work-tree=perf-baseline checkout perf-baseline -- .
+            echo "Fetched perf-baseline branch into ./perf-baseline/"
+          else
+            echo "::notice::No perf-baseline branch yet — comment will say 'first run'."
+          fi
+
+      - name: Diff vs baseline + comment on PR (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != ''
+        env:
+          PERF_PR_NUMBER:    ${{ inputs.pr_number }}
+          PERF_GATE:         '0'
+          PERF_COMMIT_SHA:   ${{ github.sha }}
+          PERF_RUN_URL:      ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/perf/run-compare.mjs
+
+      # Update perf-baseline on push-to-main and on the nightly cron.
+      # workflow_dispatch never rewrites the baseline so spot-check
+      # runs don't pin a candidate change as the new normal.
+      - name: Update perf-baseline
+        if: github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        env:
+          PERF_COMMIT_SHA: ${{ github.sha }}
+          GH_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/perf/run-update-baseline.mjs
+
+      - name: Upload sshd logs on failure
+        if: failure()
+        run: docker logs obsidian-remote-ssh-test-sshd > sshd-logs.txt 2>&1 || true
+        working-directory: ${{ github.workspace }}
+
+      - name: Attach sshd logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sshd-logs
+          path: sshd-logs.txt
