@@ -1,5 +1,10 @@
 # obsidian-remote-ssh
 
+[![CI](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/ci.yml)
+[![Integration](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/integration.yml/badge.svg?branch=main)](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/integration.yml)
+[![codecov](https://codecov.io/gh/sotashimozono/obsidian-remote-ssh/branch/main/graph/badge.svg)](https://codecov.io/gh/sotashimozono/obsidian-remote-ssh)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A VSCode-Remote-SSH-style experience for Obsidian: keep using your
 desktop Obsidian, but the vault you edit lives on a remote SSH host.
 Files, attachments, file-explorer state, search — all served from the

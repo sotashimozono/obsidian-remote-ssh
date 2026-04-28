@@ -72,7 +72,16 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v6
         with:
+          # Explicit slug avoids fork/PR ambiguity — Codecov's auto-
+          # detection can mis-route uploads from PRs opened from forks.
+          slug: sotashimozono/obsidian-remote-ssh
           files: plugin/coverage/lcov.info
+          # Namespace under "plugin" so a future server-side Go
+          # coverage upload can sit beside it without collision.
+          flags: plugin
+          # Coverage is informational, not gating: a flake in the
+          # Codecov upload (transient 5xx, rate limit) shouldn't fail
+          # otherwise-passing CI runs.
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
