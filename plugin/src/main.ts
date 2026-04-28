@@ -16,6 +16,8 @@ import { ThreeWayMergeModal } from './ui/ThreeWayMergeModal';
 import { AncestorTracker } from './conflict/AncestorTracker';
 import { OfflineQueue } from './offline/OfflineQueue';
 import { QueueReplayer } from './offline/QueueReplayer';
+import { PendingEditsBar } from './ui/PendingEditsBar';
+import { PendingEditsModal } from './ui/PendingEditsModal';
 import { SftpRemoteFsClient } from './adapter/SftpRemoteFsClient';
 import { RpcRemoteFsClient } from './adapter/RpcRemoteFsClient';
 import { establishRpcConnection } from './transport/RpcConnection';
@@ -78,6 +80,11 @@ export default class RemoteSshPlugin extends Plugin {
    * are replayed on reconnect by the (upcoming) QueueReplayer.
    */
   private offlineQueue: OfflineQueue | null = null;
+  /**
+   * Status-bar indicator for queued offline edits (E2-β.4). Hidden
+   * when the queue is empty; click opens `PendingEditsModal`.
+   */
+  private pendingEditsBar: PendingEditsBar | null = null;
   private activeRemoteBasePath: string | null = null;
   /** Authenticated daemon session, populated when the active profile uses transport='rpc'. */
   private rpcConnection: Awaited<ReturnType<typeof establishRpcConnection>> | null = null;
@@ -128,6 +135,12 @@ export default class RemoteSshPlugin extends Plugin {
 
     this.statusBar = new StatusBar(this, () => this.onStatusBarClick());
     this.statusBar.update(this.state);
+
+    // Pending-edits indicator: shown only when the offline queue has
+    // entries. Click opens the read-only listing + "discard all"
+    // button. The bar starts hidden; `replayOfflineQueue` and the
+    // queue-aware adapter writes call into our refresh helper.
+    this.pendingEditsBar = new PendingEditsBar(this, () => void this.showPendingEditsModal());
 
     this.addCommand({
       id: 'connect',
@@ -390,6 +403,7 @@ export default class RemoteSshPlugin extends Plugin {
     this.restoreAdapter();
     await this.disconnect().catch(() => {});
     this.statusBar?.remove();
+    this.pendingEditsBar?.remove();
     this.uninstallObservability();
   }
 
@@ -938,9 +952,14 @@ export default class RemoteSshPlugin extends Plugin {
         if (stats.entries > 0) {
           logger.info(
             `OfflineQueue: opened with ${stats.entries} pending entries (${stats.bytes} bytes) ` +
-            'from a previous session — the upcoming QueueReplayer (E2-β.3) will drain them on reconnect',
+            'from a previous session — the QueueReplayer will drain them on connect',
           );
         }
+        // Wire the status-bar indicator to this queue. Polls every
+        // 2 s; cheap (Map.size) and the user expects an at-a-glance
+        // count rather than per-event live updates.
+        const queue = this.offlineQueue;
+        this.pendingEditsBar?.startPolling(() => queue.pending().length);
       } catch (e) {
         logger.warn(`OfflineQueue: open failed (${(e as Error).message}); offline writes will throw`);
         this.offlineQueue = null;
@@ -1340,6 +1359,30 @@ export default class RemoteSshPlugin extends Plugin {
       throw new Error('adapter is not patched');
     }
     return this.dataAdapter.fetchBinaryForBridge(vaultPath);
+  }
+
+  /**
+   * Show the pending-edits listing modal. Discarding clears the
+   * queue (destructive — there's no undo). The listing is a snapshot
+   * taken at modal-open time; if the queue mutates while the modal
+   * is open the user just sees the next snapshot on their next
+   * click.
+   */
+  private async showPendingEditsModal(): Promise<void> {
+    if (!this.offlineQueue) return;
+    const entries = this.offlineQueue.pending();
+    if (entries.length === 0) return;
+    const decision = await new PendingEditsModal(this.app, entries).prompt();
+    if (decision.decision === 'discard-all') {
+      const dropped = entries.length;
+      try {
+        await this.offlineQueue.clear();
+        new Notice(`Remote SSH: discarded ${dropped} pending edit${dropped === 1 ? '' : 's'}`);
+      } catch (e) {
+        logger.warn(`PendingEditsModal: queue.clear() failed: ${(e as Error).message}`);
+        new Notice('Remote SSH: failed to clear the offline queue (see console.log)');
+      }
+    }
   }
 
   /**
