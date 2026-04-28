@@ -351,69 +351,28 @@ describe('ShadowVaultBootstrap.bootstrap', () => {
     expect(shadowList).toEqual(['templater-obsidian', 'remote-ssh']);
   });
 
-  it('seeds third-party plugin dirs from source on first bootstrap', async () => {
-    // Stage source vault with two extra plugins.
+  it('does NOT copy source plugin binaries (third-party plugins are downloaded by PluginMarketplaceInstaller at shadow window startup)', async () => {
+    // Stage source with a plugin binary; bootstrap should NOT copy it
+    // to shadow — the marketplace installer in main.ts is the only
+    // path that materialises non-remote-ssh plugin code now.
     fs.writeFileSync(
       path.join(scratch.sourceConfigDir, 'community-plugins.json'),
       JSON.stringify(['dataview', 'remote-ssh']),
     );
     const sourceDataviewDir = path.join(scratch.sourceConfigDir, 'plugins', 'dataview');
     fs.mkdirSync(sourceDataviewDir, { recursive: true });
-    fs.writeFileSync(path.join(sourceDataviewDir, 'main.js'), '// dataview bundle');
-    fs.writeFileSync(path.join(sourceDataviewDir, 'data.json'), JSON.stringify({ pref: 'value' }));
+    fs.writeFileSync(path.join(sourceDataviewDir, 'main.js'), '// source-side dataview bundle');
 
     const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
     const profile = makeProfile({ id: 'p1' });
     const result = await r.bootstrap(profile, [profile]);
 
-    const shadowDataviewDir = path.join(result.layout.configDir, 'plugins', 'dataview');
-    expect(fs.existsSync(shadowDataviewDir)).toBe(true);
-    expect(fs.readFileSync(path.join(shadowDataviewDir, 'main.js'), 'utf-8')).toBe('// dataview bundle');
-    // Per-plugin data.json copied so the shadow starts with the
-    // user's preferences; subsequent shadow-side writes don't bleed
-    // back to source because the file is a real copy, not a link.
-    expect(JSON.parse(fs.readFileSync(path.join(shadowDataviewDir, 'data.json'), 'utf-8'))).toEqual({ pref: 'value' });
-  });
-
-  it('does not overwrite existing shadow plugin dirs on re-bootstrap', async () => {
-    fs.writeFileSync(
-      path.join(scratch.sourceConfigDir, 'community-plugins.json'),
-      JSON.stringify(['dataview', 'remote-ssh']),
-    );
-    const sourceDataviewDir = path.join(scratch.sourceConfigDir, 'plugins', 'dataview');
-    fs.mkdirSync(sourceDataviewDir, { recursive: true });
-    fs.writeFileSync(path.join(sourceDataviewDir, 'data.json'), JSON.stringify({ from: 'source' }));
-
-    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
-    const profile = makeProfile({ id: 'p1' });
-    const first = await r.bootstrap(profile, [profile]);
-    const shadowDataviewData = path.join(first.layout.configDir, 'plugins', 'dataview', 'data.json');
-
-    // Simulate the user changing dataview's settings inside the shadow.
-    fs.writeFileSync(shadowDataviewData, JSON.stringify({ from: 'shadow' }));
-
-    await r.bootstrap(profile, [profile]);
-    expect(JSON.parse(fs.readFileSync(shadowDataviewData, 'utf-8'))).toEqual({ from: 'shadow' });
-  });
-
-  it('skips plugins listed in community-plugins.json whose source dir is missing', async () => {
-    // List references a plugin we haven't staged at source.
-    fs.writeFileSync(
-      path.join(scratch.sourceConfigDir, 'community-plugins.json'),
-      JSON.stringify(['ghost-plugin', 'remote-ssh']),
-    );
-    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
-    const profile = makeProfile({ id: 'p1' });
-    const result = await r.bootstrap(profile, [profile]);
-
-    // List was still seeded (Obsidian will skip the missing plugin
-    // gracefully on its side); but no shadow dir got created for it.
-    const shadowList = JSON.parse(fs.readFileSync(
-      path.join(result.layout.configDir, 'community-plugins.json'),
-      'utf-8',
-    ));
-    expect(shadowList).toContain('ghost-plugin');
-    expect(fs.existsSync(path.join(result.layout.configDir, 'plugins', 'ghost-plugin'))).toBe(false);
+    // List is still seeded so the installer knows what to download,
+    // but the binary itself is absent from shadow until the
+    // marketplace installer runs in the shadow window.
+    expect(fs.existsSync(path.join(result.layout.configDir, 'plugins', 'dataview'))).toBe(false);
+    // remote-ssh itself IS installed (per-file symlink, separate path).
+    expect(fs.existsSync(result.layout.pluginDir)).toBe(true);
   });
 
   it('refreshes plugin install on bootstrap so plugin updates land immediately', async () => {

@@ -1,4 +1,4 @@
-import { Plugin, Notice, FileSystemAdapter, TFile, TFolder } from 'obsidian';
+import { Plugin, Notice, FileSystemAdapter, TFile, TFolder, requestUrl } from 'obsidian';
 import type { PluginSettings, SshProfile } from './types';
 import { SyncState } from './types';
 import { DEFAULT_SETTINGS } from './constants';
@@ -32,6 +32,7 @@ import { ObsidianRegistry } from './shadow/ObsidianRegistry';
 import { ShadowVaultBootstrap } from './shadow/ShadowVaultBootstrap';
 import { ShadowVaultManager } from './shadow/ShadowVaultManager';
 import { WindowSpawner } from './shadow/WindowSpawner';
+import { PluginMarketplaceInstaller, type PluginsApi } from './shadow/PluginMarketplaceInstaller';
 import * as os from 'os';
 import { installErrorHook, uninstallErrorHook } from './util/errorHook';
 import { normalizeRemotePath } from './util/pathUtils';
@@ -175,16 +176,90 @@ export default class RemoteSshPlugin extends Plugin {
       },
     });
 
-    // Phase 4: if this vault was opened with an autoConnectProfileId
-    // marker (= a shadow vault from `ShadowVaultBootstrap`), connect
-    // to that profile automatically as soon as the workspace is
-    // ready, then populate the file model from the remote tree. Done
-    // inside `onLayoutReady` so we wait for Obsidian's own vault
-    // initialization to finish before patching the adapter.
+    // Phase 4 + 6C-prep: if this vault was opened with an
+    // autoConnectProfileId marker (= a shadow vault from
+    // `ShadowVaultBootstrap`):
+    //   1. install any plugins listed in community-plugins.json that
+    //      aren't yet on disk (marketplace download via
+    //      `app.plugins.installPlugin`),
+    //   2. then connect to the remote and populate the file model.
+    // Done inside `onLayoutReady` so we wait for Obsidian's own
+    // vault initialization to finish before touching plugins or the
+    // adapter.
     this.app.workspace.onLayoutReady(() => {
       if (!this.settings.autoConnectProfileId) return;
-      void this.runAutoConnect('layout-ready');
+      void this.runShadowStartup();
     });
+  }
+
+  /**
+   * Shadow window startup orchestration: marketplace-install missing
+   * plugins, then auto-connect. Split from `runAutoConnect` so the
+   * Reconnect command can re-run just the connect half without
+   * re-fetching the master plugin list every time.
+   */
+  private async runShadowStartup(): Promise<void> {
+    await this.installMissingShadowPlugins();
+    await this.runAutoConnect('layout-ready');
+  }
+
+  /**
+   * Read this shadow vault's community-plugins.json, find ids whose
+   * binaries aren't yet installed, and download them from Obsidian's
+   * community marketplace. Idempotent: if everything is already
+   * installed, returns immediately. Failures are reported via Notice
+   * but don't block the subsequent auto-connect.
+   */
+  private async installMissingShadowPlugins(): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) {
+      logger.warn('installMissingShadowPlugins: vault is not FileSystemAdapter-backed; skipping');
+      return;
+    }
+    const cpPath = path.join(adapter.getBasePath(), '.obsidian', 'community-plugins.json');
+    if (!fs.existsSync(cpPath)) return;
+    let wantedIds: string[];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(cpPath, 'utf-8'));
+      if (!Array.isArray(parsed)) return;
+      wantedIds = parsed.filter((s): s is string => typeof s === 'string');
+    } catch (e) {
+      logger.warn(`installMissingShadowPlugins: failed to parse ${cpPath}: ${(e as Error).message}`);
+      return;
+    }
+
+    const installer = new PluginMarketplaceInstaller({
+      // `requestUrl` is Obsidian's own cross-origin-friendly fetch.
+      // Plain `fetch` to raw.githubusercontent.com is blocked by
+      // Electron's renderer CORS in some Obsidian versions.
+      fetchText: async (url) => {
+        const resp = await requestUrl({ url });
+        return resp.text;
+      },
+      // `app.plugins` is internal Obsidian state — not in the public
+      // typings — but its `installPlugin` / `enablePluginAndSave`
+      // surface has been stable across recent versions and is what
+      // the community plugin browser modal calls.
+      pluginApi: (this.app as unknown as { plugins: PluginsApi }).plugins,
+    });
+
+    const report = await installer.installMissing(wantedIds);
+    const summary =
+      `installMissingShadowPlugins: installed=${report.installed.length} ` +
+      `(${report.installed.join(', ')}), skipped=${report.skipped.length}, ` +
+      `failed=${report.failed.length}`;
+    logger.info(summary);
+    if (report.installed.length > 0) {
+      new Notice(
+        `Remote SSH: installed ${report.installed.length} plugin` +
+        `${report.installed.length === 1 ? '' : 's'} from marketplace`,
+      );
+    }
+    if (report.failed.length > 0) {
+      logger.warn(
+        `installMissingShadowPlugins: failures: ${JSON.stringify(report.failed, null, 2)}`,
+      );
+    }
   }
 
   async onunload() {
