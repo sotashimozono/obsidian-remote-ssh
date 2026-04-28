@@ -15,6 +15,7 @@ import { WriteConflictModal } from './ui/WriteConflictModal';
 import { ThreeWayMergeModal } from './ui/ThreeWayMergeModal';
 import { AncestorTracker } from './conflict/AncestorTracker';
 import { OfflineQueue } from './offline/OfflineQueue';
+import { QueueReplayer } from './offline/QueueReplayer';
 import { SftpRemoteFsClient } from './adapter/SftpRemoteFsClient';
 import { RpcRemoteFsClient } from './adapter/RpcRemoteFsClient';
 import { establishRpcConnection } from './transport/RpcConnection';
@@ -514,6 +515,11 @@ export default class RemoteSshPlugin extends Plugin {
     new Notice(
       `Remote SSH: Connected to ${profile.name} as ${userLabel} via ${transport.toUpperCase()}${rpcSummary}`,
     );
+
+    // Drain any writes left over from a previous Electron session
+    // that disconnected before its replay finished. Fire-and-forget
+    // for the same reason as the post-reconnect drain.
+    void this.replayOfflineQueue('after-connect');
   }
 
   /**
@@ -781,6 +787,11 @@ export default class RemoteSshPlugin extends Plugin {
       this.setState(SyncState.CONNECTED);
       new Notice('Remote SSH: Reconnected');
       this.reconnectManager = null;
+      // Drain any writes that landed during the disconnect. Fire-and-
+      // forget: the user's already-back state is independent of the
+      // replay outcome, and individual op failures stay in the queue
+      // for the next reconnect.
+      void this.replayOfflineQueue('after-reconnect');
     } else if (s.kind === 'failed') {
       // Give up: tear the patched adapter down so Obsidian falls
       // back to local file:// reads instead of blocking forever on a
@@ -1329,6 +1340,44 @@ export default class RemoteSshPlugin extends Plugin {
       throw new Error('adapter is not patched');
     }
     return this.dataAdapter.fetchBinaryForBridge(vaultPath);
+  }
+
+  /**
+   * Drive the offline write queue against the live adapter. Called
+   * on every connect (initial and post-reconnect). Idempotent: if
+   * the queue is empty the run is a no-op; if entries error mid-
+   * drain the rest stay queued for the next reconnect.
+   */
+  private async replayOfflineQueue(label: 'after-connect' | 'after-reconnect'): Promise<void> {
+    if (!this.offlineQueue || !this.dataAdapter) return;
+    const pendingBefore = this.offlineQueue.pending().length;
+    if (pendingBefore === 0) return;
+    logger.info(`replayOfflineQueue(${label}): ${pendingBefore} pending entries`);
+    try {
+      const replayer = new QueueReplayer(this.offlineQueue, this.dataAdapter);
+      const report = await replayer.run();
+      const stillPending = this.offlineQueue.pending().length;
+      const summary =
+        `replayOfflineQueue(${label}) done: drained=${report.drained}, ` +
+        `conflicts=${report.conflicts}, errors=${report.errors.length}, ` +
+        `remaining=${stillPending}`;
+      logger.info(summary);
+      if (report.drained > 0) {
+        new Notice(
+          `Remote SSH: replayed ${report.drained} offline edit` +
+          `${report.drained === 1 ? '' : 's'}` +
+          (stillPending > 0 ? ` (${stillPending} pending)` : ''),
+        );
+      }
+      if (report.errors.length > 0) {
+        new Notice(
+          `Remote SSH: ${report.errors.length} offline edit` +
+          `${report.errors.length === 1 ? '' : 's'} failed to replay; will retry on next connect`,
+        );
+      }
+    } catch (e) {
+      logger.warn(`replayOfflineQueue(${label}) crashed: ${(e as Error).message}`);
+    }
   }
 
   /**
