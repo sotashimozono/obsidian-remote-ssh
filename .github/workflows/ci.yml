@@ -104,8 +104,20 @@ jobs:
       - name: Bundle size guard (< 600 KB)
         # Use Node for stat so the script works identically on
         # ubuntu/macos/windows (GNU `stat -c%s` and BSD `stat -f%z`
-        # diverge; PowerShell's `Get-Item` is a third dialect).
-        run: node -e "const fs=require('fs');const s=fs.statSync('main.js').size;const kb=Math.round(s/1024);console.log('Bundle: '+kb+' KB');if(s>614400){console.error('::error::Bundle '+kb+' KB exceeds 600 KB limit — check for unwanted large deps');process.exit(1);}"
+        # diverge; PowerShell's `Get-Item` is a third dialect). Inline
+        # `node -e` argument lives in a block scalar so colons inside
+        # the printed strings don't confuse the YAML parser.
+        shell: bash
+        run: |
+          node -e '
+          const fs = require("fs");
+          const size = fs.statSync("main.js").size;
+          const kb = Math.round(size / 1024);
+          console.log("Bundle: " + kb + " KB");
+          if (size > 614400) {
+            console.error("::error::Bundle " + kb + " KB exceeds 600 KB limit — check for unwanted large deps");
+            process.exit(1);
+          }'
       - name: Upload build artifact
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v7
