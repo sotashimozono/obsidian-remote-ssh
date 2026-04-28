@@ -66,6 +66,9 @@ export async function deployTestDaemon(opts?: {
   const ssh      = new SftpClient(auth, hostKeys);
   await ssh.connect(buildTestProfile(opts?.label ?? 'daemon'));
 
+  // Hold the deployer instance, NOT just the result — `ServerDeployer.stop`
+  // needs the kill pattern + remote paths it stored on `deploy()`. A fresh
+  // instance would have null `deployedState` and silently no-op.
   const deployer = new ServerDeployer(ssh);
   const result   = await deployer.deploy({
     localBinaryPath: LOCAL_DAEMON_BINARY,
@@ -75,14 +78,16 @@ export async function deployTestDaemon(opts?: {
     // — same as production, so the path conventions stay exercised.
   });
 
+  let stopped = false;
   return {
     result,
     ssh,
     async teardown() {
-      try {
-        const stopper = new ServerDeployer(ssh);
-        await stopper.stop();
-      } catch { /* best effort — daemon may already be down */ }
+      if (!stopped) {
+        try { await deployer.stop(); }
+        catch { /* best effort — daemon may already be down */ }
+        stopped = true;
+      }
       try { await ssh.disconnect(); } catch { /* best effort */ }
     },
   };
