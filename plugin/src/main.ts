@@ -12,6 +12,8 @@ import { SftpDataAdapter } from './adapter/SftpDataAdapter';
 import { AdapterPatcher } from './adapter/AdapterPatcher';
 import { ResourceBridge } from './adapter/ResourceBridge';
 import { WriteConflictModal } from './ui/WriteConflictModal';
+import { ThreeWayMergeModal } from './ui/ThreeWayMergeModal';
+import { AncestorTracker } from './conflict/AncestorTracker';
 import { SftpRemoteFsClient } from './adapter/SftpRemoteFsClient';
 import { RpcRemoteFsClient } from './adapter/RpcRemoteFsClient';
 import { establishRpcConnection } from './transport/RpcConnection';
@@ -66,6 +68,8 @@ export default class RemoteSshPlugin extends Plugin {
   private dataAdapter: SftpDataAdapter | null = null;
   private readCache: ReadCache | null = null;
   private dirCache: DirCache | null = null;
+  /** Per-session ancestor snapshot store wired into the patched adapter (E2-α). */
+  private ancestorTracker: AncestorTracker | null = null;
   private activeRemoteBasePath: string | null = null;
   /** Authenticated daemon session, populated when the active profile uses transport='rpc'. */
   private rpcConnection: Awaited<ReturnType<typeof establishRpcConnection>> | null = null;
@@ -902,6 +906,9 @@ export default class RemoteSshPlugin extends Plugin {
     // The SFTP transport has no such root-knowing server; it does need
     // the prefix to anchor calls at the vault.
     const adapterRemoteBase = this.rpcConnection ? '' : this.activeRemoteBasePath;
+    // Per-session ancestor snapshot store. Powers the 3-way merge UI;
+    // cleared on disconnect with the rest of the patched-adapter state.
+    this.ancestorTracker = new AncestorTracker();
     this.dataAdapter = new SftpDataAdapter(
       fsClient,
       adapterRemoteBase,
@@ -910,10 +917,15 @@ export default class RemoteSshPlugin extends Plugin {
       this.app.vault.getName(),
       mapper,
       this.resourceBridge,
-      // On a precondition-failed write, surface a modal asking
-      // whether to clobber the remote. Only meaningful on the RPC
-      // transport (the SFTP wrapper ignores expectedMtime).
+      // Binary fallback: a precondition-failed binary write (or a text
+      // write without an ancestor) surfaces the 2-choice modal —
+      // overwrite the remote or cancel.
       (vaultPath) => new WriteConflictModal(this.app, vaultPath).prompt(),
+      this.ancestorTracker,
+      // Text 3-way: when an ancestor exists for the conflicting text
+      // path, route here so the modal can show all three panes
+      // (ancestor / mine / theirs) and let the user pick or hand-merge.
+      (vaultPath, panes) => new ThreeWayMergeModal(this.app, { path: vaultPath, ...panes }).prompt(),
     );
     this.patcher = new AdapterPatcher(targetAdapter, this.dataAdapter);
     try {
@@ -1266,6 +1278,8 @@ export default class RemoteSshPlugin extends Plugin {
     this.dataAdapter = null;
     this.readCache = null;
     this.dirCache = null;
+    this.ancestorTracker?.clear();
+    this.ancestorTracker = null;
     // Bridge tears down asynchronously; we don't await here because
     // restoreAdapter must remain sync for the connection-close hook.
     void this.stopResourceBridge();
