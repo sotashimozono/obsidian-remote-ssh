@@ -37,10 +37,18 @@ jobs:
             echo "No ESLint config found — skipping"
           fi
 
-  # ─── Unit tests + coverage ───────────────────────────────────────────────────
+  # ─── Unit tests (matrix: ubuntu / macos / windows) ───────────────────────────
+  # Phase B1 — catches OS-specific regressions: path separators, line
+  # endings, fs.symlink fallback (Windows w/o developer mode), os.hostname()
+  # quirks. Coverage is only uploaded from ubuntu — uploading the same
+  # report 3× would just thrash Codecov's dedup.
   test:
-    name: Test & coverage
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     defaults:
       run:
         working-directory: plugin
@@ -52,9 +60,10 @@ jobs:
           cache: npm
           cache-dependency-path: plugin/package-lock.json
       - run: npm ci
-      - name: Run tests with coverage
-        run: node node_modules/vitest/vitest.mjs run --coverage
+      - name: Run tests${{ matrix.os == 'ubuntu-latest' && ' with coverage' || '' }}
+        run: node node_modules/vitest/vitest.mjs run${{ matrix.os == 'ubuntu-latest' && ' --coverage' || '' }}
       - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v6
         with:
           files: plugin/coverage/lcov.info
@@ -62,10 +71,17 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
-  # ─── Production build + bundle size guard ────────────────────────────────────
+  # ─── Production build + bundle size guard (matrix) ───────────────────────────
+  # Build runs on every OS — cheap, catches esbuild platform issues. The
+  # bundle artifact is uploaded only from ubuntu (per-OS uploads would
+  # collide on the same artifact name).
   build:
-    name: Build
-    runs-on: ubuntu-latest
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     defaults:
       run:
         working-directory: plugin
@@ -80,15 +96,12 @@ jobs:
       - name: Production build
         run: node esbuild.config.mjs production
       - name: Bundle size guard (< 600 KB)
-        run: |
-          SIZE=$(stat -c%s main.js)
-          KB=$(( SIZE / 1024 ))
-          echo "Bundle: ${KB} KB"
-          if [ $SIZE -gt 614400 ]; then
-            echo "::error::Bundle ${KB} KB exceeds 600 KB limit — check for unwanted large deps"
-            exit 1
-          fi
+        # Use Node for stat so the script works identically on
+        # ubuntu/macos/windows (GNU `stat -c%s` and BSD `stat -f%z`
+        # diverge; PowerShell's `Get-Item` is a third dialect).
+        run: node -e "const fs=require('fs');const s=fs.statSync('main.js').size;const kb=Math.round(s/1024);console.log('Bundle: '+kb+' KB');if(s>614400){console.error('::error::Bundle '+kb+' KB exceeds 600 KB limit — check for unwanted large deps');process.exit(1);}"
       - name: Upload build artifact
+        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v7
         with:
           name: plugin-build
