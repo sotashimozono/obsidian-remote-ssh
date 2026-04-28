@@ -133,6 +133,34 @@ type CopyParams struct {
 	DestPath string `json:"destPath"`
 }
 
+// WalkParams are the inputs to fs.walk — a single-RPC alternative to
+// recursively calling fs.list. `MaxEntries` caps the response size so
+// pathological vaults don't OOM the client; the daemon halts and sets
+// `Truncated: true` so the caller can fall back to per-folder listing.
+type WalkParams struct {
+	Path       string `json:"path"`
+	Recursive  bool   `json:"recursive,omitempty"`
+	MaxEntries int    `json:"maxEntries,omitempty"`
+}
+
+// WalkEntry is one row in fs.walk's flat output. Unlike fs.list's
+// Entry, the path is vault-relative (not just a basename) so callers
+// don't have to reconstruct it from the request path + entry name.
+type WalkEntry struct {
+	Path  string    `json:"path"`
+	Type  EntryType `json:"type"`
+	Mtime int64     `json:"mtime"`
+	Size  int64     `json:"size"`
+}
+
+// WalkResult is fs.walk's response. `Truncated` is set when the daemon
+// stopped early because `MaxEntries` was reached; the entries already
+// returned are still authoritative.
+type WalkResult struct {
+	Entries   []WalkEntry `json:"entries"`
+	Truncated bool        `json:"truncated"`
+}
+
 type WatchParams struct {
 	Path      string `json:"path"`
 	Recursive bool   `json:"recursive,omitempty"`
