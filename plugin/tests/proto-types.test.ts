@@ -8,6 +8,7 @@ import {
   type JsonRpcNotification,
   type Params,
   type Result,
+  type RpcMeta,
 } from '../src/proto/types';
 
 /**
@@ -69,5 +70,35 @@ describe('proto types', () => {
     expect(statMissing).toBeNull();
     expect(err.error.code).toBe(ErrorCode.FileNotFound);
     expect(note.params.event).toBe('modified');
+  });
+
+  it('accepts an optional meta.cid on requests and notifications (cross-process latency correlation)', () => {
+    const meta: RpcMeta = { cid: 'feedfacedeadbeef' };
+
+    const reqWithMeta: JsonRpcRequest<'fs.write'> = {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'fs.write',
+      params: { path: 'note.md', content: 'hi' },
+      meta,
+    };
+    const reqWithoutMeta: JsonRpcRequest<'fs.write'> = {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'fs.write',
+      params: { path: 'note.md', content: 'hi' },
+    };
+    const noteWithMeta: JsonRpcNotification<'fs.changed'> = {
+      jsonrpc: '2.0',
+      method: 'fs.changed',
+      params: { subscriptionId: 's', path: 'note.md', event: 'modified' },
+      meta,
+    };
+
+    // Compile-time checks pass; mirror the wire-shape contract at runtime
+    // so a stray rename doesn't silently break it.
+    expect(JSON.parse(JSON.stringify(reqWithMeta)).meta).toEqual({ cid: 'feedfacedeadbeef' });
+    expect('meta' in JSON.parse(JSON.stringify(reqWithoutMeta))).toBe(false);
+    expect(JSON.parse(JSON.stringify(noteWithMeta)).meta).toEqual({ cid: 'feedfacedeadbeef' });
   });
 });

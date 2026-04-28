@@ -105,6 +105,44 @@ func TestDispatcher_NullResultIsEncodedAsNull(t *testing.T) {
 	}
 }
 
+func TestDispatcher_AttachesMetaToContext(t *testing.T) {
+	d := NewDispatcher()
+	var captured *proto.Meta
+	var hadMeta bool
+	d.Handle("inspect", func(ctx context.Context, _ json.RawMessage) (interface{}, *Error) {
+		captured, hadMeta = MetaFromContext(ctx)
+		return nil, nil
+	})
+
+	reply := d.Process(context.Background(), []byte(
+		`{"jsonrpc":"2.0","id":1,"method":"inspect","meta":{"cid":"feedfacedeadbeef"}}`,
+	))
+	if reply == nil {
+		t.Fatal("non-notification produced no reply")
+	}
+	if !hadMeta {
+		t.Fatal("MetaFromContext returned ok=false; ctx was not enriched")
+	}
+	if captured == nil || captured.Cid != "feedfacedeadbeef" {
+		t.Errorf("captured meta cid = %+v, want feedfacedeadbeef", captured)
+	}
+}
+
+func TestDispatcher_AbsentMetaIsNotAttached(t *testing.T) {
+	d := NewDispatcher()
+	var captured *proto.Meta
+	var hadMeta bool
+	d.Handle("inspect", func(ctx context.Context, _ json.RawMessage) (interface{}, *Error) {
+		captured, hadMeta = MetaFromContext(ctx)
+		return nil, nil
+	})
+
+	d.Process(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"inspect"}`))
+	if hadMeta {
+		t.Errorf("MetaFromContext should be absent when wire payload has no meta; got %+v", captured)
+	}
+}
+
 func TestDispatcher_Methods(t *testing.T) {
 	d := NewDispatcher()
 	d.Handle("a", func(context.Context, json.RawMessage) (interface{}, *Error) { return nil, nil })

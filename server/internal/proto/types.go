@@ -229,12 +229,29 @@ type FsChangedParams struct {
 // JSONRPCVersion is the fixed protocol label on every envelope.
 const JSONRPCVersion = "2.0"
 
+// Meta is optional out-of-band metadata attached to any RPC envelope.
+//
+// Cid is a 16-char hex correlation id minted on the writer side
+// (typically by the plugin's PerfTracer); the daemon echoes it on the
+// fs.changed notification triggered by that write so end-to-end
+// latency spans can be reconstructed across processes. The field is
+// strictly additive: older clients that don't send it stay valid, and
+// older daemons that don't read it (omitempty keeps it off the wire
+// when unset, json.Unmarshal skips it on receive) stay valid too.
+type Meta struct {
+	Cid string `json:"cid,omitempty"`
+}
+
 // Request is a client-to-server call.
 type Request struct {
 	JSONRPC string          `json:"jsonrpc"` // always JSONRPCVersion
 	ID      json.RawMessage `json:"id"`      // number or string (raw so we echo it faithfully)
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params"`
+	// Meta carries optional cross-process correlation. nil when absent
+	// on the wire; handlers retrieve it from the request context via
+	// rpc.MetaFromContext rather than reading the field directly.
+	Meta *Meta `json:"meta,omitempty"`
 }
 
 // Success is a server-to-client successful response.
@@ -264,6 +281,11 @@ type Notification struct {
 	JSONRPC string          `json:"jsonrpc"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params"`
+	// Meta mirrors Request.Meta on the server-push direction. The
+	// daemon attaches it (e.g. the cid from the originating write) so
+	// the client can stitch this notification back to a writer-side
+	// span. Optional; older receivers ignore it.
+	Meta *Meta `json:"meta,omitempty"`
 }
 
 // ─── error codes ────────────────────────────────────────────────────────────

@@ -80,6 +80,11 @@ func (d *Dispatcher) Process(ctx context.Context, body []byte) []byte {
 		return encodeError(req.ID, ErrMethodMissing(req.Method))
 	}
 
+	// Thread per-request metadata (cid for cross-process latency
+	// correlation) into ctx so handlers can opt in via MetaFromContext
+	// without any signature changes. ContextWithMeta is a no-op when
+	// req.Meta is nil — the common path stays free of allocation.
+	ctx = ContextWithMeta(ctx, req.Meta)
 	result, rpcErr := safeCall(ctx, h, req.Params)
 	if isNotification {
 		// Client asked for no reply; drop whatever the handler returned.
