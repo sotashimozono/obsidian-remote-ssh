@@ -48,6 +48,7 @@ export type MethodName =
   | 'fs.stat'
   | 'fs.exists'
   | 'fs.list'
+  | 'fs.walk'
   | 'fs.readText'
   | 'fs.readBinary'
   | 'fs.write'
@@ -70,6 +71,7 @@ export interface MethodMap {
   'fs.stat':         { params: PathOnlyParams;        result: Stat | null };
   'fs.exists':       { params: PathOnlyParams;        result: ExistsResult };
   'fs.list':         { params: PathOnlyParams;        result: ListResult };
+  'fs.walk':         { params: WalkParams;            result: WalkResult };
 
   'fs.readText':     { params: ReadTextParams;        result: ReadTextResult };
   'fs.readBinary':   { params: PathOnlyParams;        result: ReadBinaryResult };
@@ -101,6 +103,30 @@ export interface AuthResult { ok: true }
 export interface PathOnlyParams { path: string }
 export interface ExistsResult { exists: boolean }
 export interface ListResult { entries: Entry[] }
+
+/**
+ * fs.walk — single-RPC alternative to recursively calling fs.list.
+ * `maxEntries` caps the response size; the daemon returns
+ * `truncated: true` when the budget is exhausted so the caller can
+ * fall back to per-folder listing without truncation lying about
+ * tree shape.
+ */
+export interface WalkParams {
+  path: string;
+  recursive?: boolean;
+  maxEntries?: number;
+}
+export interface WalkEntry {
+  /** Vault-relative (forward slashes), unlike `Entry.name` which is a basename. */
+  path: string;
+  type: 'file' | 'folder' | 'symlink';
+  mtime: number;
+  size: number;
+}
+export interface WalkResult {
+  entries: WalkEntry[];
+  truncated: boolean;
+}
 
 export interface ReadTextParams { path: string; encoding?: 'utf8' }
 export interface ReadTextResult { content: string; mtime: number; size: number; encoding: 'utf8' }
