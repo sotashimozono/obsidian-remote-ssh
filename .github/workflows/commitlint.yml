@@ -1,0 +1,56 @@
+name: Commitlint
+
+# Phase D-α — enforce Conventional Commits on every PR.
+#
+# All PRs in this repo already follow the format
+# (`type(scope): subject`) by hand convention; this workflow turns
+# that convention into a hard gate so a slip-up doesn't sneak past
+# review. Lint runs against every commit in the PR, NOT just the
+# squash-merge title — so a typo in commit #3 of a 5-commit PR
+# fails fast.
+#
+# Why on PRs only (not on push to main): main is squash-merged from
+# PRs whose commits already passed; running on every push to main
+# would be redundant and would re-fire on the merge commit which
+# has its own (also Conventional) format.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: commitlint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  lint:
+    name: Lint commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Need full history so commitlint can walk the PR's
+          # commit range (base..head). Fetch-depth: 0 is overkill
+          # but cheap on a 200-commit repo and won't bite us when
+          # PRs grow longer.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Install commitlint
+        run: |
+          npm install --no-save --no-audit --no-fund \
+            @commitlint/cli@^20 \
+            @commitlint/config-conventional@^20
+
+      - name: Lint PR commit range
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npx commitlint --from "$BASE_SHA" --to "$HEAD_SHA" --verbose

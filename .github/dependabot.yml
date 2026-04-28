@@ -49,3 +49,35 @@ updates:
     labels:
       - dependencies
       - go
+
+  # Docker base images — turn-key sshd container users deploy on
+  # the remote (Phase D-α addition; covers alpine + openssh-server
+  # CVE bumps). Kept weekly because base-image bumps are individually
+  # noteworthy: a Dockerfile change ships to anyone running the
+  # turn-key compose stack.
+  - package-ecosystem: docker
+    directory: /deploy/docker
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - build
+
+  # Test sshd container (Phase D-α addition). Ephemeral — used by
+  # `npm run test:integration` only — but a stale Dockerfile still
+  # eats CI minutes during integration build, so keep it current.
+  - package-ecosystem: docker
+    directory: /docker/test-sshd
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - ci
