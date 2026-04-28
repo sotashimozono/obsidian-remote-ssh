@@ -1,6 +1,6 @@
 # Architecture: Shadow Vault Approach
 
-**Status:** Design — not yet implemented
+**Status:** Phases 0–6A shipped end-to-end (v0.4.14). Phase 6B (this docs polish) in flight; Phase 6C (plugin compatibility re-verification) pending.
 **Decided:** 2026-04-27
 **Supersedes:** the monkey-patch-and-reconcile approach used through v0.4.3
 
@@ -99,19 +99,23 @@ Red = open question / unverified mechanism (see §4).
 
 | Module | Status | Responsibility |
 |---|---|---|
-| `ShadowVaultBootstrap` | **new** | Materialise `~/.obsidian-remote/vaults/<profile-id>/` for a profile: ensure `.obsidian/`, install plugin (symlink on \*nix, copy on Windows), write `data.json` with the profile config and `autoConnectProfileId` marker. |
-| `ShadowVaultManager` | **new** | High-level: given a profile, decide whether shadow vault already exists, bootstrap if not, then ask `WindowSpawner` to open it. |
-| `WindowSpawner` | **new** | Wrap whatever Obsidian/Electron API actually opens a vault in a new window (see OQ1). Falls back to a modal that says "Click 'Open vault' and pick this folder" with the path pre-copied to clipboard if no programmatic path exists. |
-| `VaultModelBuilder` | **new** | Inside the shadow window, after connect: walk the remote tree via `RpcRemoteFsClient.list()`, construct `TFile`/`TFolder` objects (or quack-typed equivalents — see OQ2), insert into `vault.fileMap` and the appropriate parent's `children` array, fire `vault.trigger('create', file)` per insert. |
+| `ShadowVaultBootstrap` | shipped (PR #64, MERGE strategy in #65 + #67) | Materialise `~/.obsidian-remote/vaults/<profile-id>/` for a profile: ensure `.obsidian/`, install plugin (per-file symlink chain — see OQ4), write `data.json` with the profile config and `autoConnectProfileId` marker. |
+| `ShadowVaultManager` | shipped (PR #64) | High-level: given a profile, decide whether shadow vault already exists, bootstrap if not, then ask `WindowSpawner` to open it. |
+| `WindowSpawner` | shipped (PR #64) | Fires `obsidian://open?path=<vaultPath>` via `window.open`. Obsidian's URL handler accepts the path because `ObsidianRegistry` registered it (see OQ1). |
+| `ObsidianRegistry` | shipped (PR #64) | Reads/atomically rewrites `obsidian.json` (Obsidian's per-user vault list). Idempotent register; preserves unknown top-level keys; per-OS resolution via `os.homedir()` / env vars. |
+| `VaultModelBuilder` | shipped (PR #61, fixes #62/#63/#68; mutators in #70) | The single source of truth for vault-model writes. `build(entries)` for the bulk initial fill on connect; `insertOne` / `removeOne` / `modifyOne` / `renameOne` for incremental fs.watch-driven updates. Constructs `TFile` / `TFolder` via injected constructors (see OQ2). |
 | `RpcRemoteFsClient` | unchanged | Existing α (Go daemon) RPC transport. |
 | `SftpRemoteFsClient` | unchanged | Existing direct-SFTP fallback. |
 | `ServerDeployer` | unchanged | Auto-deploys the daemon (0.4.2 absolute paths + 0.4.3 suffix-pkill fixes both apply). |
 | `ResourceBridge` | unchanged | localhost HTTP server for binaries, with Range support. |
 | `ReconnectManager` | unchanged | Exp-backoff reconnect; runs inside the shadow window the same way. |
 | `JumpHostTunnel`, `AuthResolver`, `HostKeyStore` | unchanged | All transport-layer, profile-driven. |
-| `reconcileVaultRoot` (main.ts) | **delete** | Replaced by `VaultModelBuilder`. |
-| `autoPatchAdapter` flow (Tier 1-A, PR #46) | **delete** | The shadow window patches its own adapter at onload; there's no "auto-patch on first connect" anymore — the shadow window IS the connect. |
-| `debugDumpVaultAdapterAPI` (PR #54) | **delete** after pivot | Diagnostic served its purpose during the v0.4.x smoke. |
+| `reconcileVaultRoot` (main.ts) | **deleted** (PR #69) | Replaced by `VaultModelBuilder.build`. |
+| `reconcileVaultPath` + `lookupIsFolder` + `ReconcileCapableAdapter` (main.ts) | **deleted** (PR #70) | Replaced by `VaultModelBuilder.{insertOne,removeOne,modifyOne,renameOne}`; killed the last live caller of the broken Obsidian private API. |
+| `autoPatchAdapter` setting + flow (Tier 1-A, PR #46) | **deleted** (PR #69) | The shadow window patches its own adapter at onload; there's no "auto-patch on first connect" anymore — the shadow window IS the connect. |
+| `debugDumpVaultAdapterAPI` + `debug-dump-api` command (PR #54) | **deleted** (PR #69) | Diagnostic served its purpose during the v0.4.x smoke. |
+| `debugBuildVaultFromRemote` + `debug-build-vault-from-remote` command (Phase 1 POC) | **deleted** (PR #69) | Replaced by the always-on auto-connect path inside the shadow window. |
+| `debugOpenShadowVault` + `debug-open-shadow-vault` command (Phase 2 POC) | **deleted** (PR #69) | Replaced by the Settings UI Connect button. |
 
 ## 4. Open questions
 
@@ -124,21 +128,36 @@ Each has a concrete way to verify.
 "click Open Vault, pick this folder", which hurts the
 remote-SSH-feels-magical effect.
 
-**Verify:** In devtools, probe each candidate:
+**Status (2026-04-27):** ✅ **Answered.** Use Obsidian's documented
+`obsidian://open?path=<absolute-path>` URL scheme. For an
+*unregistered* path the URL falls back to the vault picker dialog;
+for a *registered* path Obsidian opens it directly in a new window.
+So `ShadowVaultBootstrap` registers the shadow vault in
+`obsidian.json` (Obsidian's per-user vault list) before
+`WindowSpawner` fires the URL.
 
-```js
-console.log('app.openVault?',                typeof app.openVault);
-console.log('app.openVaultByPath?',          typeof app.openVaultByPath);
-console.log('window.electron?',              typeof window.electron);
-// Plus: list electron's ipcRenderer channels if accessible.
-console.log('command app:open-vault?',       !!app.commands.commands?.['app:open-vault']);
-console.log('command workspace:open-vault?', !!app.commands.commands?.['workspace:open-vault']);
+`obsidian.json` schema (only the parts we touch):
+
+```json
+{
+  "vaults": {
+    "<hex16>": { "path": "...", "ts": <millis>, "open"?: true }
+  }
+}
 ```
 
-**Fallback if none exists:** `WindowSpawner` shows a modal with the
-shadow vault path pre-copied to clipboard and a button that runs
-`app.commands.executeCommandById('app:open-vault')` (which opens the
-vault picker dialog). User picks the highlighted folder.
+Path per OS — `ObsidianRegistry.defaultConfigPath()` resolves at
+runtime via env vars / `os.homedir()`:
+
+| OS | Path |
+|---|---|
+| Windows | `%APPDATA%\obsidian\obsidian.json` |
+| macOS | `~/Library/Application Support/obsidian/obsidian.json` |
+| Linux | `$XDG_CONFIG_HOME/obsidian/obsidian.json` (default `~/.config`) |
+
+`register()` is idempotent (returns the existing id if the path is
+already there) and case-insensitive on Windows; writes are atomic
+(temp file + rename) so Obsidian can't read a half-written config.
 
 ### OQ2 — Can we construct `TFile` / `TFolder` from the public `obsidian` module?
 
@@ -217,9 +236,25 @@ succeed. To be re-verified during Phase 1.
 
 **Risk:** Low. Mostly a Windows-vs-\*nix split.
 
-**Verify:** Try `fs.symlink` from a Node-side script on each platform.
-On Windows it usually fails without admin or developer mode; fall back
-to recursive copy. Document this in `ShadowVaultBootstrap`.
+**Status (2026-04-27):** ✅ **Answered.** Per-file install with a
+symlink-then-copy fallback chain.
+
+The first cut symlinked the WHOLE plugin directory (PR #64) and
+caused the worst regression of the pivot: when the shadow vault's
+plugin wrote its own per-vault `data.json`, the write followed the
+symlink and clobbered the source vault's settings (hostKeyStore,
+secrets). Fix in PR #65: `pluginDir` is a real directory; code +
+assets (`main.js`, `manifest.json`, `styles.css`, `server-bin/`)
+are symlinked **individually** — `data.json` is never touched by
+install, so each vault keeps its own per-vault settings.
+
+The symlink chain is `fs.symlinkSync(src, dst, type)` with `type`
+= `'file'` for files, `'junction'` on Windows (works without admin
+for directories under the user's control) and `'dir'` elsewhere
+for directories. If `symlinkSync` fails for any entry, install
+falls back to `fs.copyFileSync` / `fs.cpSync`. Stale prior
+installs are detected via `lstatSync` and unlinked (NOT
+`rmSync` — that would follow the link).
 
 ### OQ5 — When the same profile's `data.json` is opened by two windows (original + shadow), do edits in one window race with the other?
 
@@ -227,74 +262,157 @@ to recursive copy. Document this in `ShadowVaultBootstrap`.
 original window's settings tab while the shadow window's plugin is
 mid-flight reading the same file.
 
-**Resolution candidate:** Shadow window treats `data.json` as read-only
-after loading the marker — it never writes back. All profile edits
-flow through the original window only. The shadow window listens for
-`data.json` changes via Obsidian's own config-reload events and
-re-reads, but only for non-destructive fields (e.g., `transport`
-change → reconnect; profile delete → close shadow window).
+**Status (2026-04-27):** ✅ **Answered (by isolation, not by
+locking).** With per-file install (OQ4) the shadow vault has its
+**own** `data.json`, separate from the source vault's. The two
+files never touch each other; both windows can write freely
+without races.
+
+`ShadowVaultBootstrap` does seed shadow data.json from source on
+the very first bootstrap (so a new shadow inherits the source's
+already-trusted host keys instead of TOFU-prompting), but
+re-bootstrap MERGES rather than overwrites — the shadow's
+accumulated state survives. The source vault's data.json is
+never written to by the shadow window.
 
 ### OQ6 — What does Obsidian write to a fresh vault directory when first opened?
 
 **Risk:** Low.
 
-**Verify:** Make an empty dir, open it as vault, observe what files
-land in `.obsidian/`. We need to know which we should pre-create
-(`community-plugins.json`, plugin folder) and which Obsidian creates
-itself (`workspace.json`, `app.json`, etc.) so bootstrap doesn't
-double-write.
+**Status (2026-04-27):** ✅ **Answered by smoke.** Obsidian creates
+`app.json`, `appearance.json`, `core-plugins.json`,
+`workspace.json`, and a `plugins/` directory inside `.obsidian/`
+on first open. Bootstrap's pre-created
+`.obsidian/community-plugins.json` (`["remote-ssh"]`) and
+`plugins/remote-ssh/` (per-file install) coexist with these
+without conflict — Obsidian writes the others fresh on first
+open and leaves our pre-created files alone.
 
 ## 5. Phased implementation plan
 
 ```mermaid
 flowchart LR
-    P0[Phase 0 — devtools verification<br/>OQ1 OQ2 OQ3 OQ6 answered] --> P1[Phase 1 — VaultModelBuilder POC<br/>1 file, then full tree, in current vault]
-    P1 --> P2[Phase 2 — ShadowVaultBootstrap + Manager<br/>plus WindowSpawner with fallback]
-    P2 --> P3[Phase 3 — Settings UI rewires Connect button<br/>to spawn shadow vault]
-    P3 --> P4[Phase 4 — shadow window plugin onload reads marker,<br/>auto-connects, calls VaultModelBuilder]
-    P4 --> P5[Phase 5 — delete reconcileVaultRoot,<br/>autoPatchAdapter, debug-dump command,<br/>data.json migration]
-    P5 --> P6[Phase 6 — manual smoke,<br/>plugin-compatibility.md re-verified,<br/>docs updated]
+    P0[Phase 0 ✅ devtools verification<br/>OQ1 OQ2 OQ3 OQ6 answered] --> P1[Phase 1 ✅ VaultModelBuilder POC<br/>PR #61 + #62 + #63]
+    P1 --> P2[Phase 2 ✅ ShadowVaultBootstrap +<br/>Manager + WindowSpawner +<br/>ObsidianRegistry — PR #64 + #65]
+    P2 --> P3[Phase 3 ✅ Settings UI rewires Connect<br/>button to spawn shadow vault — PR #66]
+    P3 --> P4[Phase 4 ✅ shadow window plugin onload<br/>reads marker, auto-connects,<br/>calls VaultModelBuilder — PR #67 + #68]
+    P4 --> P5[Phase 5 ✅ delete reconcileVaultRoot,<br/>autoPatchAdapter, debug-dump,<br/>data.json migration — PR #69]
+    P5 --> P6A[Phase 6A ✅ fs.watch live updates via<br/>VaultModelBuilder mutators,<br/>iu/nu storm gone — PR #70]
+    P6A --> P6B[Phase 6B 🚧 docs polish + plan rewrite +<br/>F1/F2 backlog — this PR]
+    P6B --> P6C[Phase 6C ⏳ plugin-compatibility.md<br/>re-verified across 11 plugins]
 ```
 
-Each phase is 1–3 PRs, ~8–15 PRs total, comparable in scope to the
-Tier 1+2 roadmap that landed through v0.4.3.
+Total shipped: 11 PRs (#61–#70 + this one), v0.4.5 through v0.4.14.
+Comparable in scope to the Tier 1+2 roadmap that landed through v0.4.3.
 
 ### Phase 0 deliverable
 
-A devtools session that records the answers to OQ1, OQ2, OQ3, OQ6. The
-answers update the corresponding sections of this document. No code
-ships from Phase 0.
+A devtools session that records the answers to OQ1, OQ2, OQ3, OQ6.
+The answers updated §4 of this document. No code shipped from Phase 0.
 
-### Phase 1 deliverable
+### Phase 1 deliverable (shipped)
 
-A PR that adds `VaultModelBuilder` with unit tests, plus a hidden
-debug command "Remote SSH: Debug: build vault model from remote (POC)"
-that runs the builder against an already-connected RPC session and
-reports how many files actually appeared in `app.vault.getFiles()`. No
-shadow vault yet — proof that the model-build half works in isolation.
+`VaultModelBuilder.build` plus a hidden debug command
+`debug-build-vault-from-remote`. Three quick fixes followed:
 
-### Phases 2 — 6
+- PR #62 — `(vault, path)` constructor args required for both TFile and TFolder.
+- PR #63 — RPC `path` was double-prefixed at the daemon (`work/VaultDev/work/VaultDev`); switch to vault-relative paths in RPC mode.
+- PR #68 — fire `create` for folders too (File Explorer needs `view.onCreate(folder)` to register the folder DOM, even though the source-of-truth is `vault.fileMap`).
 
-Sketched in §5 diagram; each phase's contract (inputs / outputs /
-tests / smoke steps) gets fleshed out before its first PR.
+### Phase 2 deliverable (shipped)
+
+`ShadowVaultBootstrap` + `ShadowVaultManager` + `WindowSpawner` +
+`ObsidianRegistry`. Per-file plugin install added in PR #65 after
+the whole-dir-symlink approach clobbered the source vault's
+data.json.
+
+### Phase 3 deliverable (shipped)
+
+Settings UI Connect button rewired from in-place patch to
+`openShadowVaultFor`. Same pre-1.0 click path as the Phase 2 debug
+command.
+
+### Phase 4 deliverable (shipped)
+
+`onLayoutReady` hook in `main.ts` reads `autoConnectProfileId` and
+runs `runAutoConnect`. The new shadow window self-connects, patches
+its own adapter, runs `populateVaultFromRemote`, and File Explorer
+fills with the remote tree without further user input. The
+`Reconnect` command lets the user retry from inside the shadow
+window after a transient connect failure.
+
+### Phase 5 deliverable (shipped)
+
+Deleted `reconcileVaultRoot`, `autoPatchAdapter` setting + branch,
+`debugDumpVaultAdapterAPI` + `debug-dump-api` command,
+`debugBuildVaultFromRemote` + `debug-build-vault-from-remote`
+command, `debugOpenShadowVault` + `debug-open-shadow-vault`
+command, "Auto-patch adapter on connect" toggle UI. `promptConnect`
+(used by the `connect` command palette command + status bar) now
+calls `openShadowVaultFor` so the CLI entry point is uniform with
+the Settings UI. data.json migration drops `autoPatchAdapter` on
+load.
+
+### Phase 6A deliverable (shipped)
+
+`VaultModelBuilder` gained `insertOne` / `removeOne` / `modifyOne`
+/ `renameOne`. `main.ts:applyFsChange` dispatches fs.watch
+notifications to those mutators, replacing the
+`reconcileVaultPath` chain that had been the last user of the
+broken Obsidian private API. The `iu`/`nu` subscriber storm is
+gone; live creates / deletes / renames / modifies on the remote
+land in the shadow window's File Explorer in ~1s.
+
+### Phase 6B deliverable (this PR)
+
+Docs only. Marks every shipped phase, fills in OQ statuses,
+records the post-MVP backlog (§9), and rewrites the maintainer's
+plan file (`self-archive-obsidian-staged-nova.md`) to reflect the
+post-pivot reality.
+
+### Phase 6C deliverable (pending)
+
+Manual smoke through the 11 plugins in
+[plugin-compatibility.md](plugin-compatibility.md). Each row
+moves from 🟡 → ✅ verified or ❌ broken (with category — fs-direct
+reader, etc.). User-driven; ~30–60 min.
 
 ## 6. Backwards compatibility
 
 Pre-1.0, so we don't promise stability across this pivot.
 
-- **Removed**: `data.json:autoPatchAdapter` setting (Tier 1-A). The
-  shadow vault always-on model replaces it.
+- **Removed (PR #69)**: `data.json:autoPatchAdapter` setting
+  (Tier 1-A). The shadow vault always-on model replaces it. On
+  first load under v0.4.13+ `loadSettings` strips the field from
+  saved data; next `saveSettings` writes the cleaned shape back.
+- **Removed (PR #69)**: command palette commands
+  `debug-dump-api`, `debug-build-vault-from-remote`,
+  `debug-open-shadow-vault`. The Settings Connect button does
+  what the Phase-2 POC command did; the auto-connect path replaces
+  the Phase-1 POC command; the debug-dump diagnostic is no longer
+  needed.
+- **Removed (PR #69)**: "Auto-patch adapter on connect" toggle
+  in the Settings UI.
+- **Added**: `data.json:autoConnectProfileId` (string | null,
+  default null). Set only by `ShadowVaultBootstrap`; ignored
+  outside a shadow vault. Shadow window's `onLayoutReady` reads
+  it and triggers the connect.
 - **Preserved**: every profile field — `host`, `port`, `username`,
   `authMethod`, `privateKeyPath`, `transport`, `remotePath`,
   `connectTimeoutMs`, `keepaliveIntervalMs`, `keepaliveCountMax`,
   `clientId`, `userName`, `reconnectMaxRetries`,
-  `rpcSocketPath`/`rpcTokenPath`, `jumpHost`, `hostKeyStore`. All used
-  by the transport stack which doesn't change.
-- **Settings UI**: the Connect button's behaviour changes from
-  in-place patch to "open in new window". Add one-line copy in the
-  profile row explaining this so existing users aren't surprised.
-- **Migration**: on first 0.5.0 load, drop `autoPatchAdapter` from
-  `data.json` if present. Otherwise no rewrite needed.
+  `rpcSocketPath`/`rpcTokenPath`, `jumpHost`, `hostKeyStore`,
+  `secrets`. All used by the transport stack which doesn't
+  change.
+- **Settings UI (PR #66)**: the Connect button's behaviour
+  changed from in-place patch to "open in new window". One-line
+  copy under the SSH Profiles header explains this.
+- **Command palette (PR #69)**: `connect` and `disconnect`
+  commands kept but rewired — `connect` now opens the chosen
+  profile as a shadow vault (same flow as the Settings button);
+  `disconnect` only meaningful when run from inside a shadow
+  window with an active session. New `reconnect` command added
+  for shadow windows whose connect failed transiently.
 
 ### 6.5 Plugin compatibility — `fs`-direct readers
 
@@ -327,8 +445,8 @@ for every file in the model.
   read-only mirror for these plugins. Big disk cost, defer until the
   base architecture is stable.
 
-For Phase 1 we accept this limitation; Phase 6's smoke pass walks the
-existing 11 plugins in the matrix and re-categorises each.
+Phase 6C will walk the existing 11 plugins in the matrix and
+re-categorise each.
 
 ## 7. Glossary
 
@@ -342,7 +460,84 @@ existing 11 plugins in the matrix and re-categorises each.
 
 ## 8. References
 
-- Plan file: `C:\Users\souta\.claude\plans\self-archive-obsidian-staged-nova.md` — handoff snapshot, will be rewritten when this design lands.
-- Diagnostic dump command (`Remote SSH: Debug: dump adapter / vault API surface`) was used 2026-04-27 to inventory `app.vault.adapter` methods on the maintainer's Obsidian build — see PR #54.
-- Smoke transcript that drove this pivot: 2026-04-27 session, console.log generations 1–3 in `<vault>/.obsidian/plugins/remote-ssh/`.
-- Past in-place-reconcile attempts (will be removed): PR #46 (autoPatchAdapter), PR #52 (broken reconcileFolder call), PR #54 (debug dump + multi-hook fallback), PR #57 (per-file walk).
+### Shadow-vault PR chain
+
+| PR | Subject | Version |
+|---|---|---|
+| #58 | abs $HOME socket path (RPC handshake unblocked) | 0.4.2 |
+| #59 | pkill suffix + binary rm before upload (upgrade past prior daemon) | 0.4.3 |
+| #60 | this design doc, initial cut | 0.4.4 |
+| #61 | Phase 1 — VaultModelBuilder POC | 0.4.5 |
+| #62 | Phase 1 fix — `(vault, path)` constructor args | 0.4.6 |
+| #63 | Phase 1 fix — RPC path double-prefix | 0.4.7 |
+| #64 | Phase 2 — ShadowVaultBootstrap + Manager + WindowSpawner + ObsidianRegistry | 0.4.8 |
+| #65 | Phase 2 fix — per-file plugin install (source data.json no longer clobbered) | 0.4.9 |
+| #66 | Phase 3 — Settings Connect button → shadow vault | 0.4.10 |
+| #67 | Phase 4 — auto-connect on layout-ready | 0.4.11 |
+| #68 | Phase 4 fix — fire `create` for folders too | 0.4.12 |
+| #69 | Phase 5 — delete legacy reconcile / autoPatchAdapter / debug commands | 0.4.13 |
+| #70 | Phase 6A — fs.watch live updates via VaultModelBuilder mutators | 0.4.14 |
+
+### Pre-pivot in-place-reconcile attempts (now deleted)
+
+PR #46 (autoPatchAdapter), PR #52 (broken `reconcileFolder` call),
+PR #54 (debug dump + multi-hook fallback), PR #57 (per-file walk).
+None of them worked on the maintainer's Obsidian build. PR #57's
+walk is what `VaultModelBuilder.build` replaced; PR #46's auto-patch
+was the conditional `connectProfile` removed in #69.
+
+### Smoke transcript
+
+The 2026-04-27 session console.log generations in
+`<dev-vault>/.obsidian/plugins/remote-ssh/` are the source of truth
+for OQ status updates and the per-PR fixes. Devtools probe outputs
+captured `view.fileItems` before/after manual `view.onCreate(folder)`
+calls, which is what surfaced the "fire create for folders too"
+fix in PR #68.
+
+### Plan file
+
+Maintainer's local plan file at
+`C:\Users\souta\.claude\plans\self-archive-obsidian-staged-nova.md`
+gets rewritten alongside this PR to reflect the post-pivot reality
+(it was a pre-pivot handoff snapshot).
+
+## 9. Post-MVP backlog
+
+Captured during the Phase 4 verification session — both items
+significantly improve the experience but are out of scope for the
+initial pivot.
+
+### F1 — Dedicated "Remote vaults" UI panel
+
+Today the user discovers shadow vaults via Obsidian's vault picker
+(`保管庫を変更…`) — same UI as for any local vault. Mixing remote
+profiles in with personal local vaults makes the picker noisy.
+
+A dedicated left-sidebar panel (or a separate workspace tab) that
+lists configured profiles, their connection state ("connected /
+disconnected / never opened"), and offers Open / Edit / Delete
+actions per profile would make the remote-vault concept first-class.
+
+Non-goals for F1: replacing Obsidian's vault picker entirely.
+Shadow vaults remain registered in `obsidian.json` and reachable
+through the picker for users who prefer that.
+
+### F2 — First-time auto-connect prompt: inherit settings from source
+
+When a profile's shadow vault is opened for the first time (= no
+prior `data.json` exists for it), the auto-connect could surface a
+modal:
+
+> "This is a fresh shadow vault for `<profile>`. Inherit your
+> source vault's community plugins, hotkeys, and settings? You can
+> always undo this from Settings → Community plugins."
+> [ Yes, inherit ] [ Start blank ]
+
+If yes, copy the source's `.obsidian/community-plugins.json`,
+`.obsidian/hotkeys.json`, `.obsidian/themes/`, etc. into the
+shadow vault's `.obsidian/`. The user lands in a familiar
+environment instead of an empty one.
+
+Today the bootstrap only seeds shadow `data.json` from source —
+plugin enablement, hotkeys, etc. start empty. F2 closes that gap.
