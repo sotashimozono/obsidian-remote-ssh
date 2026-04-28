@@ -1,0 +1,49 @@
+# Turn-key deploy for obsidian-remote-ssh.
+#
+# Brings up an sshd container with a single `obsidian` user (uid 1000)
+# whose home holds the vault dir the plugin reads / writes. The plugin
+# auto-deploys its daemon binary on first connect; nothing on the host
+# needs Go installed.
+#
+# Quick start (see ./README.md for the full walkthrough):
+#
+#   1. Drop your public key at ./authorized_keys
+#   2. mkdir -p ./vault ./hostkeys
+#   3. docker compose up -d --build
+#   4. From the plugin: profile host=<docker host>, port=2222,
+#      user=obsidian, key=<your private key>, remote-path=/home/obsidian/vault
+#
+# All knobs are environment-variable overridable; copy ./.env.example
+# to ./.env and tweak.
+
+services:
+  obsidian-remote:
+    build: .
+    image: obsidian-remote-sshd:latest
+    container_name: obsidian-remote-sshd
+    restart: unless-stopped
+
+    # Host port → container port 22. Defaults to 2222 to avoid
+    # clashing with the host's own sshd.
+    ports:
+      - "${HOST_PORT:-2222}:22"
+
+    volumes:
+      # Vault contents — your notes, attachments, the daemon's
+      # `~/.obsidian-remote/` state. Survives container rebuilds.
+      - "${VAULT_PATH:-./vault}:/home/obsidian/vault"
+
+      # Public key whose holder gets to log in as `obsidian`. Bind-
+      # mounted so key rotation = `cp newkey.pub authorized_keys`,
+      # no container rebuild.
+      - "${AUTHORIZED_KEYS_PATH:-./authorized_keys}:/home/obsidian/.ssh/authorized_keys:ro"
+
+      # Persistent host keys. Without this, recreating the container
+      # rotates the keys and every device TOFU-prompts again.
+      - "${HOSTKEYS_PATH:-./hostkeys}:/etc/ssh/keys"
+
+    healthcheck:
+      test: ["CMD-SHELL", "ss -lnt | grep ':22 '"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
