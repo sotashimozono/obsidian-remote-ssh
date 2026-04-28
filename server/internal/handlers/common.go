@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,10 +10,33 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/correlator"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/proto"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/rpc"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/vaultfs"
 )
+
+// registerCidIfPresent threads the optional Phase C correlation id
+// from the inbound RPC envelope (request `meta.cid`) into the
+// per-daemon Correlator, keyed by `paths`. Multi-path callers (e.g.
+// fs.rename) register the cid against both the source and destination
+// so whichever fsnotify event fires first carries it.
+//
+// All branches are short-circuited when the daemon was built without
+// a correlator (production may run with cid threading disabled) or
+// when no meta was on the wire — handlers stay one-line.
+func registerCidIfPresent(ctx context.Context, cor *correlator.Correlator, paths ...string) {
+	if cor == nil {
+		return
+	}
+	meta, ok := rpc.MetaFromContext(ctx)
+	if !ok || meta == nil || meta.Cid == "" {
+		return
+	}
+	for _, p := range paths {
+		cor.Register(p, meta.Cid)
+	}
+}
 
 // decodeParams unmarshals raw into out and returns an InvalidParams
 // rpc.Error on failure. `methodName` is used to tag the error so the

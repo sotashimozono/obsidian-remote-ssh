@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/correlator"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/proto"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/rpc"
 )
@@ -13,8 +14,14 @@ import (
 // on disk. Optional `expectedMtime` rejects the call with
 // PreconditionFailed when the remote copy has drifted; clients can
 // use this to avoid clobbering concurrent edits.
-func FsWrite(vaultRoot string) rpc.Handler {
-	return func(_ context.Context, params json.RawMessage) (interface{}, *rpc.Error) {
+//
+// `cor` is optional — pass nil to disable cid threading; when non-nil
+// the handler reads the request envelope's `meta.cid` (via
+// rpc.MetaFromContext) and registers it against the path so the
+// fs.watch handler can stamp the matching `fs.changed` notification
+// with the same cid.
+func FsWrite(vaultRoot string, cor *correlator.Correlator) rpc.Handler {
+	return func(ctx context.Context, params json.RawMessage) (interface{}, *rpc.Error) {
 		var p proto.WriteTextParams
 		if e := decodeParams("fs.write", params, &p); e != nil {
 			return nil, e
@@ -23,6 +30,7 @@ func FsWrite(vaultRoot string) rpc.Handler {
 		if e != nil {
 			return nil, e
 		}
+		registerCidIfPresent(ctx, cor, p.Path)
 		mtime, e := atomicWriteFile(abs, p.Path, []byte(p.Content), p.ExpectedMtime)
 		if e != nil {
 			return nil, e

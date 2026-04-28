@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/correlator"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/proto"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/rpc"
 )
@@ -14,8 +15,13 @@ import (
 // inside the vault root. The destination's parent directory is
 // created as needed so the client doesn't have to fs.mkdir separately
 // for a move into an archive folder.
-func FsRename(vaultRoot string) rpc.Handler {
-	return func(_ context.Context, params json.RawMessage) (interface{}, *rpc.Error) {
+//
+// `cor` (optional) threads the request's `meta.cid` against BOTH
+// paths so whichever fsnotify event fires first (rename produces a
+// "deleted" on the source AND a "created" on the dest) carries the
+// matching cid back to the client.
+func FsRename(vaultRoot string, cor *correlator.Correlator) rpc.Handler {
+	return func(ctx context.Context, params json.RawMessage) (interface{}, *rpc.Error) {
 		var p proto.RenameParams
 		if e := decodeParams("fs.rename", params, &p); e != nil {
 			return nil, e
@@ -31,6 +37,7 @@ func FsRename(vaultRoot string) rpc.Handler {
 		if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil {
 			return nil, mapFsError(err, p.NewPath)
 		}
+		registerCidIfPresent(ctx, cor, p.OldPath, p.NewPath)
 		if err := os.Rename(oldAbs, newAbs); err != nil {
 			return nil, mapFsError(err, p.OldPath)
 		}

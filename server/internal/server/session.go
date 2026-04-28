@@ -3,13 +3,20 @@ package server
 import (
 	"errors"
 	"sync"
+
+	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/proto"
 )
 
 // NotificationSender writes one server-push notification on the
 // session's connection. The implementation is responsible for
 // serialising concurrent writes (a request reply may be in flight
 // at the same time a watcher event tries to push).
-type NotificationSender func(method string, params interface{}) error
+//
+// `meta` is the optional envelope-level cross-process correlation
+// metadata (Phase C: cid). nil means "no meta on the wire" and the
+// sender omits the field entirely (`omitempty`), preserving the
+// pre-meta wire shape for receivers that don't read meta.
+type NotificationSender func(method string, params interface{}, meta *proto.Meta) error
 
 // Session is the per-connection state used by method handlers.
 // Every accepted connection gets its own Session, so mutation of
@@ -82,15 +89,26 @@ func (s *Session) SetNotifier(send NotificationSender) {
 }
 
 // SendNotification writes one notification frame on the session's
-// connection. Returns an error when no notifier has been set (the
-// session was constructed in test code without one) or the underlying
-// write fails.
+// connection without envelope-level meta. Convenience wrapper around
+// SendNotificationWithMeta for the common case (handlers that don't
+// need cid threading).
 func (s *Session) SendNotification(method string, params interface{}) error {
+	return s.SendNotificationWithMeta(method, params, nil)
+}
+
+// SendNotificationWithMeta writes one notification frame on the
+// session's connection, optionally attaching envelope-level meta
+// (typically a cid for cross-process latency correlation). Pass nil
+// meta to behave identically to SendNotification.
+//
+// Returns an error when no notifier has been set (the session was
+// constructed in test code without one) or the underlying write fails.
+func (s *Session) SendNotificationWithMeta(method string, params interface{}, meta *proto.Meta) error {
 	s.mu.Lock()
 	send := s.sender
 	s.mu.Unlock()
 	if send == nil {
 		return errors.New("Session: SendNotification called before SetNotifier")
 	}
-	return send(method, params)
+	return send(method, params, meta)
 }

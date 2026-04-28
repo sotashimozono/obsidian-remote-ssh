@@ -18,6 +18,7 @@ import (
 	"syscall"
 
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/auth"
+	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/correlator"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/handlers"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/handlers/thumbnails"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/server"
@@ -115,6 +116,15 @@ func run(args []string) (int, error) {
 	}
 	defer func() { _ = vaultWatcher.Close() }()
 
+	// Phase C cid correlator: write-side handlers register the
+	// inbound RPC's cid by path; fs.watch's subscriber callback Takes
+	// the cid back out and stamps it on the outgoing fs.changed
+	// envelope so the plugin can join its reader-side spans to the
+	// writer-side ones. nil-safe — handlers gracefully skip when no
+	// meta was on the wire, so the daemon stays compatible with
+	// pre-Phase-C plugins.
+	cidCor := correlator.New(correlator.DefaultTTL, nil /* default clock */)
+
 	srv := server.New(server.Options{
 		Token:               token,
 		VaultRoot:           absRoot,
@@ -138,19 +148,22 @@ func run(args []string) (int, error) {
 	disp.Handle("fs.thumbnail", handlers.RequireAuth(handlers.FsThumbnail(absRoot, thumbCache)))
 	disp.Handle("fs.readText", handlers.RequireAuth(handlers.FsReadText(absRoot)))
 	disp.Handle("fs.readBinary", handlers.RequireAuth(handlers.FsReadBinary(absRoot)))
-	// Write side.
-	disp.Handle("fs.write", handlers.RequireAuth(handlers.FsWrite(absRoot)))
-	disp.Handle("fs.writeBinary", handlers.RequireAuth(handlers.FsWriteBinary(absRoot)))
+	// Write side. Handlers that produce fs.changed events take the
+	// cid correlator so the resulting notification carries the cid
+	// the client supplied via request envelope meta.
+	disp.Handle("fs.write", handlers.RequireAuth(handlers.FsWrite(absRoot, cidCor)))
+	disp.Handle("fs.writeBinary", handlers.RequireAuth(handlers.FsWriteBinary(absRoot, cidCor)))
 	disp.Handle("fs.append", handlers.RequireAuth(handlers.FsAppend(absRoot)))
 	disp.Handle("fs.appendBinary", handlers.RequireAuth(handlers.FsAppendBinary(absRoot)))
 	disp.Handle("fs.mkdir", handlers.RequireAuth(handlers.FsMkdir(absRoot)))
-	disp.Handle("fs.remove", handlers.RequireAuth(handlers.FsRemove(absRoot)))
+	disp.Handle("fs.remove", handlers.RequireAuth(handlers.FsRemove(absRoot, cidCor)))
 	disp.Handle("fs.rmdir", handlers.RequireAuth(handlers.FsRmdir(absRoot)))
-	disp.Handle("fs.rename", handlers.RequireAuth(handlers.FsRename(absRoot)))
+	disp.Handle("fs.rename", handlers.RequireAuth(handlers.FsRename(absRoot, cidCor)))
 	disp.Handle("fs.copy", handlers.RequireAuth(handlers.FsCopy(absRoot)))
 	disp.Handle("fs.trashLocal", handlers.RequireAuth(handlers.FsTrashLocal(absRoot)))
-	// Watch side.
-	disp.Handle("fs.watch", handlers.RequireAuth(handlers.FsWatch(vaultWatcher)))
+	// Watch side. The fs.watch handler holds the same correlator so
+	// outgoing fs.changed notifications carry the matching cid.
+	disp.Handle("fs.watch", handlers.RequireAuth(handlers.FsWatch(vaultWatcher, cidCor)))
 	disp.Handle("fs.unwatch", handlers.RequireAuth(handlers.FsUnwatch(vaultWatcher)))
 
 	// Wire signal-driven shutdown: closing the listener unwinds Serve.
