@@ -27,7 +27,32 @@ import type { DirCache } from '../cache/DirCache';
 import type { PathMapper } from '../path/PathMapper';
 import type { ResourceBridge } from './ResourceBridge';
 import type { RemoteEntry } from '../types';
+import type { AncestorTracker } from '../conflict/AncestorTracker';
 import { logger } from '../util/logger';
+
+/**
+ * Inputs to a 3-way conflict prompt. The adapter assembles these
+ * before calling `onTextConflict`: ancestor is what the user had
+ * loaded (from `AncestorTracker`), mine is what they're trying to
+ * write, theirs is what the remote currently holds (re-read after
+ * the precondition failure).
+ */
+export interface ThreeWayPanes {
+  ancestor: string;
+  mine: string;
+  theirs: string;
+}
+
+/**
+ * Outcome of a `onTextConflict` prompt. Mirrors the modal's
+ * `ThreeWayDecision` shape; keeping this as a separate type so the
+ * adapter doesn't depend on the obsidian-tied UI module.
+ */
+export type TextConflictDecision =
+  | { decision: 'keep-mine' }
+  | { decision: 'keep-theirs' }
+  | { decision: 'merged'; content: string }
+  | { decision: 'cancel' };
 
 /**
  * Implementation of Obsidian's `DataAdapter` over a `RemoteFsClient`.
@@ -88,8 +113,27 @@ export class SftpDataAdapter {
      *
      * When omitted (e.g. unit tests), conflicts are surfaced as the
      * underlying `RpcError` and the editor decides what to do.
+     *
+     * Used as the binary-write fallback when the 3-way merge path
+     * isn't available (no ancestor / no `onTextConflict` callback).
      */
     private onWriteConflict: ((vaultPath: string) => Promise<boolean>) | null = null,
+    /**
+     * Optional snapshot store: every text read remembers its
+     * (content, mtime) here, and a subsequent `PreconditionFailed`
+     * write pulls the ancestor out so the 3-way merge UI has all
+     * three panes to show. Per-session, never persisted.
+     */
+    private ancestorTracker: AncestorTracker | null = null,
+    /**
+     * Optional callback for text-write conflicts. When supplied AND
+     * an ancestor snapshot exists for the conflicting path, the
+     * adapter routes through here instead of `onWriteConflict` —
+     * giving the caller (the modal) all three panes to render.
+     */
+    private onTextConflict:
+      | ((vaultPath: string, panes: ThreeWayPanes) => Promise<TextConflictDecision>)
+      | null = null,
   ) {}
 
   /**
@@ -226,7 +270,14 @@ export class SftpDataAdapter {
 
   async read(normalizedPath: string): Promise<string> {
     const buf = await this.readBuffer(normalizedPath);
-    return buf.toString('utf8');
+    const text = buf.toString('utf8');
+    // Snapshot the just-read content so a subsequent conflicting write
+    // can show the user a real ancestor pane in the 3-way modal.
+    if (this.ancestorTracker) {
+      const cached = this.readCache.peek(this.toRemote(normalizedPath));
+      this.ancestorTracker.remember(normalizedPath, text, cached?.mtime ?? 0);
+    }
+    return text;
   }
 
   async readBinary(normalizedPath: string): Promise<ArrayBuffer> {
@@ -272,12 +323,18 @@ export class SftpDataAdapter {
 
   async write(normalizedPath: string, data: string, _options?: DataWriteOptions): Promise<void> {
     if (this.reconnecting) throw reconnectingError();
-    await this.writeBuffer(normalizedPath, Buffer.from(data, 'utf8'));
+    await this.writeBuffer(normalizedPath, Buffer.from(data, 'utf8'), true);
+    // After a successful text write, the file we just wrote IS the
+    // new ancestor for any later edit cycle.
+    if (this.ancestorTracker) {
+      const cached = this.readCache.peek(this.toRemote(normalizedPath));
+      this.ancestorTracker.remember(normalizedPath, data, cached?.mtime ?? 0);
+    }
   }
 
   async writeBinary(normalizedPath: string, data: ArrayBuffer, _options?: DataWriteOptions): Promise<void> {
     if (this.reconnecting) throw reconnectingError();
-    await this.writeBuffer(normalizedPath, Buffer.from(data));
+    await this.writeBuffer(normalizedPath, Buffer.from(data), false);
   }
 
   async append(normalizedPath: string, data: string, options?: DataWriteOptions): Promise<void> {
@@ -294,7 +351,7 @@ export class SftpDataAdapter {
     try { existing = await this.readBuffer(normalizedPath); }
     catch { existing = Buffer.alloc(0); }
     const merged = Buffer.concat([existing, Buffer.from(data)]);
-    await this.writeBuffer(normalizedPath, merged);
+    await this.writeBuffer(normalizedPath, merged, false);
     void options;
   }
 
@@ -328,6 +385,7 @@ export class SftpDataAdapter {
     await this.client.remove(remote);
     this.readCache.invalidate(remote);
     this.dirCache.invalidate(parentDirRemote(remote));
+    this.ancestorTracker?.invalidate(normalizedPath);
   }
 
   async rmdir(normalizedPath: string, recursive: boolean): Promise<void> {
@@ -337,6 +395,10 @@ export class SftpDataAdapter {
     this.readCache.invalidatePrefix(remote);
     this.dirCache.invalidatePrefix(remote);
     this.dirCache.invalidate(parentDirRemote(remote));
+    // AncestorTracker doesn't have prefix invalidation today; in
+    // practice rmdir kills folders that the user wasn't editing as
+    // text, so the stale entries (if any) just live until LRU pushes
+    // them out. Cheap to add later if it ever matters.
   }
 
   async rename(oldPath: string, newPath: string): Promise<void> {
@@ -350,6 +412,11 @@ export class SftpDataAdapter {
     this.dirCache.invalidatePrefix(oldRemote);
     this.dirCache.invalidate(parentDirRemote(oldRemote));
     this.dirCache.invalidate(parentDirRemote(newRemote));
+    // Keep the ancestor for `newPath` if one happens to exist (e.g.
+    // rename onto an open file) — the user's edit cycle is against
+    // whatever they last read at that path, regardless of how the
+    // file got there.
+    this.ancestorTracker?.invalidate(oldPath);
   }
 
   async copy(oldPath: string, newPath: string): Promise<void> {
@@ -444,11 +511,21 @@ export class SftpDataAdapter {
    * When the adapter has a recent ReadCache entry for this path, the
    * cached mtime is sent as `expectedMtime` so the server rejects the
    * write if another client wrote in between. On rejection the
-   * `onWriteConflict` callback (when supplied) decides whether to
-   * retry without the precondition (overwrite) or surface the error
-   * as a normal write failure (cancel).
+   * conflict-resolution stack runs:
+   *
+   *   1. If `isText` AND we have an ancestor snapshot AND a 3-way
+   *      callback, present `(ancestor, mine, theirs)` to the user.
+   *      Their decision either clobbers, replaces with theirs,
+   *      writes a hand-merged version, or cancels.
+   *   2. Else, fall back to the legacy `onWriteConflict` (overwrite
+   *      or cancel) — used by binary writes and by text writes that
+   *      have no ancestor (e.g. write-without-prior-read).
+   *   3. Else, rethrow the precondition error.
+   *
+   * `data` may be reassigned in the merged-decision branch so the
+   * post-write cache update reflects what actually landed on disk.
    */
-  private async writeBuffer(normalizedPath: string, data: Buffer): Promise<void> {
+  private async writeBuffer(normalizedPath: string, data: Buffer, isText: boolean): Promise<void> {
     const remote = this.toRemote(normalizedPath);
     const parent = parentDirRemote(remote);
     if (parent && parent !== remote) {
@@ -457,17 +534,16 @@ export class SftpDataAdapter {
 
     const cached = this.readCache.peek(remote);
     const expectedMtime = cached?.mtime;
+    let writtenData = data;
     try {
-      await this.client.writeBinary(remote, data, expectedMtime);
+      await this.client.writeBinary(remote, writtenData, expectedMtime);
     } catch (e) {
-      if (expectedMtime !== undefined && isPreconditionFailed(e) && this.onWriteConflict) {
-        const overwrite = await this.onWriteConflict(normalizedPath).catch(() => false);
-        if (!overwrite) throw e;
-        // User asked to clobber: retry without the precondition.
-        await this.client.writeBinary(remote, data);
-      } else {
+      if (expectedMtime === undefined || !isPreconditionFailed(e)) {
         throw e;
       }
+      writtenData = await this.resolveWriteConflict(
+        normalizedPath, remote, writtenData, isText, e,
+      );
     }
 
     let mtime = 0;
@@ -477,8 +553,99 @@ export class SftpDataAdapter {
     } catch (e) {
       logger.warn(`stat-after-write failed for "${remote}": ${(e as Error).message}`);
     }
-    this.readCache.put(remote, data, mtime);
+    this.readCache.put(remote, writtenData, mtime);
     this.dirCache.invalidate(parent);
+  }
+
+  /**
+   * Run the conflict-resolution stack (text 3-way → legacy two-choice
+   * → rethrow). Returns the data that was actually written, which may
+   * differ from the original write when the user chose `merged`. On
+   * cancel / keep-theirs / no-callback, throws the original error so
+   * the caller's outer try/catch in `writeBuffer` re-surfaces it.
+   *
+   * On `keep-theirs`, the read cache is refreshed with the remote's
+   * current bytes so subsequent reads return the right content even
+   * though the editor's in-memory buffer is stale (the editor will
+   * reconcile on its next read).
+   */
+  private async resolveWriteConflict(
+    normalizedPath: string,
+    remote: string,
+    mine: Buffer,
+    isText: boolean,
+    originalError: unknown,
+  ): Promise<Buffer> {
+    if (isText && this.ancestorTracker && this.onTextConflict) {
+      const ancestor = this.ancestorTracker.get(normalizedPath);
+      if (ancestor !== null) {
+        let theirsBuf: Buffer;
+        try {
+          theirsBuf = await this.client.readBinary(remote);
+        } catch (re) {
+          logger.warn(
+            `resolveWriteConflict: re-read of "${remote}" failed (${(re as Error).message}); ` +
+            'falling back to the two-choice modal',
+          );
+          return await this.fallbackTwoChoice(normalizedPath, mine, originalError);
+        }
+        const decision = await this.onTextConflict(normalizedPath, {
+          ancestor: ancestor.content,
+          mine:     mine.toString('utf8'),
+          theirs:   theirsBuf.toString('utf8'),
+        }).catch(() => ({ decision: 'cancel' as const }));
+
+        switch (decision.decision) {
+          case 'keep-mine':
+            await this.client.writeBinary(remote, mine);
+            return mine;
+          case 'merged': {
+            const merged = Buffer.from(decision.content, 'utf8');
+            await this.client.writeBinary(remote, merged);
+            return merged;
+          }
+          case 'keep-theirs': {
+            // Refresh the cache so the editor's next read picks up
+            // theirs without another round-trip; the user-visible
+            // outcome is "the write was discarded, we're now showing
+            // the remote".
+            let mtime = 0;
+            try {
+              const s = await this.client.stat(remote);
+              mtime = s.mtime;
+            } catch { /* best effort */ }
+            this.readCache.put(remote, theirsBuf, mtime);
+            // Refresh ancestor too so the user's NEXT edit cycle is
+            // measured against what they're now looking at.
+            if (this.ancestorTracker) {
+              this.ancestorTracker.remember(normalizedPath, theirsBuf.toString('utf8'), mtime);
+            }
+            throw originalError;
+          }
+          case 'cancel':
+            throw originalError;
+        }
+      }
+    }
+    return await this.fallbackTwoChoice(normalizedPath, mine, originalError);
+  }
+
+  /**
+   * Two-choice (overwrite / cancel) conflict path — the binary
+   * fallback and the no-ancestor fallback for text. Throws on
+   * cancel; returns `mine` on overwrite (so the caller's cache
+   * update reflects what landed).
+   */
+  private async fallbackTwoChoice(
+    normalizedPath: string,
+    mine: Buffer,
+    originalError: unknown,
+  ): Promise<Buffer> {
+    if (!this.onWriteConflict) throw originalError;
+    const overwrite = await this.onWriteConflict(normalizedPath).catch(() => false);
+    if (!overwrite) throw originalError;
+    await this.client.writeBinary(this.toRemote(normalizedPath), mine);
+    return mine;
   }
 
   /**

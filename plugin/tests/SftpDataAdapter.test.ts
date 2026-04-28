@@ -3,6 +3,7 @@ import { SftpDataAdapter } from '../src/adapter/SftpDataAdapter';
 import { ReadCache } from '../src/cache/ReadCache';
 import { DirCache } from '../src/cache/DirCache';
 import { PathMapper } from '../src/path/PathMapper';
+import { AncestorTracker } from '../src/conflict/AncestorTracker';
 import type { RemoteEntry, RemoteStat } from '../src/types';
 
 /** Minimal stand-in for SftpClient covering both read- and write-side calls. */
@@ -812,6 +813,216 @@ describe('SftpDataAdapter (read-side)', () => {
       await adapter.read('note.md');
       await expect(adapter.write('note.md', 'no')).rejects.toThrow(/disk full/);
       expect(onConflict).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('text 3-way merge conflict (AncestorTracker + onTextConflict)', () => {
+    /**
+     * Local copy of the parent describe's `makeConflictingClient`
+     * helper — JS scoping keeps the original out of reach. Same
+     * contract: any write with `expectedMtime` rejects with
+     * PreconditionFailed; writes without it succeed.
+     */
+    function makeConflictingClient() {
+      const fake = makeFakeClient({
+        files: { '/v/note.md': { data: Buffer.from('initial'), mtime: 100 } },
+      });
+      const writeCalls: Array<{ path: string; expected?: number }> = [];
+      fake.spies.writeBinary.mockImplementation(
+        async (p: string, data: Buffer, expectedMtime?: number) => {
+          writeCalls.push({ path: p, expected: expectedMtime });
+          if (expectedMtime !== undefined) {
+            const err = new Error('precondition failed') as Error & { code: number };
+            err.code = -32020;
+            throw err;
+          }
+          fake.files[p] = { data: Buffer.from(data), mtime: 200 };
+        },
+      );
+      return { fake, writeCalls };
+    }
+
+    /**
+     * Same shape as `makeConflictingClient` above, but the underlying
+     * file's mtime advances on a successful (precondition-less) write
+     * — the 3-way path does both the failed precondition write AND a
+     * follow-up write, so we need the second write to land cleanly.
+     */
+    function makeTextConflictingClient(opts: {
+      initialContent: string;
+      initialMtime: number;
+      theirsContent: string;
+      theirsMtime: number;
+    }) {
+      const fake = makeFakeClient({
+        files: { '/v/note.md': { data: Buffer.from(opts.initialContent), mtime: opts.initialMtime } },
+      });
+      // The "theirs" content is what the remote returns when the
+      // adapter re-reads after the precondition failure. We stash it
+      // straight into the fake's store so the conflict path's
+      // `client.readBinary(remote)` picks it up.
+      fake.files['/v/note.md'] = { data: Buffer.from(opts.theirsContent), mtime: opts.theirsMtime };
+
+      const writeCalls: Array<{ path: string; expected?: number; data: string }> = [];
+      fake.spies.writeBinary.mockImplementation(
+        async (p: string, data: Buffer, expectedMtime?: number) => {
+          writeCalls.push({ path: p, expected: expectedMtime, data: data.toString('utf8') });
+          // Only the FIRST attempt (with expectedMtime) gets the
+          // precondition error — retries land cleanly so the test can
+          // observe what we ended up writing.
+          if (expectedMtime !== undefined && writeCalls.length === 1) {
+            const err = new Error('precondition failed') as Error & { code: number };
+            err.code = -32020;
+            throw err;
+          }
+          fake.files[p] = { data: Buffer.from(data), mtime: opts.theirsMtime + 1 };
+        },
+      );
+      return { fake, writeCalls };
+    }
+
+    /** Re-prime the ancestor by reading first, then re-stash "theirs" into the fake store. */
+    async function primeAndConflict(opts: {
+      ancestorContent: string;
+      mineContent: string;
+      theirsContent: string;
+      decision:
+        | { decision: 'keep-mine' }
+        | { decision: 'keep-theirs' }
+        | { decision: 'merged'; content: string }
+        | { decision: 'cancel' };
+    }) {
+      const tracker = new AncestorTracker();
+      const onText = vi.fn(async () => opts.decision);
+      const onLegacy = vi.fn(async () => false);
+      const { fake, writeCalls } = makeTextConflictingClient({
+        initialContent: opts.ancestorContent,
+        initialMtime:   100,
+        theirsContent:  opts.theirsContent,
+        theirsMtime:    200,
+      });
+      // Reset the file to the ANCESTOR state for the priming read,
+      // then swap it to THEIRS afterwards so the precondition fires.
+      fake.files['/v/note.md'] = { data: Buffer.from(opts.ancestorContent), mtime: 100 };
+      const adapter = new SftpDataAdapter(
+        fake.client, '/v', readCache, dirCache, 'v',
+        null, null, onLegacy, tracker, onText,
+      );
+      await adapter.read('note.md'); // ancestor primed: "ancestorContent" @ mtime 100
+      // Now flip the file under the adapter's nose to simulate
+      // another client having written "theirsContent" at mtime 200.
+      fake.files['/v/note.md'] = { data: Buffer.from(opts.theirsContent), mtime: 200 };
+      return { adapter, onText, onLegacy, writeCalls, fake };
+    }
+
+    it('routes a text PreconditionFailed through onTextConflict with the right panes', async () => {
+      const { adapter, onText } = await primeAndConflict({
+        ancestorContent: 'v0',
+        mineContent:     'mine',
+        theirsContent:   'theirs',
+        decision:        { decision: 'keep-mine' },
+      });
+      await adapter.write('note.md', 'mine');
+      expect(onText).toHaveBeenCalledTimes(1);
+      const [path, panes] = onText.mock.calls[0];
+      expect(path).toBe('note.md');
+      expect(panes).toEqual({ ancestor: 'v0', mine: 'mine', theirs: 'theirs' });
+    });
+
+    it('keep-mine retries the write without expectedMtime and persists "mine"', async () => {
+      const { adapter, writeCalls, fake } = await primeAndConflict({
+        ancestorContent: 'v0',
+        mineContent:     'mine',
+        theirsContent:   'theirs',
+        decision:        { decision: 'keep-mine' },
+      });
+      await adapter.write('note.md', 'mine');
+      // First write: with expectedMtime (rejected). Second: without.
+      expect(writeCalls).toHaveLength(2);
+      expect(writeCalls[0].expected).toBeDefined();
+      expect(writeCalls[1].expected).toBeUndefined();
+      expect(writeCalls[1].data).toBe('mine');
+      expect(fake.files['/v/note.md'].data.toString('utf8')).toBe('mine');
+    });
+
+    it('merged writes the user-supplied merged content', async () => {
+      const { adapter, writeCalls, fake } = await primeAndConflict({
+        ancestorContent: 'v0',
+        mineContent:     'mine',
+        theirsContent:   'theirs',
+        decision:        { decision: 'merged', content: 'mine + theirs handled' },
+      });
+      await adapter.write('note.md', 'mine');
+      expect(writeCalls[1].data).toBe('mine + theirs handled');
+      expect(fake.files['/v/note.md'].data.toString('utf8')).toBe('mine + theirs handled');
+    });
+
+    it('keep-theirs rethrows + leaves the remote alone, refreshes cache to theirs', async () => {
+      const { adapter, writeCalls, fake } = await primeAndConflict({
+        ancestorContent: 'v0',
+        mineContent:     'mine',
+        theirsContent:   'theirs',
+        decision:        { decision: 'keep-theirs' },
+      });
+      await expect(adapter.write('note.md', 'mine')).rejects.toMatchObject({ code: -32020 });
+      // Only the failed first attempt happened.
+      expect(writeCalls).toHaveLength(1);
+      // Remote still has theirs.
+      expect(fake.files['/v/note.md'].data.toString('utf8')).toBe('theirs');
+      // Cache was refreshed: a follow-up read serves theirs without
+      // another network round-trip — but we can verify by reading
+      // through the adapter and confirming the value.
+      expect(await adapter.read('note.md')).toBe('theirs');
+    });
+
+    it('cancel rethrows + leaves the remote alone', async () => {
+      const { adapter, writeCalls, fake } = await primeAndConflict({
+        ancestorContent: 'v0',
+        mineContent:     'mine',
+        theirsContent:   'theirs',
+        decision:        { decision: 'cancel' },
+      });
+      await expect(adapter.write('note.md', 'mine')).rejects.toMatchObject({ code: -32020 });
+      expect(writeCalls).toHaveLength(1);
+      expect(fake.files['/v/note.md'].data.toString('utf8')).toBe('theirs');
+    });
+
+    it('falls back to the legacy two-choice modal when no ancestor is recorded', async () => {
+      const tracker = new AncestorTracker();
+      const onLegacy = vi.fn(async () => true /* overwrite */);
+      const onText = vi.fn();
+      const { fake, writeCalls } = makeConflictingClient();
+      const adapter = new SftpDataAdapter(
+        fake.client, '/v', readCache, dirCache, 'v',
+        null, null, onLegacy, tracker, onText,
+      );
+      // Prime the readCache (so the write sends expectedMtime) but do
+      // NOT populate the ancestor tracker — `readBinary` is the path
+      // that touches readCache without touching the text-only tracker.
+      await adapter.readBinary('note.md');
+      await adapter.write('note.md', 'force');
+      expect(onText).not.toHaveBeenCalled();
+      expect(onLegacy).toHaveBeenCalledWith('note.md');
+      expect(writeCalls[1].expected).toBeUndefined();
+    });
+
+    it('binary writeBinary uses the legacy two-choice modal even when ancestor + onTextConflict are wired', async () => {
+      const tracker = new AncestorTracker();
+      const onLegacy = vi.fn(async () => true);
+      const onText = vi.fn();
+      const { fake, writeCalls } = makeConflictingClient();
+      // Prime the ancestor so a TEXT write would route through 3-way;
+      // assert that the BINARY write does NOT.
+      fake.files['/v/note.md'] = { data: Buffer.from('initial'), mtime: 100 };
+      const adapter = new SftpDataAdapter(
+        fake.client, '/v', readCache, dirCache, 'v',
+        null, null, onLegacy, tracker, onText,
+      );
+      await adapter.read('note.md');
+      await adapter.writeBinary('note.md', new Uint8Array([1, 2, 3]).buffer);
+      expect(onText).not.toHaveBeenCalled();
+      expect(onLegacy).toHaveBeenCalledWith('note.md');
+      expect(writeCalls).toHaveLength(2);
     });
   });
 });
