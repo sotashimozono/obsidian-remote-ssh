@@ -27,7 +27,8 @@ import { StatusBar } from './ui/StatusBar';
 import { ConnectModal } from './ui/ConnectModal';
 import { SettingsTab } from './settings/SettingsTab';
 import { logger } from './util/logger';
-import { VaultModelBuilder, type RemoteEntry } from './vault/VaultModelBuilder';
+import { VaultModelBuilder } from './vault/VaultModelBuilder';
+import { BulkWalker } from './vault/BulkWalker';
 import { ObsidianRegistry } from './shadow/ObsidianRegistry';
 import { ShadowVaultBootstrap } from './shadow/ShadowVaultBootstrap';
 import { ShadowVaultManager } from './shadow/ShadowVaultManager';
@@ -969,38 +970,25 @@ export default class RemoteSshPlugin extends Plugin {
    * full counts + first 5 errors via `logger.info`/`logger.warn`.
    */
   async populateVaultFromRemote(label: string = 'remote'): Promise<string> {
-    const adapter = this.app.vault.adapter as unknown as {
-      list(p: string): Promise<{ files: string[]; folders: string[] }>;
-    };
-
     const start = Date.now();
 
-    const entries: RemoteEntry[] = [];
-    const queue: string[] = [''];
-    while (queue.length > 0) {
-      const folder = queue.shift()!;
-      let listing: { files: string[]; folders: string[] };
-      try {
-        listing = await adapter.list(folder);
-      } catch (e) {
-        logger.warn(`populateVaultFromRemote: list("${folder}") failed: ${(e as Error).message}`);
-        continue;
-      }
-      for (const sub of listing.folders) {
-        if (!sub) continue;
-        entries.push({ path: sub, isDirectory: true, ctime: 0, mtime: 0, size: 0 });
-        queue.push(sub);
-      }
-      for (const file of listing.files) {
-        if (!file) continue;
-        entries.push({ path: file, isDirectory: false, ctime: 0, mtime: 0, size: 0 });
-      }
-    }
-    const walkMs = Date.now() - start;
-    logger.info(`populateVaultFromRemote(${label}): walked ${entries.length} entries in ${walkMs}ms`);
+    // Phase E1-α.2: prefer the daemon's `fs.walk` (one RPC, real
+    // mtime+size per entry) when the active session is RPC AND the
+    // daemon advertises the capability. Otherwise BulkWalker
+    // transparently runs the legacy BFS via the patched adapter.
+    const walker = new BulkWalker({
+      adapter: this.app.vault.adapter,
+      rpcConnection: this.rpcConnection ?? undefined,
+    });
+    const walk = await walker.walk('');
+    logger.info(
+      `populateVaultFromRemote(${label}): ${walk.source}, ${walk.entries.length} entries ` +
+      `in ${walk.walkMs}ms` +
+      (walk.fastPathError ? ` (fast-path fallback: ${walk.fastPathError})` : ''),
+    );
 
     const builder = new VaultModelBuilder(this.app.vault, { TFile, TFolder });
-    const result = await builder.build(entries);
+    const result = await builder.build(walk.entries);
     const totalMs = Date.now() - start;
 
     const summary =
