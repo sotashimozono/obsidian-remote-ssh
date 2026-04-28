@@ -101,6 +101,37 @@ export interface PluginSettings {
    * connection again.
    */
   autoConnectProfileId?: string | null;
+  /**
+   * Snapshot of which community plugins were enabled in the source
+   * vault at the moment this shadow vault was bootstrapped, plus
+   * each plugin's source-side `data.json` content. Set by
+   * `ShadowVaultBootstrap` on first bootstrap only.
+   *
+   * Read by the shadow window's `onLayoutReady` to surface a
+   * confirmation modal — the user picks which (if any) to install
+   * from Obsidian's community marketplace, and optionally to seed
+   * each installed plugin's `data.json` from the source snapshot
+   * captured here.
+   *
+   * Cleared once the user makes a decision (install some / skip
+   * all). Stays set if they pick "Ask later" so the modal returns
+   * on the next shadow-window reload.
+   */
+  pendingPluginSuggestions?: PendingPluginSuggestion[];
+}
+
+export interface PendingPluginSuggestion {
+  /** Community plugin id (e.g. `dataview`, `templater-obsidian`). */
+  id: string;
+  /**
+   * Whatever was in the source vault's
+   * `.obsidian/plugins/<id>/data.json` at bootstrap time. `null` if
+   * the source had no data.json for this plugin (= default
+   * settings). Inlined here so the shadow window can offer
+   * "inherit local config" without re-reading the source disk
+   * later.
+   */
+  sourceData: unknown;
 }
 
 export interface LogLine {

@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { logger } from '../util/logger';
-import type { SshProfile } from '../types';
+import type { SshProfile, PendingPluginSuggestion } from '../types';
 import type { ObsidianRegistry } from './ObsidianRegistry';
 
 /**
@@ -65,16 +65,19 @@ export class ShadowVaultBootstrap {
     fs.mkdirSync(layout.vaultDir, { recursive: true });
     fs.mkdirSync(layout.configDir, { recursive: true });
 
-    // Seed `community-plugins.json` from source on first bootstrap so
-    // the shadow vault opens with the same plugin set the user runs in
-    // their main vault. Re-bootstrap leaves shadow's existing list
-    // untouched — the user can enable/disable plugins inside the
-    // shadow window without us reverting them. `remote-ssh` is always
-    // present regardless. Plugin BINARIES are not copied here:
-    // `PluginMarketplaceInstaller` (called from main.ts on shadow
-    // window startup) downloads them from Obsidian's community
-    // marketplace instead, so each shadow vault always gets the
-    // latest published version regardless of what's stale in source.
+    // First bootstrap (shadow data.json doesn't exist yet) — we'll
+    // also collect a snapshot of source's enabled plugins to surface
+    // through a confirmation modal in the shadow window. Detect now
+    // before the `readBaseDataJson` call below side-effects state.
+    const isFirstBootstrap = !fs.existsSync(layout.pluginDataFile);
+
+    // `community-plugins.json` always starts as `["remote-ssh"]` only.
+    // Inheriting source's full enabled list at bootstrap time was too
+    // surprising — the shadow window would auto-install every plugin
+    // from the marketplace right after Obsidian's "trust this vault"
+    // prompt, which felt like the plugin was acting on its own. Now
+    // the user opts in via a modal (see `pendingPluginSuggestions`
+    // below) and the install only happens for what they tick.
     this.seedCommunityPlugins(layout.configDir);
 
     // Install our own plugin source (symlink preferred so dev
@@ -92,14 +95,23 @@ export class ShadowVaultBootstrap {
     //
     // Bootstrap-managed fields (profiles list, activeProfileId,
     // autoConnectProfileId) are always overwritten to reflect the
-    // current Connect click.
+    // current Connect click. `pendingPluginSuggestions` is set only
+    // on first bootstrap (and only if source has community plugins
+    // worth suggesting) so re-bootstrap doesn't re-prompt a user
+    // who's already made their decision.
     const baseData = this.readBaseDataJson(layout.pluginDataFile);
-    const data = {
+    const data: Record<string, unknown> = {
       ...baseData,
       profiles: allProfiles,
       activeProfileId: profile.id,
       autoConnectProfileId: profile.id,
     };
+    if (isFirstBootstrap) {
+      const pending = this.collectPendingPluginSuggestions();
+      if (pending.length > 0) {
+        data.pendingPluginSuggestions = pending;
+      }
+    }
     fs.writeFileSync(layout.pluginDataFile, JSON.stringify(data, null, 2) + '\n', 'utf-8');
 
     const { id: registryId, created } = this.registry.register(layout.vaultDir);
@@ -128,58 +140,85 @@ export class ShadowVaultBootstrap {
   // ─── internals ──────────────────────────────────────────────────────────
 
   /**
-   * Materialise `<configDir>/community-plugins.json`. On first
-   * bootstrap (file doesn't exist) seed from the source vault's
-   * `community-plugins.json` plus our own id; on re-bootstrap leave
-   * the shadow's file alone. Returns the union of plugin ids that
-   * should now be present in shadow's `.obsidian/plugins/` for
-   * Obsidian to actually load them.
+   * Materialise `<configDir>/community-plugins.json`.
+   *
+   * - First bootstrap (file doesn't exist): write `["remote-ssh"]`
+   *   only. Source's enabled plugin set is captured separately via
+   *   `collectPendingPluginSuggestions` so the shadow window can
+   *   prompt the user to opt in selectively.
+   * - Re-bootstrap (file exists): leave the user's accumulated list
+   *   alone. Only ensure `remote-ssh` is in it.
    */
-  private seedCommunityPlugins(configDir: string): string[] {
+  private seedCommunityPlugins(configDir: string): void {
     const shadowPath = path.join(configDir, 'community-plugins.json');
-    let ids: string[];
 
     if (fs.existsSync(shadowPath)) {
-      // Re-bootstrap: trust whatever the user has accumulated in
-      // shadow. Only ensure remote-ssh is in the list.
       try {
         const existing = JSON.parse(fs.readFileSync(shadowPath, 'utf-8'));
         if (Array.isArray(existing)) {
-          ids = existing.filter((s): s is string => typeof s === 'string');
+          const ids = existing.filter((s): s is string => typeof s === 'string');
           if (!ids.includes('remote-ssh')) {
             ids.push('remote-ssh');
             fs.writeFileSync(shadowPath, JSON.stringify(ids) + '\n', 'utf-8');
           }
-          return ids;
+          return;
         }
       } catch (e) {
         logger.warn(
           `ShadowVaultBootstrap: failed to parse shadow community-plugins.json ` +
-          `(${(e as Error).message}); reseeding from source`,
+          `(${(e as Error).message}); rewriting as [remote-ssh]`,
         );
       }
     }
 
-    // First bootstrap (or unparseable shadow file): seed from source.
-    // Source vault's enabled plugin set becomes shadow's starting point.
-    const sourcePath = path.join(this.sourceConfigDir(), 'community-plugins.json');
-    let sourceIds: string[] = [];
-    if (fs.existsSync(sourcePath)) {
-      try {
-        const parsed = JSON.parse(fs.readFileSync(sourcePath, 'utf-8'));
-        if (Array.isArray(parsed)) {
-          sourceIds = parsed.filter((s): s is string => typeof s === 'string');
-        }
-      } catch (e) {
-        logger.warn(
-          `ShadowVaultBootstrap: failed to parse source community-plugins.json ` +
-          `(${(e as Error).message}); seeding shadow with [remote-ssh] only`,
-        );
-      }
+    fs.writeFileSync(shadowPath, JSON.stringify(['remote-ssh']) + '\n', 'utf-8');
+  }
+
+  /**
+   * Snapshot the source vault's enabled community plugins (other
+   * than our own `remote-ssh`) plus each one's source-side
+   * `data.json`. Stored in shadow `data.json` as
+   * `pendingPluginSuggestions` so the shadow window can prompt the
+   * user to install only what they want — no surprise auto-install
+   * after Obsidian's "trust this vault" dialog.
+   *
+   * Returns an empty array if source has no community-plugins.json,
+   * if it has only `remote-ssh`, or if it can't be parsed.
+   */
+  private collectPendingPluginSuggestions(): PendingPluginSuggestion[] {
+    const sourceConfigDir = this.sourceConfigDir();
+    const sourceListPath = path.join(sourceConfigDir, 'community-plugins.json');
+    if (!fs.existsSync(sourceListPath)) return [];
+
+    let sourceIds: string[];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(sourceListPath, 'utf-8'));
+      if (!Array.isArray(parsed)) return [];
+      sourceIds = parsed.filter((s): s is string => typeof s === 'string' && s !== 'remote-ssh');
+    } catch (e) {
+      logger.warn(
+        `ShadowVaultBootstrap: failed to parse source community-plugins.json ` +
+        `(${(e as Error).message}); no suggestions will be offered`,
+      );
+      return [];
     }
-    ids = sourceIds.includes('remote-ssh') ? sourceIds : [...sourceIds, 'remote-ssh'];
-    fs.writeFileSync(shadowPath, JSON.stringify(ids) + '\n', 'utf-8');
-    return ids;
+
+    const sourcePluginsRoot = path.join(sourceConfigDir, 'plugins');
+    return sourceIds.map(id => {
+      let sourceData: unknown = null;
+      const dataPath = path.join(sourcePluginsRoot, id, 'data.json');
+      if (fs.existsSync(dataPath)) {
+        try {
+          sourceData = JSON.parse(fs.readFileSync(dataPath, 'utf-8'));
+        } catch (e) {
+          logger.warn(
+            `ShadowVaultBootstrap: failed to parse source data.json for ${id} ` +
+            `(${(e as Error).message}); will offer install without config inheritance`,
+          );
+        }
+      }
+      return { id, sourceData };
+    });
   }
 
   /**

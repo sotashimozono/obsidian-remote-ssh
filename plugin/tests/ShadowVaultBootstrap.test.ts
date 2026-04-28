@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { ShadowVaultBootstrap } from '../src/shadow/ShadowVaultBootstrap';
 import { ObsidianRegistry } from '../src/shadow/ObsidianRegistry';
-import type { SshProfile } from '../src/types';
+import type { SshProfile, PendingPluginSuggestion } from '../src/types';
 
 /** Minimal valid profile shape for the tests. */
 function makeProfile(overrides: Partial<SshProfile> = {}): SshProfile {
@@ -280,8 +280,7 @@ describe('ShadowVaultBootstrap.bootstrap', () => {
     expect(stat.isDirectory()).toBe(true);
   });
 
-  it('seeds community-plugins.json from source on first bootstrap', async () => {
-    // Source vault has dataview, templater, and remote-ssh enabled.
+  it('writes [remote-ssh] only into shadow community-plugins.json on first bootstrap (does not auto-install source plugins)', async () => {
     fs.writeFileSync(
       path.join(scratch.sourceConfigDir, 'community-plugins.json'),
       JSON.stringify(['dataview', 'templater-obsidian', 'remote-ssh']),
@@ -294,40 +293,94 @@ describe('ShadowVaultBootstrap.bootstrap', () => {
       path.join(result.layout.configDir, 'community-plugins.json'),
       'utf-8',
     ));
-    expect(shadowList).toEqual(['dataview', 'templater-obsidian', 'remote-ssh']);
+    // Source's plugins are captured for the modal, not silently
+    // enabled at startup.
+    expect(shadowList).toEqual(['remote-ssh']);
   });
 
-  it('always includes remote-ssh in shadow community-plugins.json even when source list omits it', async () => {
+  it('captures source-enabled plugins (and their data.json) into pendingPluginSuggestions on first bootstrap', async () => {
     fs.writeFileSync(
       path.join(scratch.sourceConfigDir, 'community-plugins.json'),
-      JSON.stringify(['dataview']),
+      JSON.stringify(['dataview', 'templater-obsidian', 'remote-ssh']),
+    );
+    const sourceDataviewDir = path.join(scratch.sourceConfigDir, 'plugins', 'dataview');
+    fs.mkdirSync(sourceDataviewDir, { recursive: true });
+    fs.writeFileSync(path.join(sourceDataviewDir, 'data.json'), JSON.stringify({ enableInlineQueries: false }));
+    // Templater has no data.json at source — should still surface as a suggestion with sourceData=null.
+
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const result = await r.bootstrap(profile, [profile]);
+
+    const data = JSON.parse(fs.readFileSync(result.layout.pluginDataFile, 'utf-8'));
+    expect(data.pendingPluginSuggestions).toEqual([
+      { id: 'dataview',           sourceData: { enableInlineQueries: false } },
+      { id: 'templater-obsidian', sourceData: null },
+    ]);
+    // remote-ssh is excluded — we always install ourselves separately.
+  });
+
+  it('does not write pendingPluginSuggestions on re-bootstrap (user has already decided)', async () => {
+    fs.writeFileSync(
+      path.join(scratch.sourceConfigDir, 'community-plugins.json'),
+      JSON.stringify(['dataview', 'remote-ssh']),
+    );
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const first = await r.bootstrap(profile, [profile]);
+    // Simulate the user picking "Install dataview, ask later for everything else" then
+    // the shadow window persisting the decision: data.json no longer has the field.
+    const data = JSON.parse(fs.readFileSync(first.layout.pluginDataFile, 'utf-8'));
+    delete data.pendingPluginSuggestions;
+    fs.writeFileSync(first.layout.pluginDataFile, JSON.stringify(data, null, 2));
+
+    await r.bootstrap(profile, [profile]);
+    const after = JSON.parse(fs.readFileSync(first.layout.pluginDataFile, 'utf-8'));
+    expect(after.pendingPluginSuggestions).toBeUndefined();
+  });
+
+  it('does not include remote-ssh in pendingPluginSuggestions even if source lists it', async () => {
+    fs.writeFileSync(
+      path.join(scratch.sourceConfigDir, 'community-plugins.json'),
+      JSON.stringify(['remote-ssh', 'dataview']),
     );
     const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
     const profile = makeProfile({ id: 'p1' });
     const result = await r.bootstrap(profile, [profile]);
-
-    const shadowList = JSON.parse(fs.readFileSync(
-      path.join(result.layout.configDir, 'community-plugins.json'),
-      'utf-8',
-    ));
-    expect(shadowList).toContain('dataview');
-    expect(shadowList).toContain('remote-ssh');
+    const data = JSON.parse(fs.readFileSync(result.layout.pluginDataFile, 'utf-8'));
+    expect(data.pendingPluginSuggestions.map((p: PendingPluginSuggestion) => p.id)).toEqual(['dataview']);
   });
 
-  it('falls back to [remote-ssh] only when source has no community-plugins.json', async () => {
-    // No community-plugins.json staged at source.
-    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
-    const profile = makeProfile({ id: 'p1' });
-    const result = await r.bootstrap(profile, [profile]);
-
-    const shadowList = JSON.parse(fs.readFileSync(
-      path.join(result.layout.configDir, 'community-plugins.json'),
-      'utf-8',
-    ));
-    expect(shadowList).toEqual(['remote-ssh']);
+  it('omits pendingPluginSuggestions when source has no community-plugins.json or only remote-ssh', async () => {
+    // (a) no community-plugins.json at source
+    {
+      const local = makeScratch();
+      try {
+        const r = new ShadowVaultBootstrap(local.baseDir, local.sourceDir, new ObsidianRegistry(local.configPath));
+        const profile = makeProfile({ id: 'a' });
+        const result = await r.bootstrap(profile, [profile]);
+        const data = JSON.parse(fs.readFileSync(result.layout.pluginDataFile, 'utf-8'));
+        expect(data.pendingPluginSuggestions).toBeUndefined();
+      } finally { local.cleanup(); }
+    }
+    // (b) source has community-plugins.json with only remote-ssh
+    {
+      const local = makeScratch();
+      try {
+        fs.writeFileSync(
+          path.join(local.sourceConfigDir, 'community-plugins.json'),
+          JSON.stringify(['remote-ssh']),
+        );
+        const r = new ShadowVaultBootstrap(local.baseDir, local.sourceDir, new ObsidianRegistry(local.configPath));
+        const profile = makeProfile({ id: 'b' });
+        const result = await r.bootstrap(profile, [profile]);
+        const data = JSON.parse(fs.readFileSync(result.layout.pluginDataFile, 'utf-8'));
+        expect(data.pendingPluginSuggestions).toBeUndefined();
+      } finally { local.cleanup(); }
+    }
   });
 
-  it('preserves shadow community-plugins.json on re-bootstrap (does not reset to source\'s)', async () => {
+  it('preserves shadow community-plugins.json on re-bootstrap (does not reset)', async () => {
     fs.writeFileSync(
       path.join(scratch.sourceConfigDir, 'community-plugins.json'),
       JSON.stringify(['dataview', 'remote-ssh']),
@@ -336,8 +389,8 @@ describe('ShadowVaultBootstrap.bootstrap', () => {
     const profile = makeProfile({ id: 'p1' });
     const first = await r.bootstrap(profile, [profile]);
 
-    // Simulate the user disabling dataview and enabling templater
-    // inside the shadow window.
+    // Simulate the user installing templater inside the shadow window —
+    // its id lands in the shadow's community-plugins.json.
     fs.writeFileSync(
       path.join(first.layout.configDir, 'community-plugins.json'),
       JSON.stringify(['templater-obsidian', 'remote-ssh']),
