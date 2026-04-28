@@ -14,6 +14,7 @@ import { ResourceBridge } from './adapter/ResourceBridge';
 import { WriteConflictModal } from './ui/WriteConflictModal';
 import { ThreeWayMergeModal } from './ui/ThreeWayMergeModal';
 import { AncestorTracker } from './conflict/AncestorTracker';
+import { OfflineQueue } from './offline/OfflineQueue';
 import { SftpRemoteFsClient } from './adapter/SftpRemoteFsClient';
 import { RpcRemoteFsClient } from './adapter/RpcRemoteFsClient';
 import { establishRpcConnection } from './transport/RpcConnection';
@@ -70,6 +71,12 @@ export default class RemoteSshPlugin extends Plugin {
   private dirCache: DirCache | null = null;
   /** Per-session ancestor snapshot store wired into the patched adapter (E2-α). */
   private ancestorTracker: AncestorTracker | null = null;
+  /**
+   * Persistent offline-write queue (E2-β). Created on first patch
+   * and reused thereafter; pending entries from a previous session
+   * are replayed on reconnect by the (upcoming) QueueReplayer.
+   */
+  private offlineQueue: OfflineQueue | null = null;
   private activeRemoteBasePath: string | null = null;
   /** Authenticated daemon session, populated when the active profile uses transport='rpc'. */
   private rpcConnection: Awaited<ReturnType<typeof establishRpcConnection>> | null = null;
@@ -909,6 +916,25 @@ export default class RemoteSshPlugin extends Plugin {
     // Per-session ancestor snapshot store. Powers the 3-way merge UI;
     // cleared on disconnect with the rest of the patched-adapter state.
     this.ancestorTracker = new AncestorTracker();
+    // Persistent offline-write queue. Survives Electron restarts and
+    // adapter restores so an in-flight disconnect doesn't drop user
+    // edits. Lazily-opened the first time the adapter is patched;
+    // reused on subsequent patches so the queue isn't re-replayed.
+    if (!this.offlineQueue) {
+      try {
+        this.offlineQueue = await this.openOfflineQueue();
+        const stats = this.offlineQueue.stats();
+        if (stats.entries > 0) {
+          logger.info(
+            `OfflineQueue: opened with ${stats.entries} pending entries (${stats.bytes} bytes) ` +
+            'from a previous session — the upcoming QueueReplayer (E2-β.3) will drain them on reconnect',
+          );
+        }
+      } catch (e) {
+        logger.warn(`OfflineQueue: open failed (${(e as Error).message}); offline writes will throw`);
+        this.offlineQueue = null;
+      }
+    }
     this.dataAdapter = new SftpDataAdapter(
       fsClient,
       adapterRemoteBase,
@@ -926,6 +952,7 @@ export default class RemoteSshPlugin extends Plugin {
       // path, route here so the modal can show all three panes
       // (ancestor / mine / theirs) and let the user pick or hand-merge.
       (vaultPath, panes) => new ThreeWayMergeModal(this.app, { path: vaultPath, ...panes }).prompt(),
+      this.offlineQueue,
     );
     this.patcher = new AdapterPatcher(targetAdapter, this.dataAdapter);
     try {
@@ -1302,6 +1329,22 @@ export default class RemoteSshPlugin extends Plugin {
       throw new Error('adapter is not patched');
     }
     return this.dataAdapter.fetchBinaryForBridge(vaultPath);
+  }
+
+  /**
+   * Open the persistent offline-write queue under
+   * `<vault>/.obsidian/plugins/<id>/queue/`. The dir lives next to
+   * the plugin's other on-disk state (data.json, console.log, the
+   * thumbnails cache the daemon writes elsewhere) so a vault move
+   * carries the pending writes with it.
+   */
+  private async openOfflineQueue(): Promise<OfflineQueue> {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) {
+      throw new Error('vault is not FileSystemAdapter-backed');
+    }
+    const dir = path.join(adapter.getBasePath(), '.obsidian', 'plugins', this.manifest.id, 'queue');
+    return await OfflineQueue.open(dir);
   }
 
   /**
