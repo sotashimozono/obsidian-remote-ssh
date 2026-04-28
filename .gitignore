@@ -6,6 +6,11 @@ coverage/
 cdp-console.log
 plugin/server-bin/
 
+# Phase C sync-latency microbench (M6) results — NDJSON files
+# produced per integration run. The M10 CI gate publishes the
+# baseline to an orphan branch instead of committing it here.
+plugin/perf-results/
+
 # Docker test environment artefacts: keypair generated on first run,
 # bind-mounted vault contents written by integration tests.
 docker/keys/id_test
