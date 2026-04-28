@@ -1,4 +1,4 @@
-import type { EventRef, TAbstractFile, TFile, Vault } from 'obsidian';
+import type { EventRef, TAbstractFile, TFile } from 'obsidian';
 
 /**
  * `FakeFileExplorer` — Phase C M7.
@@ -38,10 +38,31 @@ export type VaultEvent = 'create' | 'modify' | 'delete' | 'rename';
 
 /**
  * Minimal shape FakeFileExplorer needs from a Vault. Real
- * `obsidian.Vault` satisfies this; per-test stubs (FakeVault) only
- * need to expose `on(name, cb): EventRef` and `offref(ref)`.
+ * `obsidian.Vault` satisfies this; per-test stubs only need to
+ * expose `on(name, cb): EventRef` and `offref(ref)`.
+ *
+ * Declared as a structural interface with all four event overloads
+ * spelled out (rather than `Pick<Vault,'on'|'offref'>`) because
+ * TypeScript's `Pick` only carries the *last* overload of a method
+ * declaration — and `Vault.on` is overloaded per event name. With
+ * `Pick`, every `vault.on('create', …)` / `vault.on('modify', …)`
+ * call would have been resolved against the `'rename'` overload's
+ * callback signature and rejected at compile time. Surfaced when
+ * the M9 sync-reflect E2E suite typechecked under the integration-
+ * tests-included tsc invocation; `tsconfig.json -p` only includes
+ * source under `src/` so production typecheck never saw it.
  */
-export type VaultLike = Pick<Vault, 'on' | 'offref'>;
+export interface VaultLike {
+  // Matches obsidian.Vault: every event delivers a TAbstractFile (not
+  // TFile) — even `modify` does, despite folders never receiving it.
+  // Internal mutators duck-type for the optional `stat` field rather
+  // than assuming a narrower type.
+  on(name: 'create', callback: (file: TAbstractFile) => unknown): EventRef;
+  on(name: 'modify', callback: (file: TAbstractFile) => unknown): EventRef;
+  on(name: 'delete', callback: (file: TAbstractFile) => unknown): EventRef;
+  on(name: 'rename', callback: (file: TAbstractFile, oldPath: string) => unknown): EventRef;
+  offref(ref: EventRef): void;
+}
 
 export interface ReflectInfo {
   /** `performance.now()` at the moment the event was observed by the FE. */
@@ -87,7 +108,7 @@ export class FakeFileExplorer {
     // the disposer can `offref` precisely the listeners it added.
     const refs: EventRef[] = [
       vault.on('create', (file: TAbstractFile) => this.onCreate(file)),
-      vault.on('modify', (file: TFile) => this.onModify(file)),
+      vault.on('modify', (file: TAbstractFile) => this.onModify(file)),
       vault.on('delete', (file: TAbstractFile) => this.onDelete(file)),
       vault.on('rename', (file: TAbstractFile, oldPath: string) => this.onRename(file, oldPath)),
     ];
@@ -103,14 +124,14 @@ export class FakeFileExplorer {
    * Vault at all. Mirrors the `vault.trigger(event, ...args)` arg
    * shape so a FakeVault's `trigger` can forward straight here.
    */
-  observe(event: 'create',  file: TAbstractFile): void;
-  observe(event: 'modify',  file: TFile): void;
-  observe(event: 'delete',  file: TAbstractFile): void;
-  observe(event: 'rename',  file: TAbstractFile, oldPath: string): void;
+  observe(event: 'create', file: TAbstractFile): void;
+  observe(event: 'modify', file: TAbstractFile): void;
+  observe(event: 'delete', file: TAbstractFile): void;
+  observe(event: 'rename', file: TAbstractFile, oldPath: string): void;
   observe(event: VaultEvent, ...args: unknown[]): void {
     switch (event) {
       case 'create': this.onCreate(args[0] as TAbstractFile); return;
-      case 'modify': this.onModify(args[0] as TFile);         return;
+      case 'modify': this.onModify(args[0] as TAbstractFile); return;
       case 'delete': this.onDelete(args[0] as TAbstractFile); return;
       case 'rename': this.onRename(args[0] as TAbstractFile, args[1] as string); return;
     }
@@ -195,12 +216,13 @@ export class FakeFileExplorer {
     this.recordAndFire('create', file.path);
   }
 
-  private onModify(file: TFile): void {
+  private onModify(file: TAbstractFile): void {
     // Modify on a path we never saw create for: still record it.
     // VaultModelBuilder's modifyOne only fires when the file existed
     // in fileMap, but the FE shouldn't crash if that invariant slips.
     this.paths.add(file.path);
-    if (file.stat) this.mtimes.set(file.path, file.stat.mtime);
+    const mtime = readMtime(file);
+    if (mtime !== undefined) this.mtimes.set(file.path, mtime);
     this.recordAndFire('modify', file.path);
   }
 
