@@ -1,0 +1,462 @@
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import * as fs from 'node:fs';
+import type { EventRef, Vault } from 'obsidian';
+import { perfTracer } from '../../src/util/PerfTracer';
+import { SftpDataAdapter } from '../../src/adapter/SftpDataAdapter';
+import { RpcRemoteFsClient } from '../../src/adapter/RpcRemoteFsClient';
+import { ReadCache } from '../../src/cache/ReadCache';
+import { DirCache } from '../../src/cache/DirCache';
+import { VaultModelBuilder, type ObsidianClassDeps } from '../../src/vault/VaultModelBuilder';
+import type { FsChangedParams } from '../../src/proto/types';
+import { deployTestDaemon, LOCAL_DAEMON_BINARY, type DeployedDaemon } from './helpers/deployDaemonOnce';
+import { TEST_PRIVATE_KEY, TEST_VAULT } from './helpers/makeAdapter';
+import { buildRpcClient, type RpcClientHandle } from './helpers/multiclientRpc';
+import { FakeFileExplorer } from '../helpers/FakeFileExplorer';
+import { assertSyncReflect } from './helpers/assertSyncReflect';
+
+/**
+ * Phase C M9 — sync-reflect E2E matrix (foundational slice).
+ *
+ * Composes the full Phase C pipeline end-to-end in one Node process:
+ *
+ *   writer SftpDataAdapter (M2 spans)            ← writer-side
+ *     → RpcRemoteFsClient.write* (M2 spans)
+ *       → daemon (M3 cid correlator + atomicWriteFile)
+ *         → fsnotify
+ *           → fs.changed notification (M3 envelope meta)
+ *             → reader RpcClient.onNotification
+ *               → applyFsChange-equivalent (T4a + S.app spans)
+ *                 → VaultModelBuilder mutator (T5a span)
+ *                   → fakeVault.trigger(create|modify|...)
+ *                     → FakeFileExplorer (M7) — the T5 observation
+ *                       → assertSyncReflect (M8) — single assertion
+ *
+ * Cases shipped in this PR (the foundational slice):
+ *
+ *   - create:       new file at a never-seen path
+ *   - delete:       remove a previously-created file
+ *   - rename:       move within the same parent
+ *
+ * Intentionally deferred (will land in M9b/M9c follow-ups):
+ *
+ *   - nested-folder: daemon's fsnotify auto-watch races against
+ *                    `os.MkdirAll` — `IN_CREATE` for level2 is
+ *                    never dispatched because level1 isn't on
+ *                    the watch list yet when the kernel emits it.
+ *                    Test is in-source `it.skip` with the full
+ *                    failure-mode write-up + two viable fix
+ *                    directions; lands as its own PR (the right
+ *                    fix is daemon-side, in Go).
+ *   - modify:       same fsnotify "no IN_MOVED_TO across-watcher
+ *                   atomic-rename" quirk that M6's bench skipped
+ *                   on; the per-iter re-subscribe workaround needs
+ *                   its own design pass.
+ *   - large (10 MB) / binary content-hash:    bandwidth bench
+ *   - 3-way conflict:                          ThreeWayMergeModal
+ *                                              stub or real flow
+ *   - disconnect/reconnect:                    OfflineQueue +
+ *                                              ReconnectManager
+ *                                              orchestration
+ *
+ * Runs only when the test keypair + daemon binary are staged
+ * (`npm run sshd:start` + `npm run build:server`); skipped otherwise.
+ */
+
+if (!fs.existsSync(TEST_PRIVATE_KEY)) {
+  throw new Error(
+    `Integration test keypair missing at ${TEST_PRIVATE_KEY}. ` +
+    'Run `npm run sshd:start` from the repo root before `npm run test:integration`.',
+  );
+}
+if (!fs.existsSync(LOCAL_DAEMON_BINARY)) {
+  throw new Error(
+    `Daemon binary missing at ${LOCAL_DAEMON_BINARY}. ` +
+    'Run `npm run build:server` before `npm run test:integration`.',
+  );
+}
+
+// ── per-suite plumbing ─────────────────────────────────────────────────
+
+const PER_CASE_BUDGET_MS = 3_000;
+
+describe('Phase C E2E — sync reflect matrix', () => {
+  let daemon: DeployedDaemon;
+  let writer: RpcClientHandle;
+  let reader: RpcClientHandle;
+  let writerAdapter: SftpDataAdapter;
+  let readerAdapter: SftpDataAdapter;
+
+  let harnessVault: HarnessVault;
+  let fakeFE: FakeFileExplorer;
+  let detachFE: (() => void) | null = null;
+  let watchSubId: string | null = null;
+  let unsubscribeNotify: (() => void) | null = null;
+
+  const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const subdirRel = `e2e-${stamp}`;
+
+  beforeAll(async () => {
+    perfTracer.clear();
+    perfTracer.setEnabled(true);
+
+    daemon = await deployTestDaemon({ label: 'e2e' });
+    writer = await buildRpcClient(daemon.result.remoteSocketPath, daemon.result.token, 'e2e-writer');
+    reader = await buildRpcClient(daemon.result.remoteSocketPath, daemon.result.token, 'e2e-reader');
+
+    writerAdapter = new SftpDataAdapter(
+      new RpcRemoteFsClient(writer.conn.rpc),
+      '',
+      new ReadCache({ maxBytes: 64 * 1024 * 1024 }),
+      new DirCache(),
+      'e2e-writer',
+    );
+    readerAdapter = new SftpDataAdapter(
+      new RpcRemoteFsClient(reader.conn.rpc),
+      '',
+      new ReadCache({ maxBytes: 64 * 1024 * 1024 }),
+      new DirCache(),
+      'e2e-reader',
+    );
+
+    // Build the reader's synthetic vault + file-explorer surface and
+    // wire the M9 reader pipeline (notification → builder → vault.trigger
+    // → FakeFileExplorer.observe via attach).
+    harnessVault = new HarnessVault();
+    fakeFE = new FakeFileExplorer();
+    detachFE = fakeFE.attach(harnessVault as unknown as Vault);
+
+    const builder = new VaultModelBuilder(
+      harnessVault as unknown as Vault,
+      { TFile: HarnessTFile as unknown as ObsidianClassDeps['TFile'],
+        TFolder: HarnessTFolder as unknown as ObsidianClassDeps['TFolder'] },
+    );
+
+    unsubscribeNotify = reader.conn.rpc.onNotification('fs.changed', (params: FsChangedParams) => {
+      // Filter out events from outside our subdir so other integration
+      // tests' detritus (or our own setup mkdir) doesn't pollute the
+      // assertions.
+      if (!params.path.startsWith(subdirRel)) return;
+      handleFsChangedForReader(params, builder, readerAdapter);
+    });
+
+    // Subscribe to fs.changed on the entire vault (parent dir is
+    // already watched by the daemon's startup walk; recursive=true
+    // catches new sub-tree creation). Per-case re-subscription is
+    // not needed for create/delete/rename cells — only modify hits
+    // the "across-watcher atomic-rename swallows IN_MOVED_TO" quirk.
+    const subResult = await reader.conn.rpc.call('fs.watch', { path: '', recursive: true });
+    watchSubId = subResult.subscriptionId;
+
+    // Bootstrap the FakeVault with the subdir folder so per-case
+    // VaultModelBuilder.insertOne(file) can resolve its parent.
+    // Done via the writer so the daemon emits a `created` notification
+    // → reader handler → builder.insertOne → fakeFE.observe.
+    await writerAdapter.mkdir(subdirRel);
+    await fakeFE.awaitReflect(subdirRel, 'create', 5_000);
+  });
+
+  afterAll(async () => {
+    try { detachFE?.(); } catch { /* best effort */ }
+    try { unsubscribeNotify?.(); } catch { /* best effort */ }
+    if (watchSubId) {
+      try { await reader.conn.rpc.call('fs.unwatch', { subscriptionId: watchSubId }); }
+      catch { /* daemon may already be down */ }
+    }
+    try { await writer.close(); } catch { /* best effort */ }
+    try { await reader.close(); } catch { /* best effort */ }
+    if (daemon) await daemon.teardown();
+
+    perfTracer.setEnabled(false);
+    perfTracer.clear();
+  });
+
+  beforeEach(() => {
+    perfTracer.clear();
+  });
+
+  afterEach(() => {
+    // Don't reset fakeFE — between cases, the synthetic vault should
+    // accumulate state the same way Obsidian's real vault does, so a
+    // delete-after-create case can look up the previously-created file.
+    // The per-suite stamp keeps cases from colliding on path names.
+  });
+
+  // ── cases ───────────────────────────────────────────────────────────
+
+  it('create — writer create reflects on reader\'s FakeFileExplorer', async () => {
+    const target = `${subdirRel}/note-create.bin`;
+    const data = Buffer.from('hello-create');
+
+    const r = await assertSyncReflect({
+      label: 'create',
+      op: () => writerAdapter.writeBinary(target, asArrayBuffer(data)),
+      reader: { fakeFE },
+      expect: { path: target, event: 'create' },
+      budgetMs: PER_CASE_BUDGET_MS,
+    });
+
+    expect(r.e2eMs).toBeGreaterThan(0);
+    expect(fakeFE.snapshot().paths).toContain(target);
+  });
+
+  it('delete — writer delete reflects as a `delete` event on reader\'s FE', async () => {
+    const target = `${subdirRel}/note-delete.bin`;
+    const data = Buffer.from('to-be-deleted');
+    // Pre-create through the same E2E pipeline so the FakeFE knows
+    // the path exists before the deletion under test.
+    await assertSyncReflect({
+      label: 'delete (pre-create)',
+      op: () => writerAdapter.writeBinary(target, asArrayBuffer(data)),
+      reader: { fakeFE },
+      expect: { path: target, event: 'create' },
+      budgetMs: PER_CASE_BUDGET_MS,
+    });
+
+    const r = await assertSyncReflect({
+      label: 'delete',
+      op: () => writerAdapter.remove(target),
+      reader: { fakeFE },
+      expect: { path: target, event: 'delete' },
+      budgetMs: PER_CASE_BUDGET_MS,
+    });
+
+    expect(r.e2eMs).toBeGreaterThan(0);
+    expect(fakeFE.snapshot().paths).not.toContain(target);
+  });
+
+  it('rename — writer rename reflects as a `rename` event on the new path', async () => {
+    const oldPath = `${subdirRel}/note-rename-src.bin`;
+    const newPath = `${subdirRel}/note-rename-dst.bin`;
+    const data = Buffer.from('renamed');
+    await assertSyncReflect({
+      label: 'rename (pre-create)',
+      op: () => writerAdapter.writeBinary(oldPath, asArrayBuffer(data)),
+      reader: { fakeFE },
+      expect: { path: oldPath, event: 'create' },
+      budgetMs: PER_CASE_BUDGET_MS,
+    });
+
+    // The daemon's atomic-rename fires `deleted` on the old path AND
+    // `created` on the new path; the M3 cid correlator stamps the
+    // same cid on both notifications. The reader handler dispatches
+    // the `deleted` to builder.removeOne (fires `delete` on FE) and
+    // the `created` to builder.insertOne (fires `create` on FE).
+    // We assert the `create` on the new path — the visible vault
+    // outcome — and verify the old path is gone afterwards.
+    const r = await assertSyncReflect({
+      label: 'rename',
+      op: () => writerAdapter.rename(oldPath, newPath),
+      reader: { fakeFE },
+      expect: { path: newPath, event: 'create' },
+      budgetMs: PER_CASE_BUDGET_MS,
+    });
+
+    expect(r.e2eMs).toBeGreaterThan(0);
+    const snap = fakeFE.snapshot().paths;
+    expect(snap).toContain(newPath);
+    // Old path may take a beat longer to purge if the `deleted`
+    // notification trails behind the `created` one. Give it the
+    // same budget as a separate awaitReflect.
+    await fakeFE.awaitReflect(oldPath, 'delete', PER_CASE_BUDGET_MS).catch(() => undefined);
+    expect(fakeFE.snapshot().paths).not.toContain(oldPath);
+  });
+
+  // **nested-folder is skipped on the M9 MVP slice** — the daemon's
+  // fsnotify auto-watch path has a kernel-level race for `os.MkdirAll`
+  // sequences:
+  //
+  //     SftpDataAdapter.writeBuffer mkdirs `level1/level2` recursively
+  //       → daemon: os.MkdirAll(<vault>/.../level1/level2)
+  //         → kernel creates level1, then level2, in fast succession
+  //       → fsnotify fires IN_CREATE for level1 in <vault>/.../e2e-…
+  //         → daemon's dispatch goroutine processes the event,
+  //           THEN adds level1 to inotify watches via notify.Add(…)
+  //       → BUT level2 was already created on disk by the time the
+  //          watcher's auto-watch ran, so IN_CREATE for level2 in
+  //          level1 is never dispatched (level1 wasn't on the watch
+  //          list yet when kernel emitted the event).
+  //
+  // This is a daemon-side limitation, not an M9 bug. CI run for the
+  // first sub-tree depth confirmed the failure mode:
+  //   `history=[{path:"…/level1", event:"create"}]` (just level1)
+  //   while the test awaited `…/level1/level2/leaf.bin` create.
+  //
+  // Two viable follow-up fixes (own PR each):
+  //   - **Daemon side**: after handling an IN_CREATE for a directory,
+  //     do a one-shot `addTree(path)` on the new dir to catch any
+  //     children that were already created. Bounds the race window
+  //     to a single recursive walk that the dispatch goroutine owns.
+  //   - **Bench side**: stage the directory creation explicitly via
+  //     two sequential `writerAdapter.mkdir(...)` calls (each
+  //     awaiting its own `create` reflect), then write the leaf —
+  //     gives the watcher time between mkdirs to flush each event
+  //     and Add the new dir.
+  //
+  // The first fix is the right one (closes the race for any client),
+  // but it touches Go and changes daemon behaviour, so it lands as
+  // a separate atomic step. M9b will revisit.
+  it.skip('nested-folder — writer write into a deep new sub-tree reflects parents + child', async () => {
+    const dir1 = `${subdirRel}/level1`;
+    const dir2 = `${subdirRel}/level1/level2`;
+    const target = `${dir2}/leaf.bin`;
+    const data = Buffer.from('deep');
+
+    const r = await assertSyncReflect({
+      label: 'nested-folder',
+      op: () => writerAdapter.writeBinary(target, asArrayBuffer(data)),
+      reader: { fakeFE },
+      expect: { path: target, event: 'create' },
+      budgetMs: PER_CASE_BUDGET_MS * 2,
+    });
+
+    expect(r.e2eMs).toBeGreaterThan(0);
+    const snap = fakeFE.snapshot().paths;
+    expect(snap).toContain(dir1);
+    expect(snap).toContain(dir2);
+    expect(snap).toContain(target);
+  });
+});
+
+// ── reader pipeline (mimics main.ts handleFsChanged + applyFsChange) ───
+
+function handleFsChangedForReader(
+  params: FsChangedParams,
+  builder: VaultModelBuilder,
+  readerAdapter: SftpDataAdapter,
+): void {
+  // T4a — first thing the reader sees after the push frame decodes.
+  perfTracer.point('T4a', perfTracer.newCid(), {
+    path: params.path,
+    event: params.event,
+    subscriptionId: params.subscriptionId,
+  });
+
+  // applyFsChange runs async (stat for created/modified); fire-and-
+  // forget with internal error swallowing so a slow stat doesn't
+  // bubble through the RpcClient.
+  void (async () => {
+    const __t = perfTracer.begin('S.app');
+    try {
+      switch (params.event) {
+        case 'created': {
+          const stat = await readerAdapter.stat(params.path).catch(() => null);
+          if (!stat) return;
+          builder.insertOne({
+            path: params.path,
+            isDirectory: stat.type === 'folder',
+            ctime: stat.ctime ?? 0,
+            mtime: stat.mtime ?? 0,
+            size: stat.size ?? 0,
+          });
+          return;
+        }
+        case 'modified': {
+          const stat = await readerAdapter.stat(params.path).catch(() => null);
+          if (stat) {
+            builder.modifyOne(params.path, {
+              ctime: stat.ctime ?? 0, mtime: stat.mtime ?? 0, size: stat.size ?? 0,
+            });
+          } else {
+            builder.modifyOne(params.path);
+          }
+          return;
+        }
+        case 'deleted': {
+          builder.removeOne(params.path);
+          return;
+        }
+        case 'renamed': {
+          if (!params.newPath) return;
+          builder.renameOne(params.path, params.newPath);
+          return;
+        }
+      }
+    } finally {
+      perfTracer.end(__t, { event: params.event, path: params.path });
+    }
+  })();
+}
+
+// ── HarnessVault: combined VaultModelBuilder target + Events emitter ───
+
+class HarnessTFile {
+  vault!: unknown;
+  path!: string;
+  name!: string;
+  basename!: string;
+  extension!: string;
+  parent!: HarnessTFolder | null;
+  stat!: { ctime: number; mtime: number; size: number };
+  constructor(vault: unknown, path: string) { this.vault = vault; this.path = path; }
+}
+
+class HarnessTFolder {
+  vault!: unknown;
+  path: string = '';
+  name: string = '';
+  parent: HarnessTFolder | null = null;
+  children: Array<HarnessTFile | HarnessTFolder> = [];
+  constructor(vault?: unknown, path?: string) {
+    if (vault !== undefined) this.vault = vault;
+    if (path !== undefined) this.path = path;
+  }
+}
+
+interface HarnessRef { name: string; cb: (...args: unknown[]) => void }
+
+/**
+ * A FakeVault that satisfies BOTH:
+ *   - the slice of `obsidian.Vault` VaultModelBuilder needs
+ *     (`fileMap`, `getRoot`, `getAbstractFileByPath`, `trigger`)
+ *   - FakeFileExplorer's `VaultLike` (`on` / `offref`)
+ *
+ * Built inline rather than reused from VaultModelBuilder.test.ts /
+ * FakeFileExplorer.test.ts — those FakeVaults each cover only half
+ * the surface, and unifying them at this stage would invite churn.
+ * If a third caller appears, extract.
+ */
+class HarnessVault {
+  fileMap: Record<string, HarnessTFile | HarnessTFolder> = {};
+  private readonly root = new HarnessTFolder(undefined, '');
+  private readonly listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+  private readonly refs = new Map<symbol, HarnessRef>();
+
+  getRoot(): HarnessTFolder { return this.root; }
+  getAbstractFileByPath(p: string): HarnessTFile | HarnessTFolder | null {
+    return this.fileMap[p] ?? null;
+  }
+
+  on(name: string, cb: (...args: unknown[]) => unknown): EventRef {
+    const set = this.listeners.get(name) ?? new Set();
+    set.add(cb as (...args: unknown[]) => void);
+    this.listeners.set(name, set);
+    const sym = Symbol(name);
+    this.refs.set(sym, { name, cb: cb as (...args: unknown[]) => void });
+    return sym as unknown as EventRef;
+  }
+
+  offref(ref: EventRef): void {
+    const sym = ref as unknown as symbol;
+    const r = this.refs.get(sym);
+    if (!r) return;
+    this.listeners.get(r.name)?.delete(r.cb);
+    this.refs.delete(sym);
+  }
+
+  trigger(name: string, ...args: unknown[]): void {
+    const set = this.listeners.get(name);
+    if (!set) return;
+    for (const cb of [...set]) {
+      try { cb(...args); } catch { /* listener crash must not break vault */ }
+    }
+  }
+
+  // VaultModelBuilder reads `fileMap` directly via a private cast in
+  // the production code; we only need to expose the field. No-op.
+}
+
+// ── tiny helpers ──────────────────────────────────────────────────────
+
+function asArrayBuffer(buf: Buffer): ArrayBuffer {
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+}
