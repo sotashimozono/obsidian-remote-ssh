@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/image/draw"
 
+	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/handlers/thumbnails"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/proto"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/rpc"
 )
@@ -37,9 +38,11 @@ const thumbnailJpegQuality = 80
 // only — animated GIFs collapse to their first frame). HEIC / WebP
 // need cgo or external libs and are deferred.
 //
-// No caching at this layer — PR E1-β.2 adds the on-disk LRU cache as
-// a transparent wrapper.
-func FsThumbnail(vaultRoot string) rpc.Handler {
+// `cache` is optional. When supplied, results are persisted to disk
+// keyed by (path, source mtime, maxDim) — a source-file edit
+// invalidates the cached entry automatically. Pass nil to bypass
+// caching entirely (kept handy for tests).
+func FsThumbnail(vaultRoot string, cache *thumbnails.DiskCache) rpc.Handler {
 	return func(_ context.Context, params json.RawMessage) (interface{}, *rpc.Error) {
 		var p proto.ThumbnailParams
 		if e := decodeParams("fs.thumbnail", params, &p); e != nil {
@@ -54,6 +57,47 @@ func FsThumbnail(vaultRoot string) rpc.Handler {
 			return nil, e
 		}
 
+		// Stat first — we need mtime + size for both the cache key and
+		// the response, regardless of cache hit/miss.
+		info, err := os.Stat(abs)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil, rpc.ErrFileNotFound(p.Path)
+			}
+			return nil, mapFsError(err, p.Path)
+		}
+		if info.IsDir() {
+			return nil, rpc.ErrIsADirectory(p.Path)
+		}
+
+		srcMtime := mtimeMillis(info)
+		srcSize := info.Size()
+
+		// Cache lookup. Image dimensions aren't stored alongside the
+		// payload — we recover them via image.DecodeConfig (header-only
+		// parse, very fast) so the response shape stays identical to
+		// the cache-miss path.
+		if cache != nil {
+			key := thumbnails.Key(p.Path, srcMtime, p.MaxDim)
+			cached, format, cerr := cache.Get(key)
+			if cerr == nil && cached != nil {
+				cfg, _, derr := image.DecodeConfig(bytes.NewReader(cached))
+				if derr == nil {
+					return proto.ThumbnailResult{
+						ContentBase64: base64.StdEncoding.EncodeToString(cached),
+						Mtime:         srcMtime,
+						SourceSize:    srcSize,
+						Format:        string(format),
+						Width:         cfg.Width,
+						Height:        cfg.Height,
+					}, nil
+				}
+				// Cached file looked corrupt — silently fall through
+				// to the decode+resize path; the Put at the end will
+				// overwrite with a fresh entry.
+			}
+		}
+
 		f, err := os.Open(abs)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
@@ -62,14 +106,6 @@ func FsThumbnail(vaultRoot string) rpc.Handler {
 			return nil, mapFsError(err, p.Path)
 		}
 		defer func() { _ = f.Close() }()
-
-		info, err := f.Stat()
-		if err != nil {
-			return nil, mapFsError(err, p.Path)
-		}
-		if info.IsDir() {
-			return nil, rpc.ErrIsADirectory(p.Path)
-		}
 
 		src, srcFormat, err := image.Decode(f)
 		if err != nil {
@@ -84,9 +120,9 @@ func FsThumbnail(vaultRoot string) rpc.Handler {
 		// alpha doesn't get stomped to a JPEG-baked white background;
 		// everything else encodes as JPEG q=80 for size.
 		var out bytes.Buffer
-		outFormat := "jpeg"
+		outFormat := thumbnails.FormatJPEG
 		if srcFormat == "png" {
-			outFormat = "png"
+			outFormat = thumbnails.FormatPNG
 			if err := png.Encode(&out, dst); err != nil {
 				return nil, rpc.ErrInternal("fs.thumbnail: png encode: " + err.Error())
 			}
@@ -96,11 +132,18 @@ func FsThumbnail(vaultRoot string) rpc.Handler {
 			}
 		}
 
+		// Best-effort cache write. A failure to cache shouldn't fail
+		// the request — the user still gets the freshly-encoded bytes.
+		if cache != nil {
+			key := thumbnails.Key(p.Path, srcMtime, p.MaxDim)
+			_ = cache.Put(key, out.Bytes(), outFormat)
+		}
+
 		return proto.ThumbnailResult{
 			ContentBase64: base64.StdEncoding.EncodeToString(out.Bytes()),
-			Mtime:         mtimeMillis(info),
-			SourceSize:    info.Size(),
-			Format:        outFormat,
+			Mtime:         srcMtime,
+			SourceSize:    srcSize,
+			Format:        string(outFormat),
 			Width:         dstW,
 			Height:        dstH,
 		}, nil

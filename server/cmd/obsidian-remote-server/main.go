@@ -19,6 +19,7 @@ import (
 
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/auth"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/handlers"
+	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/handlers/thumbnails"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/server"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/watcher"
 )
@@ -130,7 +131,11 @@ func run(args []string) (int, error) {
 	disp.Handle("fs.exists", handlers.RequireAuth(handlers.FsExists(absRoot)))
 	disp.Handle("fs.list", handlers.RequireAuth(handlers.FsList(absRoot)))
 	disp.Handle("fs.walk", handlers.RequireAuth(handlers.FsWalk(absRoot)))
-	disp.Handle("fs.thumbnail", handlers.RequireAuth(handlers.FsThumbnail(absRoot)))
+	thumbCache, err := thumbnails.New(filepath.Join(defaultDir, "cache", "thumbs"), 0 /* default 200 MB */)
+	if err != nil {
+		return 1, fmt.Errorf("init thumbnail cache: %w", err)
+	}
+	disp.Handle("fs.thumbnail", handlers.RequireAuth(handlers.FsThumbnail(absRoot, thumbCache)))
 	disp.Handle("fs.readText", handlers.RequireAuth(handlers.FsReadText(absRoot)))
 	disp.Handle("fs.readBinary", handlers.RequireAuth(handlers.FsReadBinary(absRoot)))
 	// Write side.

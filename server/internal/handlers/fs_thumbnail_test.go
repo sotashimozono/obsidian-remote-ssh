@@ -20,11 +20,19 @@ import (
 // `<root>/<rel>` and returns the absolute path so individual tests
 // can stat / re-decode.
 func makeJpeg(t *testing.T, root, rel string, w, h int) string {
+	return makeJpegColor(t, root, rel, w, h, 200, 50, 100)
+}
+
+// makeJpegColor lets a test pick the fill colour. Useful when two
+// calls to write the SAME path must produce visually distinct files
+// (e.g. cache-invalidation tests where an mtime bump alone is not
+// enough — the post-invalidation bytes need to differ too).
+func makeJpegColor(t *testing.T, root, rel string, w, h int, r, g, b uint8) string {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			img.Set(x, y, color.RGBA{R: 200, G: 50, B: 100, A: 255})
+			img.Set(x, y, color.RGBA{R: r, G: g, B: b, A: 255})
 		}
 	}
 	abs := filepath.Join(root, rel)
@@ -75,7 +83,7 @@ func makePng(t *testing.T, root, rel string, w, h int, withAlpha bool) string {
 // tests focussed on assertions.
 func callThumbnail(t *testing.T, vaultRoot, path string, maxDim int) proto.ThumbnailResult {
 	t.Helper()
-	h := FsThumbnail(vaultRoot)
+	h := FsThumbnail(vaultRoot, nil)
 	raw, _ := json.Marshal(proto.ThumbnailParams{Path: path, MaxDim: maxDim})
 	result, rerr := h(context.Background(), raw)
 	if rerr != nil {
@@ -178,7 +186,7 @@ func TestFsThumbnail_SizeShrinksForLargeJpeg(t *testing.T) {
 
 func TestFsThumbnail_MissingReturnsFileNotFound(t *testing.T) {
 	root := t.TempDir()
-	h := FsThumbnail(root)
+	h := FsThumbnail(root, nil)
 	raw, _ := json.Marshal(proto.ThumbnailParams{Path: "nope.jpg", MaxDim: 128})
 	_, rerr := h(context.Background(), raw)
 	if rerr == nil || rerr.Code != proto.ErrorFileNotFound {
@@ -191,7 +199,7 @@ func TestFsThumbnail_DirectoryReturnsIsADirectory(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "img"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h := FsThumbnail(root)
+	h := FsThumbnail(root, nil)
 	raw, _ := json.Marshal(proto.ThumbnailParams{Path: "img", MaxDim: 128})
 	_, rerr := h(context.Background(), raw)
 	if rerr == nil || rerr.Code != proto.ErrorIsADirectory {
@@ -204,7 +212,7 @@ func TestFsThumbnail_NonImageReturnsInvalidParams(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "notes.md"), []byte("not an image"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := FsThumbnail(root)
+	h := FsThumbnail(root, nil)
 	raw, _ := json.Marshal(proto.ThumbnailParams{Path: "notes.md", MaxDim: 128})
 	_, rerr := h(context.Background(), raw)
 	if rerr == nil || rerr.Code != proto.ErrorInvalidParams {
@@ -215,7 +223,7 @@ func TestFsThumbnail_NonImageReturnsInvalidParams(t *testing.T) {
 func TestFsThumbnail_MaxDimMustBePositive(t *testing.T) {
 	root := t.TempDir()
 	makeJpeg(t, root, "x.jpg", 64, 64)
-	h := FsThumbnail(root)
+	h := FsThumbnail(root, nil)
 	raw, _ := json.Marshal(proto.ThumbnailParams{Path: "x.jpg", MaxDim: 0})
 	_, rerr := h(context.Background(), raw)
 	if rerr == nil || rerr.Code != proto.ErrorInvalidParams {
@@ -225,7 +233,7 @@ func TestFsThumbnail_MaxDimMustBePositive(t *testing.T) {
 
 func TestFsThumbnail_PathOutsideVault(t *testing.T) {
 	root := t.TempDir()
-	h := FsThumbnail(root)
+	h := FsThumbnail(root, nil)
 	raw, _ := json.Marshal(proto.ThumbnailParams{Path: "../escape.jpg", MaxDim: 128})
 	_, rerr := h(context.Background(), raw)
 	if rerr == nil || rerr.Code != proto.ErrorPathOutsideVault {
