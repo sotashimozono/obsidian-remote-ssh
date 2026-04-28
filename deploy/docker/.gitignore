@@ -1,0 +1,6 @@
+# Per-deployment artefacts. Belong to whoever runs the compose, not
+# the repo.
+authorized_keys
+vault/
+hostkeys/
+.env

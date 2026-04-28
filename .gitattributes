@@ -1,0 +1,10 @@
+# Force LF line endings for files that break under CRLF on Linux —
+# notably shell scripts (CR mangles the shebang) and Dockerfiles
+# (CR sneaks into RUN commands). Without this, a Windows checkout
+# could commit CRLF and break CI / container builds.
+*.sh         text eol=lf
+*.mjs        text eol=lf
+Dockerfile   text eol=lf
+entrypoint.* text eol=lf
+Makefile     text eol=lf
+*.go         text eol=lf
