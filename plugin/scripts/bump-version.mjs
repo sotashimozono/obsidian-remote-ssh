@@ -1,9 +1,17 @@
-// Sync `plugin/manifest.json` and `plugin/versions.json` with the
-// version that npm has just written into `plugin/package.json`.
+// Sync `plugin/manifest.json`, the repo-root mirror `manifest.json`,
+// and `plugin/versions.json` with the version that npm has just
+// written into `plugin/package.json`.
 //
 // Wired into `package.json`'s `"version"` lifecycle script so
-// `npm version <X.Y.Z>` (run from `plugin/`) updates all three
+// `npm version <X.Y.Z>` (run from `plugin/`) updates all four
 // files at once. The CI version-check workflow asserts they agree.
+//
+// Why a root mirror: Obsidian's community plugin browser fetches
+// `https://raw.githubusercontent.com/<repo>/HEAD/manifest.json` to
+// discover plugin metadata. Plugin source lives under `plugin/` for
+// repo-layout reasons (server/, proto/, deploy/ siblings), so we
+// mirror to the root so Obsidian — and the obsidianmd/obsidian-releases
+// registry validator — can find it.
 //
 // Manifest version → Obsidian's runtime view of the plugin
 //                    (`this.manifest.version` in `main.ts`).
@@ -17,11 +25,13 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(here, '..');
+const pluginRoot = path.resolve(here, '..');
+const repoRoot = path.resolve(pluginRoot, '..');
 
-const packagePath = path.join(root, 'package.json');
-const manifestPath = path.join(root, 'manifest.json');
-const versionsPath = path.join(root, 'versions.json');
+const packagePath = path.join(pluginRoot, 'package.json');
+const manifestPath = path.join(pluginRoot, 'manifest.json');
+const versionsPath = path.join(pluginRoot, 'versions.json');
+const rootManifestPath = path.join(repoRoot, 'manifest.json');
 
 const pkg = readJson(packagePath);
 const manifest = readJson(manifestPath);
@@ -38,9 +48,10 @@ versions[newVersion] = manifest.minAppVersion;
 
 writeJson(manifestPath, manifest);
 writeJson(versionsPath, versions);
+writeJson(rootManifestPath, manifest);
 
 console.log(
-  `bump-version: synced manifest.json + versions.json to ${newVersion} `
+  `bump-version: synced plugin/manifest.json + manifest.json + versions.json to ${newVersion} `
   + `(minAppVersion ${manifest.minAppVersion})`,
 );
 
