@@ -208,6 +208,94 @@ func TestWatcher_PicksUpNewSubdirs(t *testing.T) {
 	}
 }
 
+// #107: a single os.MkdirAll for a multi-level path used to drop the
+// IN_CREATE events for everything below the first new directory,
+// because the dispatch goroutine adds the new dir to the watcher
+// AFTER the kernel has already created the children. catchUpAfterRace
+// closes that gap by walking the new sub-tree and emitting synthetic
+// `created` events for descendants the watcher would otherwise miss.
+func TestWatcher_AutoWatchRaceForMkdirAll(t *testing.T) {
+	root := t.TempDir()
+	w, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	got := make(chan Event, 16)
+	if _, err := w.Subscribe("", true, func(ev Event) { got <- ev }); err != nil {
+		t.Fatal(err)
+	}
+
+	// Single MkdirAll for a 3-level deep tree — the kernel creates
+	// level1, level2, level3 in fast succession. Without the race
+	// fix only level1 would surface to the subscriber.
+	if err := os.MkdirAll(filepath.Join(root, "level1", "level2", "level3"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	seen := map[string]bool{}
+	for {
+		select {
+		case ev := <-got:
+			if ev.Type == EventCreated {
+				seen[ev.Path] = true
+			}
+			// Stop early once we have all three.
+			if seen["level1"] && seen["level1/level2"] && seen["level1/level2/level3"] {
+				return // pass
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for nested-create events; saw=%v", seen)
+		}
+	}
+}
+
+// Companion to the race test above: after the catch-up walk added
+// `a/b` to the watcher, a brand-new file inside `b` must surface as
+// a normal fsnotify event (proving the watcher is actually wired
+// into the descendants, not just emitting one-shot synthetic events).
+func TestWatcher_AfterRaceCatchUp_DescendantWritesStillFire(t *testing.T) {
+	root := t.TempDir()
+	w, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	got := make(chan Event, 16)
+	if _, err := w.Subscribe("", true, func(ev Event) { got <- ev }); err != nil {
+		t.Fatal(err)
+	}
+
+	// Trigger the race (creates the deep tree in one syscall).
+	if err := os.MkdirAll(filepath.Join(root, "a", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Give the catch-up walk a beat to add `a/b` to the watcher.
+	time.Sleep(200 * time.Millisecond)
+
+	// Now write a file inside the freshly-discovered descendant. If
+	// catch-up properly added `a/b` to the inotify watch list, this
+	// fires a real fsnotify event (not a synthesised one).
+	if err := os.WriteFile(filepath.Join(root, "a", "b", "leaf.md"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case ev := <-got:
+			if ev.Path == "a/b/leaf.md" {
+				return // pass
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for a/b/leaf.md event after race catch-up")
+		}
+	}
+}
+
 func TestWatcher_UnsubscribeUnknownIdReturnsFalse(t *testing.T) {
 	w, err := New(t.TempDir())
 	if err != nil {
