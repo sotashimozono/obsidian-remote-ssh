@@ -149,7 +149,11 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.22'
+          # Bumped 1.22 → 1.25 to follow `server/go.mod`'s `go 1.25.0`
+          # directive after Dependabot pulled in `golang.org/x/image`
+          # v0.39.0 (which raised the floor). Pin major.minor only —
+          # actions/setup-go resolves to the latest patch.
+          go-version: '1.25'
           # Cache enables once server/go.sum exists (added when external deps
           # are introduced). Until then, the module has only stdlib references.
           cache: false

@@ -13,6 +13,11 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends openssh-server iproute2 \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir /var/run/sshd \
+ # Ubuntu 24.04 ships with a pre-created `ubuntu` user at UID 1000;
+ # remove it so the well-known `tester` UID stays available. Older
+ # bases (22.04) don't have this user — `|| true` keeps the build
+ # green if dependabot ever pulls us back.
+ && (userdel -r ubuntu 2>/dev/null || true) \
  && useradd -m -s /bin/bash -u 1000 tester \
  && mkdir -p /home/tester/.ssh /home/tester/vault \
  && chown -R tester:tester /home/tester \
