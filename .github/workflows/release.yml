@@ -7,6 +7,11 @@ on:
 
 permissions:
   contents: write
+  # Phase D-δ / F24: cosign keyless OIDC needs the runner to mint
+  # an id-token for Sigstore's Fulcio CA. Read-only is enough — we
+  # never write the token anywhere; cosign exchanges it for a
+  # short-lived signing certificate.
+  id-token: write
 
 jobs:
   # ─── Gate: must pass tests before releasing ───────────────────────────────────
@@ -27,10 +32,94 @@ jobs:
       - run: node node_modules/typescript/bin/tsc --noEmit
       - run: node node_modules/vitest/vitest.mjs run
 
+  # ─── Phase D-δ / F24: build daemon binaries + cosign sign ────────────────────
+  # Builds the 4-platform daemon binary set via `make -C server cross`,
+  # computes a sha256 manifest, and signs each binary + the manifest
+  # with cosign keyless (Sigstore OIDC, no key management). Output is
+  # uploaded as a workflow artifact for the `release` job to attach to
+  # the GitHub release.
+  #
+  # Why a separate job: the binaries are slow-ish to build (~30 s each
+  # × 4) and the OIDC handshake with Fulcio is a network round-trip.
+  # Splitting from the plugin-build keeps the test gate's feedback
+  # fast and lets a server-build failure surface independently.
+  server:
+    name: Build + sign server binaries
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      manifest_sha256: ${{ steps.manifest.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: false
+      - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+
+      - name: Build cross-platform daemon binaries
+        run: make -C server cross
+
+      - name: Build daemon-manifest.json (sha256 set)
+        id: manifest
+        working-directory: server/dist
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Emit a JSON object {filename: sha256} the plugin-side
+          # verifier can consume to tie a downloaded binary back to
+          # the cosign-signed digest. Sorted keys for deterministic
+          # output across runs.
+          {
+            echo '{'
+            first=1
+            for f in obsidian-remote-server-*; do
+              sha=$(sha256sum "$f" | awk '{print $1}')
+              if [ $first -eq 1 ]; then first=0; else echo ','; fi
+              printf '  "%s": "%s"' "$f" "$sha"
+            done
+            echo
+            echo '}'
+          } > daemon-manifest.json
+          # Echo to logs for transparency.
+          cat daemon-manifest.json
+          # Also expose the manifest's own sha256 as a job output
+          # so downstream consumers can pin-verify the manifest itself.
+          echo "sha256=$(sha256sum daemon-manifest.json | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cosign sign each binary + the manifest (keyless)
+        working-directory: server/dist
+        env:
+          # Tell cosign to use the workflow's GitHub OIDC token
+          # against Sigstore's public Fulcio + Rekor. No keys to
+          # manage; signatures verifiable later via:
+          #   cosign verify-blob --bundle <bundle> \
+          #     --certificate-identity-regexp '…' \
+          #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+          #     <binary>
+          COSIGN_YES: 'true'
+        run: |
+          set -euo pipefail
+          for f in obsidian-remote-server-* daemon-manifest.json; do
+            echo "Signing $f"
+            cosign sign-blob --yes --bundle "$f.bundle" "$f"
+          done
+          ls -1
+
+      - name: Upload signed server bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: server-binaries
+          path: server/dist/
+          if-no-files-found: error
+          retention-days: 7
+
   # ─── Build + publish release ─────────────────────────────────────────────────
   release:
     name: Publish release
-    needs: test
+    needs: [test, server]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -50,6 +139,12 @@ jobs:
       - name: Production build
         working-directory: plugin
         run: node esbuild.config.mjs production
+
+      - name: Download signed server binaries
+        uses: actions/download-artifact@v6
+        with:
+          name: server-binaries
+          path: server/dist/
 
       - name: Verify bundle size
         working-directory: plugin
@@ -98,14 +193,47 @@ jobs:
 
             ---
 
-            **Installation**
+            **Installation (plugin)**
             1. Download `main.js`, `manifest.json`, and `styles.css`
             2. Place in `{vault}/.obsidian/plugins/remote-ssh/`
             3. Enable the plugin in Obsidian → Settings → Community Plugins
+
+            **Server daemon (Phase D-δ / F24)**
+
+            Pre-built daemon binaries for Linux + macOS on amd64 / arm64
+            are attached. Each binary ships with a `.bundle` file
+            containing a Sigstore (cosign) keyless signature; verify
+            independently with the cosign CLI:
+
+            ```bash
+            cosign verify-blob \
+              --bundle obsidian-remote-server-linux-amd64.bundle \
+              --certificate-identity-regexp 'https://github.com/sotashimozono/obsidian-remote-ssh/.github/workflows/release.yml@.*' \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              obsidian-remote-server-linux-amd64
+            ```
+
+            `daemon-manifest.json` (also signed) lists the sha256 of
+            every binary in this release for at-a-glance pinning.
+
+            The plugin's `ServerDeployer` performs the local-side
+            sha256 verification (Phase D-δ.1 / F23) automatically on
+            every deploy. Bundle-based cosign verification on the
+            plugin side will land in a follow-up.
           files: |
             plugin/main.js
             plugin/manifest.json
             plugin/styles.css
+            server/dist/obsidian-remote-server-linux-amd64
+            server/dist/obsidian-remote-server-linux-amd64.bundle
+            server/dist/obsidian-remote-server-linux-arm64
+            server/dist/obsidian-remote-server-linux-arm64.bundle
+            server/dist/obsidian-remote-server-darwin-amd64
+            server/dist/obsidian-remote-server-darwin-amd64.bundle
+            server/dist/obsidian-remote-server-darwin-arm64
+            server/dist/obsidian-remote-server-darwin-arm64.bundle
+            server/dist/daemon-manifest.json
+            server/dist/daemon-manifest.json.bundle
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
           make_latest: true
