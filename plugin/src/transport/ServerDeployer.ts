@@ -1,3 +1,5 @@
+import * as crypto from 'crypto';
+import * as fs from 'fs';
 import { logger } from '../util/logger';
 
 /**
@@ -150,6 +152,13 @@ export class ServerDeployer {
     await this.ssh.uploadFile(opts.localBinaryPath, remoteBinaryPath);
     await this.run(`chmod 700 ${shellQuote(remoteBinaryPath)}`);
 
+    // Phase D-δ / F23: verify the bytes that landed on disk match
+    // what we shipped. Catches network corruption + a malicious host
+    // swapping the binary between SFTP-upload and our subsequent
+    // `nohup` (small window, but the cost of catching it is one
+    // `sha256sum` exec ≈ a few ms on a small daemon binary).
+    await this.verifyRemoteSha256(opts.localBinaryPath, remoteBinaryPath);
+
     logger.info('ServerDeployer: starting daemon');
     const startCmd = [
       `nohup ${shellQuote(remoteBinaryPath)}`,
@@ -190,6 +199,40 @@ export class ServerDeployer {
   }
 
   // ─── internals ───────────────────────────────────────────────────────────
+
+  /**
+   * Phase D-δ / F23: verify the bytes the remote sees match the
+   * bytes we uploaded.
+   *
+   * Computes sha256 over the local binary (Node `crypto.createHash`)
+   * and `sha256sum` on the remote; throws with a descriptive
+   * "binary verification failed" if they differ. Doesn't try to
+   * recover (delete + re-upload) — a mismatch is either a transient
+   * fault that retry will catch, or a tampered host whose recovery
+   * decision belongs to the operator, not to the auto-deployer.
+   *
+   * The remote `sha256sum` invocation is the standard GNU coreutils
+   * tool; it's present on every Linux distro the daemon binary
+   * targets. If it isn't available, the surrounding error message
+   * makes that diagnosable instead of silently disabling the
+   * verification.
+   */
+  private async verifyRemoteSha256(localPath: string, remoteAbsPath: string): Promise<void> {
+    const expected = await computeFileSha256(localPath);
+    const out = await this.run(`sha256sum ${shellQuote(remoteAbsPath)}`);
+    // sha256sum output is `<hex>  <path>\n`; we only care about
+    // the leading hex. trim() first so leading whitespace from
+    // exotic implementations doesn't shift the split off the hex.
+    const got = (out.trim().split(/\s+/, 1)[0] ?? '').toLowerCase();
+    if (got !== expected) {
+      throw new Error(
+        `ServerDeployer: binary verification failed at ${remoteAbsPath} ` +
+        `(expected sha256 ${expected.slice(0, 12)}…, got ${got.slice(0, 12)}…). ` +
+        `The remote may have corrupted or replaced the upload — refusing to start the daemon.`,
+      );
+    }
+    logger.info(`ServerDeployer: sha256 verified (${expected.slice(0, 12)}…)`);
+  }
 
   private async run(cmd: string): Promise<string> {
     const r = await this.ssh.exec(cmd);
@@ -291,4 +334,21 @@ function truncate(s: string, max: number): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Compute sha256 of a local file as a lowercase hex digest.
+ * Streams via fs.createReadStream so we don't load multi-MB binaries
+ * into memory just to hash them.
+ *
+ * Exported for unit-testability — call sites use it via the deployer.
+ */
+export function computeFileSha256(localPath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(localPath);
+    stream.on('error', reject);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
 }
