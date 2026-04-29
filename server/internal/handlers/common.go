@@ -143,31 +143,44 @@ const writeFilePerm = 0o644
 // expectedMtime is set — this matches the Obsidian semantics of
 // "write the file, asserting it didn't change out from under me".
 //
-// The returned int64 is the post-write mtime in unix milliseconds.
+// Returns:
+//   - mtime: post-write mtime in unix milliseconds.
+//   - wasModify: true when the destination existed before the rename,
+//     false on a fresh create. Callers use this to decide whether to
+//     emit a synthetic Modified event into the watcher (#108 — Linux
+//     fsnotify drops the IN_MOVED_TO across an alive watcher, so the
+//     daemon's own writes need a workaround for live-update fanout).
+//   - rpc.Error on failure.
+//
 // relativePath is used solely to tag error messages with a path the
 // client recognises.
-func atomicWriteFile(abs, relativePath string, data []byte, expectedMtime int64) (int64, *rpc.Error) {
-	if expectedMtime != 0 {
-		if info, err := os.Stat(abs); err == nil {
+func atomicWriteFile(abs, relativePath string, data []byte, expectedMtime int64) (int64, bool, *rpc.Error) {
+	// Probe existence up-front. Used both for the optional precondition
+	// check and to return wasModify so the caller can decide whether
+	// to emit a synthetic Modified event after the rename.
+	preExisted := false
+	if info, err := os.Stat(abs); err == nil {
+		preExisted = true
+		if expectedMtime != 0 {
 			got := info.ModTime().UnixMilli()
 			if got != expectedMtime {
-				return 0, rpc.ErrPreconditionFailed(
+				return 0, false, rpc.ErrPreconditionFailed(
 					fmt.Sprintf("%s: expected mtime %d, found %d", relativePath, expectedMtime, got),
 				)
 			}
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return 0, mapFsError(err, relativePath)
 		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return 0, false, mapFsError(err, relativePath)
 	}
 
 	parent := filepath.Dir(abs)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return 0, mapFsError(err, relativePath)
+		return 0, false, mapFsError(err, relativePath)
 	}
 
 	tmp, err := os.CreateTemp(parent, ".rsh-write-*.tmp")
 	if err != nil {
-		return 0, mapFsError(err, relativePath)
+		return 0, false, mapFsError(err, relativePath)
 	}
 	tmpPath := tmp.Name()
 	// Best-effort cleanup in every non-success path below.
@@ -176,11 +189,11 @@ func atomicWriteFile(abs, relativePath string, data []byte, expectedMtime int64)
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		cleanup()
-		return 0, mapFsError(err, relativePath)
+		return 0, false, mapFsError(err, relativePath)
 	}
 	if err := tmp.Close(); err != nil {
 		cleanup()
-		return 0, mapFsError(err, relativePath)
+		return 0, false, mapFsError(err, relativePath)
 	}
 	if err := os.Chmod(tmpPath, writeFilePerm); err != nil {
 		// Non-fatal on platforms that don't fully support chmod (e.g.
@@ -189,12 +202,12 @@ func atomicWriteFile(abs, relativePath string, data []byte, expectedMtime int64)
 	}
 	if err := os.Rename(tmpPath, abs); err != nil {
 		cleanup()
-		return 0, mapFsError(err, relativePath)
+		return 0, false, mapFsError(err, relativePath)
 	}
 
 	info, err := os.Stat(abs)
 	if err != nil {
-		return 0, mapFsError(err, relativePath)
+		return 0, false, mapFsError(err, relativePath)
 	}
-	return info.ModTime().UnixMilli(), nil
+	return info.ModTime().UnixMilli(), preExisted, nil
 }

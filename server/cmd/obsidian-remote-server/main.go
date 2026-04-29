@@ -151,15 +151,25 @@ func run(args []string) (int, error) {
 	// Write side. Handlers that produce fs.changed events take the
 	// cid correlator so the resulting notification carries the cid
 	// the client supplied via request envelope meta.
-	disp.Handle("fs.write", handlers.RequireAuth(handlers.FsWrite(absRoot, cidCor)))
-	disp.Handle("fs.writeBinary", handlers.RequireAuth(handlers.FsWriteBinary(absRoot, cidCor)))
+	//
+	// injectModify is wired into the atomic-rename writers (fs.write,
+	// fs.writeBinary, fs.copy) so they can synthesise a Modified event
+	// into the watcher when their tmp+rename overwrote an existing
+	// file. Bypasses the Linux fsnotify race that drops IN_MOVED_TO
+	// events when the watcher has been alive across an earlier write
+	// to the same parent directory (#108 fix B).
+	injectModify := func(relPath string) {
+		vaultWatcher.Inject(watcher.Event{Path: relPath, Type: watcher.EventModified})
+	}
+	disp.Handle("fs.write", handlers.RequireAuth(handlers.FsWrite(absRoot, cidCor, injectModify)))
+	disp.Handle("fs.writeBinary", handlers.RequireAuth(handlers.FsWriteBinary(absRoot, cidCor, injectModify)))
 	disp.Handle("fs.append", handlers.RequireAuth(handlers.FsAppend(absRoot)))
 	disp.Handle("fs.appendBinary", handlers.RequireAuth(handlers.FsAppendBinary(absRoot)))
 	disp.Handle("fs.mkdir", handlers.RequireAuth(handlers.FsMkdir(absRoot)))
 	disp.Handle("fs.remove", handlers.RequireAuth(handlers.FsRemove(absRoot, cidCor)))
 	disp.Handle("fs.rmdir", handlers.RequireAuth(handlers.FsRmdir(absRoot)))
 	disp.Handle("fs.rename", handlers.RequireAuth(handlers.FsRename(absRoot, cidCor)))
-	disp.Handle("fs.copy", handlers.RequireAuth(handlers.FsCopy(absRoot)))
+	disp.Handle("fs.copy", handlers.RequireAuth(handlers.FsCopy(absRoot, injectModify)))
 	disp.Handle("fs.trashLocal", handlers.RequireAuth(handlers.FsTrashLocal(absRoot)))
 	// Watch side. The fs.watch handler holds the same correlator so
 	// outgoing fs.changed notifications carry the matching cid.

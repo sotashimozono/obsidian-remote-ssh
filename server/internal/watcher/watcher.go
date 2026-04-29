@@ -116,6 +116,20 @@ func (w *Watcher) addTree(root string) error {
 	})
 }
 
+// Inject dispatches an event to all matching subscribers as if it had
+// arrived from fsnotify. Used by handlers that perform writes whose
+// underlying fsnotify event is racy or dropped on Linux — e.g. the
+// IN_MOVED_TO event for atomic-rename writes (#108) is silently
+// dropped when the watcher has already been alive across an earlier
+// write to the same parent directory.
+//
+// The event's `Path` must be vault-relative (matching what real
+// fsnotify-derived events carry). Subscribers cannot tell injected
+// events apart from real ones, which is the point.
+func (w *Watcher) Inject(event Event) {
+	w.emit(event)
+}
+
 // Subscribe registers an interest in `vaultPath` (recursive controls
 // whether descendants are included). Returns a subscription id used
 // later to Unsubscribe. The callback runs synchronously on the
