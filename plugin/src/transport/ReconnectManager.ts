@@ -53,9 +53,9 @@ export class ReconnectManager {
   constructor(private opts: ReconnectManagerOptions) {
     this.cfg = opts.backoff ?? DEFAULT_BACKOFF;
     this.setTimeoutFn = opts.setTimeoutFn
-      ?? ((cb, ms) => setTimeout(cb, ms));
+      ?? ((cb, ms) => activeWindow.setTimeout(cb, ms));
     this.clearTimeoutFn = opts.clearTimeoutFn
-      ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+      ?? ((h) => activeWindow.clearTimeout(h as number));
     this.rng = opts.rng ?? Math.random;
   }
 

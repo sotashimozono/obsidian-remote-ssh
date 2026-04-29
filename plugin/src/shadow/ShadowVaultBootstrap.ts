@@ -131,6 +131,11 @@ export class ShadowVaultBootstrap {
    */
   layoutFor(profileId: string): ShadowVaultLayout {
     const vaultDir = path.join(this.baseDir, sanitiseProfileId(profileId));
+    // Shadow vault is freshly created on disk by us before Obsidian ever opens
+    // it; Obsidian creates the literal `.obsidian/` dir as the default config
+    // dir, and there is no live App instance whose `vault.configDir` we could
+    // query here.
+    // eslint-disable-next-line obsidianmd/hardcoded-config-path
     const configDir = path.join(vaultDir, '.obsidian');
     const pluginDir = path.join(configDir, 'plugins', 'remote-ssh');
     const pluginDataFile = path.join(pluginDir, 'data.json');
@@ -154,9 +159,9 @@ export class ShadowVaultBootstrap {
 
     if (fs.existsSync(shadowPath)) {
       try {
-        const existing = JSON.parse(fs.readFileSync(shadowPath, 'utf-8'));
+        const existing: unknown = JSON.parse(fs.readFileSync(shadowPath, 'utf-8'));
         if (Array.isArray(existing)) {
-          const ids = existing.filter((s): s is string => typeof s === 'string');
+          const ids = (existing as unknown[]).filter((s): s is string => typeof s === 'string');
           if (!ids.includes('remote-ssh')) {
             ids.push('remote-ssh');
             fs.writeFileSync(shadowPath, JSON.stringify(ids) + '\n', 'utf-8');
@@ -192,9 +197,9 @@ export class ShadowVaultBootstrap {
 
     let sourceIds: string[];
     try {
-      const parsed = JSON.parse(fs.readFileSync(sourceListPath, 'utf-8'));
+      const parsed: unknown = JSON.parse(fs.readFileSync(sourceListPath, 'utf-8'));
       if (!Array.isArray(parsed)) return [];
-      sourceIds = parsed.filter((s): s is string => typeof s === 'string' && s !== 'remote-ssh');
+      sourceIds = (parsed as unknown[]).filter((s): s is string => typeof s === 'string' && s !== 'remote-ssh');
     } catch (e) {
       logger.warn(
         `ShadowVaultBootstrap: failed to parse source community-plugins.json ` +
@@ -252,7 +257,7 @@ export class ShadowVaultBootstrap {
     for (const candidate of candidates) {
       if (!fs.existsSync(candidate)) continue;
       try {
-        const parsed = JSON.parse(fs.readFileSync(candidate, 'utf-8'));
+        const parsed: unknown = JSON.parse(fs.readFileSync(candidate, 'utf-8'));
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
           return parsed as Record<string, unknown>;
         }

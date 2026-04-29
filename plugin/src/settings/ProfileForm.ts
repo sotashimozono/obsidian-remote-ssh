@@ -44,6 +44,8 @@ export class ProfileForm extends Modal {
     if (sshEntries.length > 0) {
       new Setting(contentEl)
         .setName('Import from SSH config')
+        // "~/.ssh/config" is a literal POSIX path (case-sensitive); "HostName/User/..." are SSH config keyword names.
+        // eslint-disable-next-line obsidianmd/ui/sentence-case
         .setDesc('Pre-fill fields from ~/.ssh/config (HostName, User, Port, IdentityFile, ProxyJump).')
         .addDropdown(d => {
           d.addOption('', '— select host —');
@@ -90,7 +92,10 @@ export class ProfileForm extends Modal {
 
     new Setting(contentEl)
       .setName('Private key path')
+      // Literal POSIX path; case-sensitive on the SSH server.
+      // eslint-disable-next-line obsidianmd/ui/sentence-case
       .setDesc('e.g. ~/.ssh/id_ed25519')
+      // eslint-disable-next-line obsidianmd/ui/sentence-case
       .addText(t => t.setPlaceholder('~/.ssh/id_ed25519').setValue(this.profile.privateKeyPath ?? '')
         .onChange(v => { this.profile.privateKeyPath = v || undefined; }));
 
@@ -98,6 +103,8 @@ export class ProfileForm extends Modal {
 
     new Setting(contentEl)
       .setName('Remote vault path')
+      // "SSH" is an acronym; the path examples are literal POSIX paths (case-sensitive).
+      // eslint-disable-next-line obsidianmd/ui/sentence-case
       .setDesc('Absolute path on the SSH server (e.g. /home/user/vault) or home-relative (e.g. work/vault).')
       .addText(t => t.setPlaceholder('/home/user/vault').setValue(this.profile.remotePath)
         .onChange(v => { this.profile.remotePath = v; }));
@@ -115,6 +122,8 @@ export class ProfileForm extends Modal {
       .setName('Mode')
       .addDropdown(d => d
         .addOption('sftp', 'SFTP (direct)')
+        // "RPC" is an acronym; "obsidian-remote-server" is the literal binary name.
+        // eslint-disable-next-line obsidianmd/ui/sentence-case
         .addOption('rpc', 'RPC (obsidian-remote-server, α)')
         .setValue(this.profile.transport ?? 'sftp')
         .onChange(v => { this.profile.transport = v as RemoteTransport; }));
@@ -128,7 +137,11 @@ export class ProfileForm extends Modal {
 
     new Setting(contentEl)
       .setName('Daemon token path')
+      // ".obsidian-remote/token" is our daemon's home dir literal (NOT Obsidian's
+      // config dir); "RPC" is an acronym.
+      // eslint-disable-next-line obsidianmd/ui/sentence-case
       .setDesc('Default: .obsidian-remote/token (home-relative). RPC mode only.')
+      // eslint-disable-next-line obsidianmd/ui/sentence-case
       .addText(t => t.setPlaceholder('.obsidian-remote/token')
         .setValue(this.profile.rpcTokenPath ?? '')
         .onChange(v => { this.profile.rpcTokenPath = v.trim() || undefined; }));

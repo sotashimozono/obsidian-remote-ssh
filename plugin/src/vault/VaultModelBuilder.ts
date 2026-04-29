@@ -216,11 +216,11 @@ export class VaultModelBuilder {
    */
   removeOne(path: string): boolean {
     if (!path) return false;
-    const target = this.vault.getAbstractFileByPath(path) as TAbstractFile | null;
+    const target = this.vault.getAbstractFileByPath(path);
     if (!target) return false;
 
     // Pull out of parent.children if any.
-    const parent = target.parent as TFolder | null;
+    const parent = target.parent;
     if (parent && Array.isArray(parent.children)) {
       const idx = parent.children.indexOf(target);
       if (idx >= 0) parent.children.splice(idx, 1);
@@ -255,9 +255,14 @@ export class VaultModelBuilder {
    * otherwise.
    */
   modifyOne(path: string, stat?: { ctime: number; mtime: number; size: number }): boolean {
-    const target = this.vault.getAbstractFileByPath(path) as TAbstractFile | null;
+    const target = this.vault.getAbstractFileByPath(path);
     if (!target) return false;
     if (isFolder(target)) return false;
+    // `isFolder()` ruled out the TFolder case via duck-typing on `.children`;
+    // we deliberately don't use `instanceof TFile` here because the unit suite
+    // injects FakeTFile stubs (the real obsidian module isn't available to
+    // tests). See ObsidianClassDeps for context.
+    // eslint-disable-next-line obsidianmd/no-tfile-tfolder-cast
     const file = target as TFile;
     if (stat) {
       file.stat = stat;
@@ -283,7 +288,7 @@ export class VaultModelBuilder {
    */
   renameOne(oldPath: string, newPath: string): boolean {
     if (!oldPath || !newPath || oldPath === newPath) return false;
-    const target = this.vault.getAbstractFileByPath(oldPath) as TAbstractFile | null;
+    const target = this.vault.getAbstractFileByPath(oldPath);
     if (!target) return false;
     const newParent = this.resolveParent(newPath);
     if (!newParent) {
@@ -292,7 +297,7 @@ export class VaultModelBuilder {
     }
 
     const map = (this.vault as unknown as { fileMap: Record<string, TAbstractFile> }).fileMap;
-    const oldParent = target.parent as TFolder | null;
+    const oldParent = target.parent;
 
     // Detach from old parent's children.
     if (oldParent && Array.isArray(oldParent.children)) {
@@ -309,6 +314,9 @@ export class VaultModelBuilder {
     target.name   = newName;
     target.parent = newParent;
     if (!isFolder(target)) {
+      // Same reasoning as `modifyOne`: stub-based unit tests preclude
+      // `instanceof TFile`; `isFolder()`'s duck-typing has already narrowed.
+      // eslint-disable-next-line obsidianmd/no-tfile-tfolder-cast
       const file = target as TFile;
       const dot = newName.lastIndexOf('.');
       file.basename  = dot > 0 ? newName.slice(0, dot) : newName;
@@ -422,6 +430,10 @@ function basename(path: string): string {
 }
 
 function isFolder(file: TAbstractFile): file is TFolder {
+  // Duck-typing on `.children` rather than `instanceof TFolder`: this helper
+  // also runs against the FakeTFile/FakeTFolder stubs the unit suite uses, so
+  // an `instanceof` check would produce false negatives outside Obsidian.
+  // eslint-disable-next-line obsidianmd/no-tfile-tfolder-cast
   return Array.isArray((file as TFolder).children);
 }
 

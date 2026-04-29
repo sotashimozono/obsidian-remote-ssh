@@ -33,7 +33,7 @@ export class ConnectModal extends Modal {
     contentEl.empty();
     contentEl.createEl('h2', { text: 'Remote SSH' });
     contentEl.createEl('p', { text: 'No SSH profiles configured.' });
-    contentEl.createEl('button', { text: 'Open Settings', cls: 'mod-cta' })
+    contentEl.createEl('button', { text: 'Open settings', cls: 'mod-cta' })
       .onclick = () => this.close();
   }
 
@@ -97,7 +97,7 @@ export class ConnectModal extends Modal {
 
     // Back button when multiple profiles available
     if (this.profiles.length > 1) {
-      const back = contentEl.createEl('button', { text: '← Back', cls: 'remote-ssh-connect-back' });
+      const back = contentEl.createEl('button', { text: '← Back', cls: 'remote-ssh-connect-back' }); // eslint-disable-line obsidianmd/ui/sentence-case -- standard "Back" button label.
       back.onclick = () => this.renderPicker();
     }
   }

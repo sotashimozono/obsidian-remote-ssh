@@ -9,7 +9,9 @@ export function installErrorHook(): void {
   installed = true;
 
   onUnhandledRejection = (e) => {
-    const reason = (e as PromiseRejectionEvent).reason;
+    // PromiseRejectionEvent.reason is typed `any` in lib.dom; narrow to unknown
+    // before any access so downstream branches stay type-safe.
+    const reason: unknown = e.reason;
     let msg: string;
     if (reason instanceof Error) {
       msg = `unhandledrejection: ${reason.message}\n${reason.stack ?? ''}`;

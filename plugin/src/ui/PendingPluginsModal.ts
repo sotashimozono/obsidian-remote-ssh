@@ -81,7 +81,7 @@ export class PendingPluginsModal extends Modal {
       label.addEventListener('click', () => { cb.click(); });
 
       if (suggestion.sourceData != null) {
-        row.createEl('span', { text: 'has settings', cls: 'remote-ssh-pending-plugin-tag' });
+        row.createSpan({ text: 'has settings', cls: 'remote-ssh-pending-plugin-tag' });
       }
     }
 

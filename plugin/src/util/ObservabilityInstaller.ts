@@ -21,17 +21,21 @@ export class ObservabilityInstaller {
    *                        the vault is not FileSystemAdapter-backed
    *                        (mobile / unusual setups). When null the
    *                        file sink is skipped and a warning is logged.
+   * @param configDir       Obsidian's config dir name relative to the vault
+   *                        root (`app.vault.configDir`, typically `.obsidian`
+   *                        but configurable by the user).
    */
   constructor(
     private readonly manifest: PluginManifest,
     private readonly vaultBasePath: string | null,
+    private readonly configDir: string,
   ) {}
 
   install(): void {
     try {
       if (this.vaultBasePath) {
         const logPath = path.join(
-          this.vaultBasePath, '.obsidian', 'plugins', this.manifest.id, 'console.log',
+          this.vaultBasePath, this.configDir, 'plugins', this.manifest.id, 'console.log',
         );
         logger.installFileSink(logPath);
       } else {
@@ -49,6 +53,6 @@ export class ObservabilityInstaller {
     logger.info(`Plugin ${this.manifest.id} unloading`);
     uninstallErrorHook();
     logger.unwrapConsole();
-    logger.uninstallFileSink();
+    void logger.uninstallFileSink();
   }
 }

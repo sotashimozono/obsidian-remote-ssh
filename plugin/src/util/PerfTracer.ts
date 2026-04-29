@@ -37,6 +37,11 @@ interface PerfHostApi {
 }
 
 function getHostPerf(): PerfHostApi | undefined {
+  // We're probing for the cross-environment `performance` global (browser or
+  // Node's perf_hooks) — not for a popout-window-specific DOM API — so the
+  // `prefer-active-doc` suggestion (`activeDocument.defaultView`) doesn't
+  // apply: this code runs in workers and tests where there is no document.
+  // eslint-disable-next-line obsidianmd/prefer-active-doc
   return (globalThis as { performance?: PerfHostApi }).performance;
 }
 

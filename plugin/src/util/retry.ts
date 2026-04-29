@@ -1,7 +1,7 @@
 import { RETRY_BASE_MS, RETRY_MAX_MS, MAX_RETRY } from '../constants';
 import { logger } from './logger';
 
-const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>(r => activeWindow.setTimeout(r, ms));
 
 export async function withRetry<T>(
   fn: () => Promise<T>,

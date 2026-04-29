@@ -128,6 +128,8 @@ export function classifyError(err: unknown): ClassifiedError {
   return {
     category: 'unknown',
     title: original.message || 'Remote SSH: unknown error',
+    // Documentation string shown to the user; we name the typical default path for clarity.
+    // eslint-disable-next-line obsidianmd/hardcoded-config-path
     hint: 'Open the plugin\'s log file (`<vault>/.obsidian/plugins/remote-ssh/console.log`) for the full stack — the JSONL line for this error carries the original message + any structured context.',
     original,
   };

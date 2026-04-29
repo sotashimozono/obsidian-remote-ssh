@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import type { WriteStream } from 'fs';
 import * as path from 'path';
 import type { LogLine } from '../types';
 import { redactFields, redactString } from './redact';
@@ -22,7 +23,7 @@ export class Logger {
   private lines: LogLine[] = [];
   private listeners: Array<(line: LogLine) => void> = [];
 
-  private fileSink: fs.WriteStream | null = null;
+  private fileSink: WriteStream | null = null;
   private fileSinkPath: string | null = null;
   private bytesWritten = 0;
 
@@ -78,7 +79,7 @@ export class Logger {
   }
 
   installFileSink(filePath: string): void {
-    if (this.fileSink) this.uninstallFileSink();
+    if (this.fileSink) void this.uninstallFileSink();
     this.fileSinkPath = filePath;
     try {
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -119,12 +120,19 @@ export class Logger {
 
   wrapConsole(): void {
     if (this.originalConsole) return;
+    // The whole point of this method is intercepting global console
+    // calls — including console.log — so user-side console.log
+    // output lands in the JSONL log file alongside our own emit.
+    // The no-console rule flags every reference; here we're saving
+    // and reassigning, not logging, so it's working-as-intended.
     const snapshot: ConsoleSnapshot = {
+      // eslint-disable-next-line obsidianmd/rule-custom-message
       log: console.log.bind(console),
       warn: console.warn.bind(console),
       error: console.error.bind(console),
     };
     this.originalConsole = snapshot;
+    // eslint-disable-next-line obsidianmd/rule-custom-message
     console.log = (...args: unknown[]) => {
       snapshot.log(...args);
       this.captureExternal('debug', args);
@@ -141,6 +149,7 @@ export class Logger {
 
   unwrapConsole(): void {
     if (!this.originalConsole) return;
+    // eslint-disable-next-line obsidianmd/rule-custom-message
     console.log = this.originalConsole.log;
     console.warn = this.originalConsole.warn;
     console.error = this.originalConsole.error;

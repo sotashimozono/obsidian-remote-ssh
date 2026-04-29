@@ -16,9 +16,9 @@ export class SettingsTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl('h2', { text: 'Remote SSH' });
+    ;
 
-    containerEl.createEl('h3', { text: 'SSH Profiles' });
+    new Setting(containerEl).setName("SSH profiles").setHeading();
     containerEl.createEl('p', {
       text:
         'Connecting to a profile opens the remote vault in a new Obsidian window — ' +
@@ -29,12 +29,13 @@ export class SettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName('Add profile')
       .addButton(btn => btn
+        // Button label uses standard "Add" verb plus the "+" affordance.
+        // eslint-disable-next-line obsidianmd/ui/sentence-case
         .setButtonText('+ Add')
         .onClick(() => {
-          new ProfileForm(this.app, null, async (p) => {
+          new ProfileForm(this.app, null, (p) => {
             this.plugin.settings.profiles.push(p);
-            await this.plugin.saveSettings();
-            this.display();
+            void this.plugin.saveSettings().then(() => this.display());
           }).open();
         }));
 
@@ -42,7 +43,7 @@ export class SettingsTab extends PluginSettingTab {
       this.renderProfileRow(containerEl, profile);
     }
 
-    containerEl.createEl('h3', { text: 'This device' });
+    new Setting(containerEl).setName("This device").setHeading();
 
     new Setting(containerEl)
       .setName('Client ID')
@@ -78,7 +79,7 @@ export class SettingsTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    containerEl.createEl('h3', { text: 'Advanced' });
+    new Setting(containerEl).setName("Advanced").setHeading();
 
     new Setting(containerEl)
       .setName('Debug logging')
@@ -132,11 +133,10 @@ export class SettingsTab extends PluginSettingTab {
           this.display();
         }))
       .addButton(btn => btn.setButtonText('Edit').onClick(() => {
-        new ProfileForm(this.app, profile, async (updated) => {
+        new ProfileForm(this.app, profile, (updated) => {
           const idx = this.plugin.settings.profiles.findIndex(p => p.id === updated.id);
           if (idx >= 0) this.plugin.settings.profiles[idx] = updated;
-          await this.plugin.saveSettings();
-          this.display();
+          void this.plugin.saveSettings().then(() => this.display());
         }).open();
       }))
       .addButton(btn => btn.setButtonText('Delete').setWarning().onClick(async () => {

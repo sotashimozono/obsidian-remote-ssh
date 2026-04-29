@@ -72,7 +72,10 @@ export class AuthResolver {
       }
 
       default:
-        throw new Error(`Unknown auth method: ${(profile as SshProfile).authMethod}`);
+        // After exhausting the AuthMethod union the field is typed `never`;
+        // re-widen via String() so the error message still surfaces the value
+        // if the union ever grows and a case is missed.
+        throw new Error(`Unknown auth method: ${String(profile.authMethod)}`);
     }
   }
 }

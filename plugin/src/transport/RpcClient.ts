@@ -67,7 +67,7 @@ export class RpcClient {
         this.framed.writeMessage(body);
       } catch (e) {
         this.pending.delete(id);
-        reject(e);
+        reject(e instanceof Error ? e : new Error(String(e)));
       }
     });
   }

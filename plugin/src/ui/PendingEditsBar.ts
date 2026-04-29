@@ -15,7 +15,10 @@ import type { Plugin } from 'obsidian';
  */
 export class PendingEditsBar {
   private el: HTMLElement;
-  private pollHandle: ReturnType<typeof setInterval> | null = null;
+  // `activeWindow.setInterval` returns a numeric handle (DOM API),
+  // not a Node Timeout — the eslint plugin auto-fix swapped the call
+  // for popout-window safety, so the field type follows.
+  private pollHandle: number | null = null;
 
   constructor(plugin: Plugin, private readonly onClick: () => void) {
     this.el = plugin.addStatusBarItem();
@@ -45,7 +48,7 @@ export class PendingEditsBar {
   startPolling(getCount: () => number, intervalMs: number = 2000): void {
     this.stopPolling();
     this.setCount(getCount());
-    this.pollHandle = setInterval(() => {
+    this.pollHandle = activeWindow.setInterval(() => {
       try {
         this.setCount(getCount());
       } catch {
@@ -59,7 +62,7 @@ export class PendingEditsBar {
   /** Stop the poll loop and hide the indicator. */
   stopPolling(): void {
     if (this.pollHandle !== null) {
-      clearInterval(this.pollHandle);
+      activeWindow.clearInterval(this.pollHandle);
       this.pollHandle = null;
     }
     this.hide();
