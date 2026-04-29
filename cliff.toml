@@ -57,9 +57,9 @@ commit_parsers = [
   { message = "^docs",     group = "📚 Documentation" },
   { message = "^revert",   group = "⏪ Reverts" },
   { message = "^style",    skip = true },           # whitespace / formatting only
-  { message = "^chore\\(deps", skip = true },        # Dependabot noise
-  { message = "^chore",    skip = true },           # bookkeeping
-  { message = "^release",  skip = true },           # auto-tag commits
+  { message = "^chore\\(deps", skip = true },        # Dependabot noise — drop entirely
+  { message = "^chore",    group = "🧹 Chores" },   # other chore commits (incl. scoped) — keep
+  { message = "^release",  skip = true },           # auto-tag commits (legacy, kept defensively)
 ]
 
 # Strip `Co-Authored-By:` trailers from the rendered message — they
