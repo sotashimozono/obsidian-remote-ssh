@@ -102,7 +102,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Trivy filesystem scan → SARIF
-        uses: aquasecurity/trivy-action@0.28.0
+        # `@master` is what aquasecurity/trivy-action's own README
+        # recommends for "always-latest stable"; their tag namespace
+        # is sparse (no 0.28.0 published). Dependabot will pin to a
+        # SHA on its first sweep over this workflow.
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
           # Skip caches + node_modules so the scan focuses on
