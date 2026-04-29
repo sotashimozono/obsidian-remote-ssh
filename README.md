@@ -1,198 +1,310 @@
-# obsidian-remote-ssh
+# Remote SSH for Obsidian
 
 [![CI](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/ci.yml)
 [![Integration](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/integration.yml/badge.svg?branch=main)](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/integration.yml)
+[![Security](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/security.yml)
 [![codecov](https://codecov.io/gh/sotashimozono/obsidian-remote-ssh/branch/main/graph/badge.svg)](https://codecov.io/gh/sotashimozono/obsidian-remote-ssh)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A VSCode-Remote-SSH-style experience for Obsidian: keep using your
-desktop Obsidian, but the vault you edit lives on a remote SSH host.
-Files, attachments, file-explorer state, search — all served from the
-remote, transparently, by patching `app.vault.adapter`.
+[![GitHub release](https://img.shields.io/github/v/release/sotashimozono/obsidian-remote-ssh?display_name=tag&sort=semver)](https://github.com/sotashimozono/obsidian-remote-ssh/releases)
+[![Downloads](https://img.shields.io/github/downloads/sotashimozono/obsidian-remote-ssh/total)](https://github.com/sotashimozono/obsidian-remote-ssh/releases)
+[![Open issues](https://img.shields.io/github/issues/sotashimozono/obsidian-remote-ssh)](https://github.com/sotashimozono/obsidian-remote-ssh/issues)
 
-> Status: pre-release. Works end-to-end against a Linux remote when the
-> daemon is staged. Dev workflow only — install into a dev vault, not
-> your production vault.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Obsidian 1.4+](https://img.shields.io/badge/Obsidian-1.4+-7C3AED?logo=obsidian&logoColor=white)](https://obsidian.md)
+[![Go 1.25+](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![Node 20+](https://img.shields.io/badge/Node-20+-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+![Platforms: linux · macOS · amd64 · arm64](https://img.shields.io/badge/platforms-linux%20%7C%20macOS%20%C2%B7%20amd64%20%7C%20arm64-555)
 
-## How it works
+> **A VS Code Remote-SSH-style experience for Obsidian.** Open a vault that
+> lives on a remote SSH host, edit it from a real Obsidian window. Files,
+> attachments, search, and live updates — all served from the remote,
+> transparently.
+>
+> _Status: pre-1.0. End-to-end against Linux + macOS remotes with the bundled
+> Go daemon. Install only into a dev vault for now; production use after v1.0._
 
+---
+
+## What you can do
+
+- **Edit a remote vault as if it were local.** SSH in to your home server,
+  cloud VPS, or work box. The vault stays on the remote; you get the full
+  Obsidian editor experience locally — no manual `rsync`, no Dropbox dance.
+- **Use the plugins you already love.** Dataview, Templater, Excalidraw,
+  Tasks, and most plugins that go through Obsidian's vault API work
+  unchanged. (Compatibility matrix:
+  [docs/plugin-compatibility.md](docs/plugin-compatibility.md).)
+- **Edit from multiple machines.** Live updates push between connected
+  clients via `fs.watch`; conflicting saves trigger a 3-way merge UI
+  with ancestor / mine / theirs panes.
+- **Survive flaky networks.** Disconnects spool writes into an offline
+  queue; reconnect drains them automatically. The status bar shows the
+  pending count.
+- **Bring your own SSH setup.** Password, private key, agent forwarding,
+  jump host (`ProxyJump`) — all use the same `~/.ssh/config` your
+  terminal does.
+
+---
+
+## Install
+
+> ⚠️ The plugin is not yet in the Obsidian community plugin browser. Install
+> manually from a GitHub Release (BRAT support is on the roadmap; until
+> then, the steps below are the supported path).
+
+### 1 — Download the latest release
+
+Go to the [Releases page](https://github.com/sotashimozono/obsidian-remote-ssh/releases),
+find the most recent tag, and download:
+
+- `main.js`
+- `manifest.json`
+- `styles.css`
+- one daemon binary matching your **remote** OS + architecture:
+  - `obsidian-remote-server-linux-amd64`
+  - `obsidian-remote-server-linux-arm64`
+  - `obsidian-remote-server-darwin-amd64`
+  - `obsidian-remote-server-darwin-arm64`
+
+The daemon binary is what the plugin auto-uploads to your remote on first
+connect. The OS/arch picks the binary that runs on the **remote**, not on
+the machine where Obsidian is installed.
+
+### 2 — Drop the files into your vault
+
+Create the plugin folder and place the files like this:
+
+```text
+<your-vault>/
+  .obsidian/
+    plugins/
+      remote-ssh/
+        main.js
+        manifest.json
+        styles.css
+        server-bin/
+          obsidian-remote-server-linux-amd64    ← rename / pick yours
 ```
-Obsidian (this machine)            Remote host
-  app.vault.adapter ◀──── patched ──── this plugin
-                                          │
-                                          ▼
-                              SSH session (ssh2)
-                                          │
-                                          ▼
-                              JSON-RPC framed over a
-                              forwarded unix-socket stream
-                                          │
-                                          ▼
-                              obsidian-remote-server
-                              (Go daemon, auto-deployed)
-                                          │
-                                          ▼
-                              Vault files on the remote FS
-```
 
-- The plugin opens an SSH session via the bundled `ssh2` library.
-- It uploads a tiny Go daemon (`obsidian-remote-server`) to
-  `~/.obsidian-remote/` on the remote and starts it via `nohup`.
-- A local Duplex stream is forwarded to the daemon's unix socket. All
-  vault FS operations flow through that as length-framed JSON-RPC.
-- Obsidian's `app.vault.adapter` is monkey-patched so reads, writes,
-  list, watch, etc. go through the daemon instead of the local
-  filesystem. To Obsidian and to most plugins it looks like the local
-  vault is just unusually slow.
+### 3 — Enable in Obsidian
 
-## Repository layout
+Settings → Community plugins → "Installed plugins" → toggle **Remote SSH**
+on. Reload the vault if Obsidian doesn't pick it up immediately.
 
-```
-plugin/    Obsidian plugin (TypeScript, esbuild, vitest)
-server/    obsidian-remote-server daemon (Go, fsnotify)
-proto/     Shared JSON-RPC method + error definitions (TS + Go in lockstep)
-docs/      Operator notes (plugin compatibility, etc.)
-```
+### Verifying the daemon (optional but recommended)
 
-## Install (dev)
+Daemon binaries are signed with [Sigstore cosign](https://www.sigstore.dev/)
+keyless OIDC. Verify any release binary independently before trusting it on
+your remote — see [SECURITY.md](SECURITY.md#verifying-release-artefacts) for
+the one-line `cosign verify-blob` command.
 
-Prerequisites: Node 20+, Go 1.22+, an SSH host you can reach from this
-machine (password, key, or agent auth — all are supported).
+The plugin also runs a sha256 round-trip check on every deploy and refuses
+to start a daemon that doesn't match.
 
-```bash
-cd plugin
-npm install
-npm run build:full        # builds the linux/amd64 daemon and copies
-                          # main.js / manifest.json / styles.css /
-                          # server-bin/ into the dev vault
-```
-
-`build:full` writes into the dev vault path baked into
-`scripts/dev-install.mjs`. Open that vault in Obsidian, enable the
-"Remote SSH" plugin under Settings → Community plugins, and reload.
+---
 
 ## Quickstart
 
-1. **Add an SSH profile.** Settings → Remote SSH → "+ Add". Fill in
-   host, port, username, auth method (privateKey / password / agent),
-   and the **remote vault path** (relative paths are home-relative —
-   `work/VaultDev` resolves to `~/work/VaultDev` on the remote).
-2. **Choose a transport.** `RPC` (recommended) auto-deploys the daemon
-   and gives you live updates, range-served binaries, and faster fs
-   ops. `SFTP` is the fallback and works without the daemon.
-3. **Connect.** Either click the StatusBar icon or run "Remote SSH:
-   Connect to remote vault" from the command palette. On success the
-   notice reads `Connected to <name> as <user>@<host> via RPC`. With
-   `autoPatchAdapter` on (the default), the file explorer immediately
-   reflects the remote vault — no extra command needed.
-4. **Edit.** Reads/writes go through the patched adapter. Saves land
-   on the remote atomically (tmp + rename).
-5. **Disconnect.** StatusBar click or "Remote SSH: Disconnect from
-   remote vault". Adapter is restored cleanly.
+About **3 minutes** if you already have an SSH host.
+
+1. **Add a profile.** Settings → Remote SSH → "+ Add". Fill in host, port,
+   username, auth method (`privateKey` / `password` / `agent`), transport
+   (`RPC` recommended), and the **remote vault path** (relative paths
+   resolve under `$HOME` — `notes/main` → `~/notes/main`).
+2. **Click Connect** on the profile row, or run **Remote SSH: Connect to
+   remote vault** from the command palette.
+3. **A new Obsidian window appears.** That window is your "shadow vault" —
+   the same UI you know, but every file you see lives on the remote. Start
+   editing.
+
+To leave: close the shadow window, or run **Remote SSH: Disconnect from
+remote vault** inside it. The original window is never touched.
+
+---
+
+## Features
+
+| Feature | Notes |
+| --- | --- |
+| 🪟 **Shadow vault opens in a new Obsidian window** | The window you started from is untouched; the remote vault is its own first-class window with its own File Explorer, search, command palette. |
+| ⚡ **Sub-second cold-open even for 10k-file vaults** | Single `fs.walk` RPC fetches the whole tree in one round-trip. Falls back to per-folder `fs.list` for SFTP transport or older daemons. |
+| 🖼️ **Image / PDF / video rendering via ResourceBridge** | Local HTTP server (random localhost port + bearer token) serves binary content to the Obsidian webview. Image extensions go through `fs.thumbnail` with a 200 MB on-disk LRU cache. |
+| 🔁 **Live multi-client sync** | `fs.watch` notifies every connected client when another writer changes a file; the file explorer + open editors update within ~1 s. |
+| 🪢 **3-way conflict resolution** | If the remote mtime moved under your edit, the plugin opens a `ThreeWayMergeModal` with ancestor / mine / theirs panes. Plain text only; binary falls back to a 2-choice modal. |
+| 📥 **Offline write queue** | Writes during a disconnect spool to a JSONL queue under `<vault>/.obsidian/plugins/remote-ssh/queue/`; reconnect drains them automatically. Status bar shows the pending count. |
+| 🔐 **Cosign-signed daemon binaries** | Every release binary ships with a Sigstore bundle (`.bundle`). Verify provenance via `cosign verify-blob`; the plugin also runs a sha256 round-trip check on every deploy. |
+| 🩹 **Automatic reconnect with backoff** | SSH drops trigger a retry loop (default 5 attempts, exponential backoff up to 30 s). Reads served from the in-memory cache during the retry; writes spool to the offline queue. |
+| 🪪 **Per-client subtree (PathMapper)** | UI-state files (`workspace.json`, `cache/`, `graph.json`, etc) are routed to a per-device subtree on the remote so two machines don't clobber each other's tab layout. |
+| 🔌 **Jump host / `ProxyJump` support** | Multi-hop SSH through bastion hosts. Works with the same `~/.ssh/config` your terminal already uses. |
+
+---
 
 ## Settings
 
 | Setting | Default | What it does |
-|---------|---------|--------------|
-| `Client ID` | OS hostname (sanitized) | Per-device subtree on the remote: `.obsidian/user/<clientId>/`. Holds workspace.json, cache, graph state — anything that shouldn't be shared between machines. |
+| --- | --- | --- |
+| `Client ID` | sanitized OS hostname | Per-device subtree on the remote (`.obsidian/user/<id>/`). Holds workspace + UI state — anything not safe to share between machines. |
 | `User name` | OS username | Cosmetic — surfaces in the connect notice as `<user>@<host>`. |
-| `Auto-patch adapter on connect` | `true` | When on, connect immediately routes reads/writes through the remote (the VSCode "open folder on host" equivalent). Off only for plugin development. |
-| `Reconnect attempts after unexpected disconnect` | `5` | Exponential backoff up to 30 s between attempts. `0` disables auto-reconnect entirely (drops to ERROR). |
-| `Debug logging` | `false` | Enables verbose `logger.debug` lines in the in-memory log + sink. |
+| `Reconnect attempts` | `5` | How many times to retry before giving up. Exponential backoff up to 30 s. `0` disables auto-reconnect. |
+| `Debug logging` | `false` | Adds `debug`-level lines to the JSONL log file (see Troubleshooting). |
 
-## Per-client subtree (PathMapper)
+---
 
-Files that hold UI state are redirected to a per-client subtree so two
-machines can edit the same vault without overwriting each other's tab
-layout. Default redirected paths:
+## Plugin compatibility
 
-- `.obsidian/workspace.json`
-- `.obsidian/workspace-mobile.json`
-- `.obsidian/cache` (and the whole `cache/` subtree)
-- `.obsidian/cache.zlib`
-- `.obsidian/types.json`
-- `.obsidian/file-recovery.json`
-- `.obsidian/graph.json`
-- `.obsidian/canvas.json`
+The shadow vault patches `app.vault.adapter` so plugins that go through
+Obsidian's vault API work transparently. Plugins that **bypass** the
+adapter — typically by importing Node `fs` directly, joining paths against
+`app.vault.adapter.basePath`, or using internal Obsidian APIs we don't
+intercept — read or write the local empty shadow directory instead and
+effectively don't see your remote vault.
 
-Everything else under `.obsidian/` (hotkeys, plugins, themes,
-snippets, community-plugins.json) is shared across clients. When you
-change `Client ID`, the previous subtree stays on the remote with no
-automatic migration; copy files manually if you want them.
+The full matrix is in
+[docs/plugin-compatibility.md](docs/plugin-compatibility.md). Short summary:
 
-## Reconnect behaviour
+- ✅ **Most read-side plugins** — Dataview, Tasks, Calendar, Outliner, …
+- ✅ **Most write-side plugins** — Templater, Daily Notes, Quick Switcher++, …
+- ✅ **Image-rendering plugins** — Excalidraw, Image Toolkit (RPC transport only).
+- ⚠️ **fs-direct plugins** — Omnisearch (uses Node `fs` for indexing), some
+  media-importer plugins. These read the empty local shadow dir.
 
-If the SSH session drops unexpectedly, the plugin enters a retry loop
-(`Reconnecting (1/5) in 1s…` → `(attempt 1/5)…` → `Reconnected`). The
-patched adapter stays attached the whole time:
-
-- **Reads** are served from the in-memory cache on hit; cache miss
-  throws a stable "Remote SSH: reconnecting" error.
-- **Writes / list / stat** throw immediately (no silent buffering).
-- **fs.changed** subscriptions are restored after reconnect — no
-  manual refresh.
-
-You can cancel the loop early with the "Remote SSH: Cancel ongoing
-reconnect" command (only visible while the loop is active).
-
-## Known limitations
-
-- **Plugins that bypass `app.vault.adapter`** won't see the remote
-  vault. Anything calling Node `fs` directly, reading
-  `app.vault.adapter.basePath` and joining paths, or using Obsidian
-  internal APIs we don't intercept, will read or write the local
-  filesystem instead. See [docs/plugin-compatibility.md](docs/plugin-compatibility.md)
-  for the rolling list.
-- **Mobile (iOS / Android)** is unsupported. The plugin requires Node
-  APIs that only exist on desktop Obsidian.
-- **First read of a large file** still pulls the full contents over
-  the wire. Range-aware seeks (PDF / mp4 scrubbing) are free after
-  that as long as the file fits in the read cache (default 64 MB).
-  Bigger files re-fetch on cache eviction. True partial reads
-  (`fs.readBinaryRange`) are planned.
-- **Symlinks** on the remote are followed by stat / read. We don't
-  expose them as symlinks to Obsidian.
-- **One profile at a time.** Multi-vault concurrent sessions aren't
-  supported; disconnect, then connect to a different profile.
-- **Daemon binary is linux/amd64 only** in the current build. Other
-  remote architectures need a cross-compile in `scripts/build-server.mjs`.
+---
 
 ## Troubleshooting
 
-- **"daemon binary not staged"**: run `npm run build:full` (or
-  `build:server`) and reload the plugin. Linux/amd64 only for now.
-- **"adapter patch failed"**: connect again with the autoPatchAdapter
-  setting off, then run `Debug: patch adapter` and watch
-  `<vault>/.obsidian/plugins/remote-ssh/console.log` for the actual
-  error.
-- **The file explorer is empty after connect**: open the console.log.
-  If you see `PathMapper: clientId="..."` followed by errors, the
-  patch ran but the listing failed. If you don't see the PathMapper
-  line, the patch never ran — check `autoPatchAdapter` is on.
-- **Reconnect spins forever then fails**: `Reconnect attempts` is set
-  too high or the remote is genuinely down. Set it to a smaller value
-  or `0` to fail-fast.
-- **Images / PDFs don't render**: the ResourceBridge needs `RPC`
-  transport. Check the active profile's transport setting.
+The console log is the first thing to check. Path:
 
-The console log lives at
-`<vault>/.obsidian/plugins/remote-ssh/console.log` (rolling, ~5 MB
-cap, 3 generations). It's the first thing to check before filing
-anything.
+```text
+<shadow-vault>/.obsidian/plugins/remote-ssh/console.log
+```
 
-## Working in the repo
+For a shadow vault, that's typically:
 
-| Task                       | Where |
-|----------------------------|-------|
-| Build / test the plugin    | `cd plugin && npm test` / `npm run build:full` |
-| Build / test the server    | `cd server && go test ./... && make test` |
-| Edit shared protocol types | `proto/types.go` + `plugin/src/proto/types.ts` (move both in the same PR) |
+```text
+~/.obsidian-remote/vaults/<profile-id>/.obsidian/plugins/remote-ssh/console.log
+```
 
-CI runs each side independently so plugin changes don't block server
-work and vice versa.
+It's **JSONL** (one event per line). Pipe through `jq` for fast triage:
+
+```bash
+# Just the errors
+jq 'select(.level == "error")' console.log
+
+# Everything from a particular subsystem
+jq 'select(.fields.category == "auth")' console.log
+
+# Last 20 lines, one-line per
+tail -20 console.log | jq -c '{ts, level, msg}'
+```
+
+Common issues:
+
+- **"daemon binary not staged"** — the binary file inside `server-bin/`
+  is missing or doesn't match your remote OS / arch. Re-download from the
+  release that matches your installed plugin version.
+- **No new window opens after Connect** — the shadow vault wasn't
+  registered with Obsidian. Look for an `ObsidianRegistry` write error in
+  the source-window console log (commonly a permissions issue on the
+  Obsidian config dir). Reopen Settings and click Connect again.
+- **Shadow window opens but File Explorer is empty** — the auto-connect
+  failed. Open the shadow window's console log; look for `BulkWalker` or
+  `populateVaultFromRemote` errors. Try **Remote SSH: Reconnect to remote**
+  from the command palette inside the shadow window.
+- **Reconnect spins forever then fails** — `Reconnect attempts` is set
+  too high or the remote really is down. Set it lower (or `0` for
+  fail-fast).
+- **Images / PDFs don't render** — ResourceBridge needs `RPC` transport.
+  Check the active profile's transport setting.
+- **`N pending offline edits` won't go away** — the replay is hitting a
+  conflict on every entry. Click the status-bar indicator to open the
+  pending-edits modal and inspect; discard if appropriate.
+
+---
+
+## Security
+
+Daemon binaries are signed with Sigstore cosign keyless OIDC; the plugin
+verifies the upload with sha256 round-trip on every deploy.
+
+To **report a vulnerability**, please use a private GitHub Security
+Advisory — full policy in [SECURITY.md](SECURITY.md). Do **not** open a
+public issue for security bugs.
+
+---
+
+## Contributing
+
+Contributions welcome. Dev setup, branch + commit conventions, version-bump
+mechanic, and how to run the full test suite are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+Issues for bug reports + feature requests are at
+[github.com/sotashimozono/obsidian-remote-ssh/issues](https://github.com/sotashimozono/obsidian-remote-ssh/issues).
+
+---
+
+## How it works (technical)
+
+```mermaid
+flowchart LR
+    subgraph Original["Original window (any local vault)"]
+      U[User clicks Connect on profile P] --> M[ShadowVaultManager]
+    end
+
+    M --> B["ShadowVaultBootstrap<br/>materialise ~/.obsidian-remote/vaults/&lt;P-id&gt;/<br/>per-file install of plugin<br/>seed data.json with autoConnectProfileId=P"]
+    B --> R["ObsidianRegistry<br/>register vault path in obsidian.json"]
+    R --> W["WindowSpawner<br/>obsidian://open?path=…"]
+
+    subgraph Shadow["Shadow window (new Obsidian window)"]
+      L[onLayoutReady reads autoConnectProfileId] --> C[Connect to remote profile]
+      C --> P[Patch app.vault.adapter to remote FS client]
+      P --> WK[BulkWalker: fs.walk RPC<br/>or per-folder fs.list fallback]
+      WK --> V[VaultModelBuilder.build<br/>insert TFile / TFolder into vault.fileMap<br/>fire vault.trigger 'create']
+      V --> X[File Explorer renders the remote tree]
+    end
+
+    W -.spawn new window.-> L
+
+    subgraph Transport["SSH transport (in the shadow window)"]
+      P -. fs ops .-> RPC[RpcRemoteFsClient]
+      P -. or .-> SFTP[SftpRemoteFsClient]
+      RPC --> SD[ServerDeployer auto-uploads<br/>obsidian-remote-server to ~/.obsidian-remote/]
+      SD --> D[(Go daemon<br/>JSON-RPC over framed unix-socket stream)]
+      SFTP --> SSH[(ssh2 SFTP)]
+      D --> FS[(Remote vault files)]
+      SSH --> FS
+    end
+```
+
+Two transports per profile:
+
+- **`RPC` (recommended).** The plugin uploads a small Go daemon
+  (`obsidian-remote-server`) to `~/.obsidian-remote/` on the remote and
+  starts it via `nohup`. A local Duplex stream is forwarded to the
+  daemon's unix socket; vault FS ops flow as length-framed JSON-RPC.
+  Required for the ResourceBridge (image / PDF / video rendering),
+  `fs.walk` (sub-second cold-open), `fs.thumbnail` (image cache), and
+  `fs.watch` (live updates from other clients).
+- **`SFTP`.** Direct SFTP over `ssh2`, no daemon. Works without any
+  remote-side install but loses the daemon-only features above.
+
+Why a separate window: Obsidian doesn't expose a public path to "rebuild
+the vault model from a different adapter mid-session." The shadow window's
+vault is constructed from the remote tree at startup, so every plugin in
+that window sees a normal-looking vault from frame zero. The full design
+and the smoke evidence behind it are in
+[docs/architecture-shadow-vault.md](docs/architecture-shadow-vault.md).
+
+The performance machinery (`BulkWalker`, `fs.thumbnail` cache) is
+documented in [docs/architecture-perf.md](docs/architecture-perf.md);
+the conflict + offline-queue design is in
+[docs/architecture-collab.md](docs/architecture-collab.md); the test
+strategy is in [docs/testing-strategy.md](docs/testing-strategy.md).
+
+---
 
 ## Acknowledgements
 
-Inspired by VSCode's Remote-SSH model. The wire format is an
-LSP-style framed JSON-RPC over a unix-socket-forwarded stream — the
-same shape language servers use, just for filesystem ops.
+Inspired by VS Code's Remote-SSH model. The wire format is an LSP-style
+framed JSON-RPC over a unix-socket-forwarded stream — the same shape
+language servers use, just for filesystem ops.
