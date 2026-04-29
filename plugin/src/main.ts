@@ -21,7 +21,8 @@ import { PendingEditsModal } from './ui/PendingEditsModal';
 import { SftpRemoteFsClient } from './adapter/SftpRemoteFsClient';
 import { RpcRemoteFsClient } from './adapter/RpcRemoteFsClient';
 import { establishRpcConnection } from './transport/RpcConnection';
-import { ServerDeployer } from './transport/ServerDeployer';
+import { ServerDeployer, resolveRemotePath } from './transport/ServerDeployer';
+import { tryReuseExistingDaemon } from './transport/DaemonProbe';
 import { ReconnectManager } from './transport/ReconnectManager';
 import type { ReconnectState } from './transport/ReconnectManager';
 import { DEFAULT_BACKOFF } from './transport/Backoff';
@@ -444,6 +445,29 @@ export default class RemoteSshPlugin extends Plugin {
     const remoteBinaryPath = '.obsidian-remote/server';
     const remoteSocketPath = profile.rpcSocketPath?.trim() || '.obsidian-remote/server.sock';
     const remoteTokenPath  = profile.rpcTokenPath?.trim()  || '.obsidian-remote/token';
+
+    // #131: probe for an existing healthy daemon before redeploying.
+    // OpenSSH's direct-streamlocal forwarding (used by openUnixStream)
+    // has no concept of CWD, so resolve to absolute against the
+    // remote's $HOME first. Probe failure (socket missing / token
+    // unreadable / handshake error / protocol mismatch) returns null
+    // and falls through to the normal deploy flow.
+    const home = await this.client.getRemoteHome();
+    const absSocketPath = resolveRemotePath(remoteSocketPath, home);
+    const absTokenPath  = resolveRemotePath(remoteTokenPath,  home);
+    const reused = await tryReuseExistingDaemon(this.client, absSocketPath, absTokenPath);
+    if (reused) {
+      this.rpcConnection = reused;
+      // Intentionally leave `this.daemonDeployer` null — we did not
+      // start this daemon, so disconnect must NOT kill it. Another
+      // session may be using it. (See DaemonProbe.ts header for the
+      // first-mover-still-kills caveat.)
+      logger.info(
+        `startRpcSession: reusing existing daemon for ${effectivePath} ` +
+        `(skipped kill+redeploy)`,
+      );
+      return;
+    }
 
     logger.info(`startRpcSession: deploying daemon to serve ${effectivePath}`);
     const deployer = new ServerDeployer(this.client);
