@@ -1,0 +1,182 @@
+name: Security
+
+# Phase D-δ.3 — supply-chain + static-analysis sweeps. Closes
+# Phase D's "npm audit clean" exit-criterion alongside Logger
+# JSONL (D-β / F20, merged) and cosign-signed daemon binaries
+# (D-δ.2 / F24, in-flight).
+#
+# Surfaces vulnerabilities + suspicious code patterns at three
+# cadences:
+#   - **PR**: catches a freshly-introduced regression before it
+#     lands. `continue-on-error` on each scanner so a transitive
+#     CVE in someone else's dep tree doesn't block the queue —
+#     visibility, not gating, is the goal at PR time.
+#   - **push to main**: same scanners, also informational,
+#     produces fresh SBOM + scan reports as artifacts.
+#   - **weekly cron** (Monday UTC 06:00 = JST 15:00): the
+#     authoritative run — surfaces zero-days that landed since
+#     the last PR was merged. Dependabot covers most of this on
+#     the bump side; this workflow is the "have we already shipped
+#     a vulnerable release" check.
+#
+# What's NOT in this workflow:
+#   - Secret scanning — covered by GitHub's built-in secret
+#     scanning + push protection (no action needed in YAML).
+#   - License compliance — out of scope for a single-author MIT
+#     project; revisit at v1.0 if external contributions arrive.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # Trivy + gosec emit SARIF for the GitHub Security tab.
+  security-events: write
+
+jobs:
+  # ─── Plugin: npm audit ────────────────────────────────────────────────────
+  npm-audit:
+    name: npm audit (plugin, prod deps)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: plugin/package-lock.json
+      - run: npm ci
+      - name: npm audit (prod, fail on high+)
+        # `--omit=dev` ignores dev dependencies (vitest, esbuild,
+        # eslint chain) — they don't ship to users. `--audit-level
+        # high` returns non-zero when any HIGH or CRITICAL CVE is
+        # found in the prod tree. Lower findings are reported but
+        # don't fail.
+        run: npm audit --omit=dev --audit-level=high
+
+  # ─── Server: gosec ────────────────────────────────────────────────────────
+  gosec:
+    name: gosec (server)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: false
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - name: Run gosec → SARIF
+        # `-no-fail` so the SARIF artifact + Security tab upload
+        # always run; gating is via `severity` of findings reviewed
+        # in the Security tab, not via this step's exit code.
+        # Gosec's defaults exclude the obvious false-positives
+        # (G104 "errors not checked" on test code, etc.).
+        run: gosec -no-fail -fmt sarif -out gosec.sarif ./...
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: server/gosec.sarif
+          category: gosec
+
+  # ─── Filesystem scan: trivy (CVEs in deps + Dockerfiles + secrets) ────────
+  trivy:
+    name: trivy fs scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Trivy filesystem scan → SARIF
+        # `@master` is what aquasecurity/trivy-action's own README
+        # recommends for "always-latest stable"; their tag namespace
+        # is sparse (no 0.28.0 published). Dependabot will pin to a
+        # SHA on its first sweep over this workflow.
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          # Skip caches + node_modules so the scan focuses on
+          # in-repo declarations (package.json + go.mod +
+          # Dockerfiles + Makefiles) rather than vendored copies.
+          skip-dirs: 'node_modules,plugin/node_modules,server/dist,plugin/server-bin'
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: trivy.sarif
+          exit-code: '0'
+          ignore-unfixed: true
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+
+  # ─── SBOM (CycloneDX, plugin npm tree) ────────────────────────────────────
+  sbom-plugin:
+    name: SBOM — plugin (CycloneDX)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: plugin/package-lock.json
+      - run: npm ci
+      - name: Generate CycloneDX SBOM
+        # `@cyclonedx/cyclonedx-npm` walks the resolved npm tree
+        # and emits a CycloneDX 1.5 JSON document with one
+        # component per installed package. Useful as evidence for
+        # any future "what's in our 0.x.y release" question, and
+        # for downstream consumers that want machine-readable
+        # provenance.
+        run: |
+          npx --yes @cyclonedx/cyclonedx-npm \
+            --output-format JSON \
+            --output-file plugin-sbom.cdx.json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: plugin-sbom-${{ github.run_id }}
+          path: plugin/plugin-sbom.cdx.json
+          retention-days: 90
+
+  # ─── SBOM (CycloneDX, server Go module tree) ──────────────────────────────
+  sbom-server:
+    name: SBOM — server (CycloneDX)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: false
+      - name: Install cyclonedx-gomod
+        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+      - name: Generate CycloneDX SBOM (server)
+        run: cyclonedx-gomod mod -licenses -json -output server-sbom.cdx.json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: server-sbom-${{ github.run_id }}
+          path: server/server-sbom.cdx.json
+          retention-days: 90
