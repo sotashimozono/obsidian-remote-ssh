@@ -84,6 +84,33 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  # ─── Node version compatibility (Ubuntu only) ────────────────────────────────
+  # The OS matrix above pins Node 20 (matches Obsidian Electron 30+).
+  # This job widens the Node-version axis on Ubuntu only — the LTS range
+  # 18 → 22 covers everyone realistically running this from a dev shell
+  # and catches Node-version-specific issues (deprecated APIs,
+  # WebStream/Buffer behaviour drift, fs.cp polyfills, etc.) without
+  # the 9-job 3×3 OS×Node combinatorial explosion.
+  node-compat:
+    name: Test (ubuntu, node-${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['18', '22']
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: plugin/package-lock.json
+      - run: npm ci
+      - run: node node_modules/vitest/vitest.mjs run
+
   # ─── Production build + bundle size guard (matrix) ───────────────────────────
   # Build runs on every OS — cheap, catches esbuild platform issues. The
   # bundle artifact is uploaded only from ubuntu (per-OS uploads would
