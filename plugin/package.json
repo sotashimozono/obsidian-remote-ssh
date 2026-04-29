@@ -1,6 +1,6 @@
 {
   "name": "obsidian-remote-ssh",
-  "version": "0.4.78",
+  "version": "0.4.79",
   "description": "VS Code Remote SSH-like experience for Obsidian",
   "main": "main.js",
   "scripts": {
@@ -28,6 +28,9 @@
   ],
   "author": "",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "ssh2": "^1.17.0"
   },
