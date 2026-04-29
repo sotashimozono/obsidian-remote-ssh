@@ -33,6 +33,7 @@ import { StatusBar } from './ui/StatusBar';
 import { ConnectModal } from './ui/ConnectModal';
 import { SettingsTab } from './settings/SettingsTab';
 import { logger } from './util/logger';
+import { classifyToNotice } from './transport/errorTaxonomy';
 import { perfTracer } from './util/PerfTracer';
 import { VaultModelBuilder } from './vault/VaultModelBuilder';
 import { BulkWalker } from './vault/BulkWalker';
@@ -477,9 +478,14 @@ export default class RemoteSshPlugin extends Plugin {
       logger.info(`Smoke test: list ${effectivePath} returned ${entries.length} entries`);
     } catch (e) {
       this.setState(SyncState.ERROR);
-      const msg = (e as Error).message;
-      logger.error(`Connect failed: ${msg}`);
-      new Notice(`Remote SSH: Connect failed — ${msg}`);
+      const { notice, classified } = classifyToNotice(e);
+      logger.error(`Connect failed: ${classified.title}`, {
+        category: classified.category,
+        code: classified.code,
+        original: classified.original.message,
+        profileId: profile.id,
+      });
+      new Notice(notice);
       try { await this.client.disconnect(); } catch { /* ignore */ }
       return;
     }
@@ -496,9 +502,14 @@ export default class RemoteSshPlugin extends Plugin {
         // RPC startup failed; tear the SFTP session back down so the user
         // can retry from a clean state instead of half-connected.
         this.setState(SyncState.ERROR);
-        const msg = (e as Error).message;
-        logger.error(`RPC startup failed: ${msg}`);
-        new Notice(`Remote SSH: RPC startup failed — ${msg}`);
+        const { notice, classified } = classifyToNotice(e);
+        logger.error(`RPC startup failed: ${classified.title}`, {
+          category: classified.category,
+          code: classified.code,
+          original: classified.original.message,
+          profileId: profile.id,
+        });
+        new Notice(notice);
         try { await this.client.disconnect(); } catch { /* ignore */ }
         return;
       }
@@ -814,7 +825,16 @@ export default class RemoteSshPlugin extends Plugin {
       // setReconnecting flag goes with it.
       this.restoreAdapter();
       this.setState(SyncState.ERROR);
-      new Notice(`Remote SSH: Reconnect failed — ${s.reason}`);
+      // s.reason is a string from ReconnectManager; wrap into Error
+      // so classifyError can run pattern matching on the message
+      // (e.g. host-key / timeout substrings still get caught).
+      const { notice, classified } = classifyToNotice(new Error(s.reason));
+      logger.error(`Reconnect failed: ${classified.title}`, {
+        category: classified.category,
+        code: classified.code,
+        original: s.reason,
+      });
+      new Notice(notice);
       this.reconnectManager = null;
     } else if (s.kind === 'cancelled') {
       this.dataAdapter?.setReconnecting(false);
