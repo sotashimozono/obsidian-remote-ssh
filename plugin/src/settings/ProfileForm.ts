@@ -66,7 +66,7 @@ export class ProfileForm extends Modal {
 
     new Setting(contentEl)
       .setName('Host')
-      .addText(t => t.setPlaceholder('example.com').setValue(this.profile.host)
+      .addText(t => t.setValue(this.profile.host)
         .onChange(v => { this.profile.host = v; }));
 
     new Setting(contentEl)

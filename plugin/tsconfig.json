@@ -8,7 +8,8 @@
     "allowSyntheticDefaultImports": true,
     "isolatedModules": true,
     "strictNullChecks": true,
-    "lib": ["ES2018", "DOM"]
+    "lib": ["ES2018", "DOM"],
+    "skipLibCheck": true
   },
   "include": ["src/**/*.ts"]
 }
