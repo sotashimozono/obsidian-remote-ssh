@@ -17,7 +17,7 @@
 # container restarts (otherwise users would TOFU-prompt every time
 # the container is recreated).
 
-FROM alpine:3.20
+FROM alpine:3.23
 
 RUN apk add --no-cache openssh-server bash shadow tini iproute2 \
  && mkdir -p /var/empty /etc/ssh/keys \
