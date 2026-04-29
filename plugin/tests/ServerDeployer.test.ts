@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
-import { ServerDeployer, resolveRemotePath, buildKillPattern, type DeployerSshClient } from '../src/transport/ServerDeployer';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import * as crypto from 'node:crypto';
+import { ServerDeployer, resolveRemotePath, buildKillPattern, computeFileSha256, type DeployerSshClient } from '../src/transport/ServerDeployer';
 
 /**
  * Generic remote home used in mocks. Deliberately a fake path — the
@@ -9,9 +13,34 @@ import { ServerDeployer, resolveRemotePath, buildKillPattern, type DeployerSshCl
 const FAKE_HOME = '/home/alice';
 
 /**
+ * Real on-disk binary fixture for `localBinaryPath`. Phase D-δ / F23
+ * added a sha256 verification step that hashes the local file via
+ * `fs.createReadStream`, so a non-existent dummy path no longer
+ * works. Created once per suite and cleaned up in afterAll.
+ */
+let BIN: { path: string; sha256: string };
+let BIN_DIR: string;
+
+beforeAll(() => {
+  BIN_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'srv-deploy-test-'));
+  const p = path.join(BIN_DIR, 'fake-server-binary');
+  const data = Buffer.from('fake binary contents — would normally be a few MB Go ELF');
+  fs.writeFileSync(p, data);
+  BIN = { path: p, sha256: crypto.createHash('sha256').update(data).digest('hex') };
+});
+
+afterAll(() => {
+  try { fs.rmSync(BIN_DIR, { recursive: true, force: true }); } catch { /* ignore */ }
+});
+
+/**
  * Recordable fake: exec commands queue up, uploadFile / readRemoteFile
  * call user-supplied scripts. Tests assert the order + content of the
  * commands that the deployer fires.
+ *
+ * Default-responds to `sha256sum` commands with the matching hex of
+ * the BIN fixture so the deployer's verify step (Phase D-δ / F23)
+ * succeeds without each test having to wire it explicitly.
  */
 function fakeSsh(opts: {
   /** Function called whenever the deployer reads a remote file (e.g. the token). */
@@ -20,6 +49,8 @@ function fakeSsh(opts: {
   onExec?: (cmd: string) => { stdout?: string; stderr?: string; exitCode?: number };
   /** Override the remote $HOME exposed via getRemoteHome(). */
   remoteHome?: string;
+  /** Override the sha256 the fake `sha256sum` returns (for tampering tests). */
+  shaResponse?: string;
 }): {
   ssh: DeployerSshClient;
   execLog: string[];
@@ -34,6 +65,12 @@ function fakeSsh(opts: {
   const ssh: DeployerSshClient = {
     async exec(cmd) {
       execLog.push(cmd);
+      // Default sha256sum response → BIN.sha256 (verify passes). Tests
+      // can override via opts.onExec (returned earlier wins) or via
+      // opts.shaResponse to inject a mismatch.
+      if (cmd.startsWith('sha256sum') && !opts.onExec?.(cmd)) {
+        return { stdout: `${opts.shaResponse ?? BIN.sha256}  /remote/path\n`, stderr: '', exitCode: 0 };
+      }
       const r = opts.onExec?.(cmd);
       return {
         stdout:   r?.stdout ?? '',
@@ -62,7 +99,7 @@ describe('ServerDeployer', () => {
     });
     const deployer = new ServerDeployer(ssh);
     const out = await deployer.deploy({
-      localBinaryPath: '/local/server',
+      localBinaryPath: BIN.path,
       remoteVaultRoot: '/srv/vault',
       waitForTokenTimeoutMs: 1000,
     });
@@ -74,7 +111,7 @@ describe('ServerDeployer', () => {
     expect(out.remoteBinaryPath).toBe(`${FAKE_HOME}/.obsidian-remote/server`);
     expect(out.remoteSocketPath).toBe(`${FAKE_HOME}/.obsidian-remote/server.sock`);
     expect(out.remoteTokenPath).toBe(`${FAKE_HOME}/.obsidian-remote/token`);
-    expect(uploads).toEqual([{ local: '/local/server', remote: `${FAKE_HOME}/.obsidian-remote/server` }]);
+    expect(uploads).toEqual([{ local: BIN.path, remote: `${FAKE_HOME}/.obsidian-remote/server` }]);
 
     // The first three commands must, in order, prep the dir, kill any
     // prior daemon, and remove stale binary + socket + token files.
@@ -87,9 +124,13 @@ describe('ServerDeployer', () => {
     // file (ETXTBSY) can't block the upcoming upload.
     expect(execLog[2]).toBe(`rm -f '${FAKE_HOME}/.obsidian-remote/server' '${FAKE_HOME}/.obsidian-remote/server.sock' '${FAKE_HOME}/.obsidian-remote/token'`);
 
-    // chmod and start come after the upload.
+    // chmod, sha256sum verify, and start come after the upload.
+    // Phase D-δ / F23 added the sha256sum step between chmod and the
+    // nohup launch — the daemon never starts unless the bytes on
+    // disk match what we shipped.
     expect(execLog[3]).toMatch(new RegExp(`chmod 700 '${FAKE_HOME}/\\.obsidian-remote/server'`));
-    const startCmd = execLog[4];
+    expect(execLog[4]).toMatch(new RegExp(`^sha256sum '${FAKE_HOME}/\\.obsidian-remote/server'`));
+    const startCmd = execLog[5];
     expect(startCmd).toMatch(new RegExp(`^nohup '${FAKE_HOME}/\\.obsidian-remote/server'`));
     expect(startCmd).toMatch(/--vault-root='\/srv\/vault'/);
     expect(startCmd).toMatch(new RegExp(`--socket='${FAKE_HOME}/\\.obsidian-remote/server\\.sock'`));
@@ -100,7 +141,7 @@ describe('ServerDeployer', () => {
   it('skips the kill step when killExisting is false', async () => {
     const { ssh, execLog } = fakeSsh({ onReadFile: () => Buffer.from('tok') });
     await new ServerDeployer(ssh).deploy({
-      localBinaryPath: '/x', remoteVaultRoot: '/y',
+      localBinaryPath: BIN.path, remoteVaultRoot: '/y',
       killExisting: false, waitForTokenTimeoutMs: 100,
     });
     expect(execLog.some(c => c.includes('pkill'))).toBe(false);
@@ -110,7 +151,7 @@ describe('ServerDeployer', () => {
   it('honours custom remote paths and absolutises relative ones against $HOME', async () => {
     const { ssh, execLog, uploads } = fakeSsh({ onReadFile: () => Buffer.from('tok') });
     await new ServerDeployer(ssh).deploy({
-      localBinaryPath: '/x', remoteVaultRoot: '/y',
+      localBinaryPath: BIN.path, remoteVaultRoot: '/y',
       remoteBinaryPath: 'tools/orsd/bin',
       remoteSocketPath: 'tools/orsd/sock',
       remoteTokenPath:  'tools/orsd/tok',
@@ -125,7 +166,7 @@ describe('ServerDeployer', () => {
   it('passes through paths that are already absolute, even if they contain spaces', async () => {
     const { ssh, execLog, uploads } = fakeSsh({ onReadFile: () => Buffer.from('tok') });
     await new ServerDeployer(ssh).deploy({
-      localBinaryPath: '/x',
+      localBinaryPath: BIN.path,
       remoteVaultRoot: '/has spaces/vault',
       remoteBinaryPath: '/with space/server',
       remoteSocketPath: '/with space/server.sock',
@@ -142,7 +183,7 @@ describe('ServerDeployer', () => {
   it('expands ~/... paths against $HOME', async () => {
     const { ssh, execLog } = fakeSsh({ onReadFile: () => Buffer.from('tok') });
     await new ServerDeployer(ssh).deploy({
-      localBinaryPath: '/x', remoteVaultRoot: '/y',
+      localBinaryPath: BIN.path, remoteVaultRoot: '/y',
       remoteBinaryPath: '~/custom/server',
       remoteSocketPath: '~/custom/server.sock',
       waitForTokenTimeoutMs: 100,
@@ -158,7 +199,7 @@ describe('ServerDeployer', () => {
       onExec: (cmd) => cmd.includes('mkdir') ? { exitCode: 5, stderr: 'permission denied' } : { exitCode: 0 },
     });
     await expect(new ServerDeployer(ssh).deploy({
-      localBinaryPath: '/x', remoteVaultRoot: '/y',
+      localBinaryPath: BIN.path, remoteVaultRoot: '/y',
       waitForTokenTimeoutMs: 100,
     })).rejects.toThrow(/exited 5/);
   });
@@ -173,7 +214,7 @@ describe('ServerDeployer', () => {
       },
     });
     const out = await new ServerDeployer(ssh).deploy({
-      localBinaryPath: '/x', remoteVaultRoot: '/y',
+      localBinaryPath: BIN.path, remoteVaultRoot: '/y',
       waitForTokenTimeoutMs: 5000,
     });
     expect(out.token).toBe('eventually-arrived');
@@ -185,7 +226,7 @@ describe('ServerDeployer', () => {
       onReadFile: () => { throw new Error('ENOENT'); },
     });
     await expect(new ServerDeployer(ssh).deploy({
-      localBinaryPath: '/x', remoteVaultRoot: '/y',
+      localBinaryPath: BIN.path, remoteVaultRoot: '/y',
       waitForTokenTimeoutMs: 200,
     })).rejects.toThrow(/did not write/);
   });
@@ -194,7 +235,7 @@ describe('ServerDeployer', () => {
     const { ssh, execLog } = fakeSsh({ onReadFile: () => Buffer.from('tok') });
     const deployer = new ServerDeployer(ssh);
     await deployer.deploy({
-      localBinaryPath: '/x', remoteVaultRoot: '/y',
+      localBinaryPath: BIN.path, remoteVaultRoot: '/y',
       waitForTokenTimeoutMs: 100,
     });
     const before = execLog.length;
@@ -216,12 +257,91 @@ describe('ServerDeployer', () => {
   it('caches getRemoteHome across mkdir/start/etc within one deploy()', async () => {
     const { ssh, homeCalls } = fakeSsh({ onReadFile: () => Buffer.from('tok') });
     await new ServerDeployer(ssh).deploy({
-      localBinaryPath: '/x', remoteVaultRoot: '/y',
+      localBinaryPath: BIN.path, remoteVaultRoot: '/y',
       waitForTokenTimeoutMs: 100,
     });
     // The deployer should query $HOME exactly once, even though four
     // separate paths get resolved.
     expect(homeCalls.count).toBe(1);
+  });
+
+  // ── Phase D-δ / F23: sha256 verification ────────────────────────────
+
+  it('F23: rejects deploy when remote sha256 does NOT match local — no daemon launch', async () => {
+    const { ssh, execLog } = fakeSsh({
+      onReadFile: () => Buffer.from('tok'),
+      // Remote returns a different sha — simulates corrupted upload
+      // OR a malicious host swap between SFTP-write and our exec.
+      shaResponse: '0000000000000000000000000000000000000000000000000000000000000000',
+    });
+    await expect(new ServerDeployer(ssh).deploy({
+      localBinaryPath: BIN.path, remoteVaultRoot: '/y',
+      waitForTokenTimeoutMs: 100,
+    })).rejects.toThrow(/binary verification failed/);
+    // The nohup never fires — verify that the launch step is absent.
+    // pkill / rm / mkdir / chmod / sha256sum may all be present, but
+    // not nohup (the deploy aborted at the verify check).
+    expect(execLog.some(c => c.startsWith('nohup'))).toBe(false);
+  });
+
+  it('F23: rejects deploy when remote sha256sum errors out (sha256sum missing on host)', async () => {
+    const { ssh } = fakeSsh({
+      onReadFile: () => Buffer.from('tok'),
+      onExec: (cmd) => cmd.startsWith('sha256sum')
+        ? { exitCode: 127, stderr: 'sha256sum: command not found' }
+        : { exitCode: 0 },
+    });
+    await expect(new ServerDeployer(ssh).deploy({
+      localBinaryPath: BIN.path, remoteVaultRoot: '/y',
+      waitForTokenTimeoutMs: 100,
+    })).rejects.toThrow(/exited 127/);
+  });
+
+  it('F23: extracts the leading hex from sha256sum\'s `<hex>  <path>` output', async () => {
+    // sha256sum's output format is `<sha-hex>  <path>\n`. The verify
+    // path must split on whitespace and take only the leading hex,
+    // so an unusual remote path doesn't trip parsing.
+    const { ssh } = fakeSsh({
+      onReadFile: () => Buffer.from('tok'),
+      onExec: (cmd) => cmd.startsWith('sha256sum')
+        ? { stdout: `${BIN.sha256}  /weird/path with spaces/server\n`, exitCode: 0 }
+        : { exitCode: 0 },
+    });
+    // Should NOT throw — parsing handles the weird trailing path.
+    const out = await new ServerDeployer(ssh).deploy({
+      localBinaryPath: BIN.path, remoteVaultRoot: '/y',
+      waitForTokenTimeoutMs: 100,
+    });
+    expect(out.token).toBe('tok');
+  });
+
+  it('F23: tolerates uppercase / whitespace differences in the remote sha (case-insensitive)', async () => {
+    // Some sha256sum implementations emit upper-case hex; the verify
+    // step lowercases before comparing.
+    const { ssh } = fakeSsh({
+      onReadFile: () => Buffer.from('tok'),
+      onExec: (cmd) => cmd.startsWith('sha256sum')
+        ? { stdout: `   ${BIN.sha256.toUpperCase()}  /remote\n`, exitCode: 0 }
+        : { exitCode: 0 },
+    });
+    const out = await new ServerDeployer(ssh).deploy({
+      localBinaryPath: BIN.path, remoteVaultRoot: '/y',
+      waitForTokenTimeoutMs: 100,
+    });
+    expect(out.token).toBe('tok');
+  });
+});
+
+describe('computeFileSha256', () => {
+  it('produces the same digest crypto.createHash gives for the same bytes', async () => {
+    const got = await computeFileSha256(BIN.path);
+    expect(got).toBe(BIN.sha256);
+    // Lowercase hex, fixed 64 chars (sha-256 = 32 bytes = 64 hex).
+    expect(got).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('rejects with the underlying ENOENT when the file does not exist', async () => {
+    await expect(computeFileSha256('/no/such/file.bin')).rejects.toThrow(/ENOENT/);
   });
 });
 
