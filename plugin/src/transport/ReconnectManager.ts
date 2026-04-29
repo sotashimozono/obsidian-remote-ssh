@@ -52,10 +52,16 @@ export class ReconnectManager {
 
   constructor(private opts: ReconnectManagerOptions) {
     this.cfg = opts.backoff ?? DEFAULT_BACKOFF;
+    // Plain setTimeout/clearTimeout (not activeWindow.*) — the
+    // reconnect loop drives session re-establishment from Node-style
+    // integration tests too, where `activeWindow` is undefined.
+    // Backoff timing has no popout-window semantics to protect.
     this.setTimeoutFn = opts.setTimeoutFn
-      ?? ((cb, ms) => activeWindow.setTimeout(cb, ms));
+      // eslint-disable-next-line obsidianmd/prefer-active-window-timers
+      ?? ((cb, ms) => setTimeout(cb, ms));
     this.clearTimeoutFn = opts.clearTimeoutFn
-      ?? ((h) => activeWindow.clearTimeout(h as number));
+      // eslint-disable-next-line obsidianmd/prefer-active-window-timers
+      ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
     this.rng = opts.rng ?? Math.random;
   }
 

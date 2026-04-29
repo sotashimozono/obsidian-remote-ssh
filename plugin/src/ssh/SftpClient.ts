@@ -81,19 +81,26 @@ export class SftpClient {
 
     const client = new Client();
     await new Promise<void>((resolve, reject) => {
-      const timer = activeWindow.setTimeout(() => {
+      // Plain setTimeout (not activeWindow.setTimeout) — this code path
+      // runs from Node-style integration tests too where `activeWindow`
+      // is undefined, and SSH-handshake timing has no popout-window
+      // semantics to protect.
+      // eslint-disable-next-line obsidianmd/prefer-active-window-timers
+      const timer = setTimeout(() => {
         client.destroy();
         reject(new Error(`Connection timed out after ${profile.connectTimeoutMs}ms`));
       }, profile.connectTimeoutMs);
 
       client.on('ready', () => {
-        activeWindow.clearTimeout(timer);
+        // eslint-disable-next-line obsidianmd/prefer-active-window-timers
+        clearTimeout(timer);
         logger.info(`SftpClient: SSH ready (${profile.host})`);
         resolve();
       });
 
       client.on('error', err => {
-        activeWindow.clearTimeout(timer);
+        // eslint-disable-next-line obsidianmd/prefer-active-window-timers
+        clearTimeout(timer);
         reject(err);
       });
 
