@@ -138,6 +138,14 @@ export interface LogLine {
   level: 'debug' | 'info' | 'warn' | 'error';
   timestamp: number;
   message: string;
+  /**
+   * Optional structured context attached to the line — passed to
+   * `logger.info(msg, fields)` etc. and serialised into the JSONL
+   * file sink as `{"fields": {...}}`. Phase D-β addition (F20).
+   * Keys whose name suggests a credential are redacted before
+   * the line is recorded; see `util/redact.ts`.
+   */
+  fields?: Record<string, unknown>;
 }
 
 export interface RemoteStat {
