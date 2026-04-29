@@ -542,8 +542,8 @@ export class SftpDataAdapter {
    * through to its local-trash flow (`trashLocal`); we don't perform any
    * destructive action here.
    */
-  async trashSystem(_normalizedPath: string): Promise<boolean> {
-    return false;
+  trashSystem(_normalizedPath: string): Promise<boolean> {
+    return Promise.resolve(false);
   }
 
   /**
