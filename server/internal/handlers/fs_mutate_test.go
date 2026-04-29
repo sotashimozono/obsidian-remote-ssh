@@ -228,7 +228,7 @@ func TestFsCopy_DuplicatesFile(t *testing.T) {
 	if err := os.WriteFile(src, []byte("content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := FsCopy(root)
+	h := FsCopy(root, nil)
 	raw, _ := json.Marshal(proto.CopyParams{SrcPath: "src.md", DestPath: "dst.md"})
 	if _, rerr := h(context.Background(), raw); rerr != nil {
 		t.Fatalf("unexpected error: %+v", rerr)
@@ -248,7 +248,7 @@ func TestFsCopy_RefusesDirectorySource(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "dir"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h := FsCopy(root)
+	h := FsCopy(root, nil)
 	raw, _ := json.Marshal(proto.CopyParams{SrcPath: "dir", DestPath: "dir-copy"})
 	_, rerr := h(context.Background(), raw)
 	if rerr == nil || rerr.Code != proto.ErrorIsADirectory {

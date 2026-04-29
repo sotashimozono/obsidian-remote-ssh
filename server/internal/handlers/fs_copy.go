@@ -13,7 +13,15 @@ import (
 // (source must be a regular file) and go through the same atomic
 // tmp+rename at the destination that fs.write uses, so a crash
 // midway never exposes a half-copied file.
-func FsCopy(vaultRoot string) rpc.Handler {
+//
+// `onModify` is optional — when non-nil and the copy replaced an
+// existing destination file, the callback fires with the
+// vault-relative destination path so the caller can inject a
+// synthetic Modified event into the watcher. Bypasses the Linux
+// fsnotify race that drops the IN_MOVED_TO event for atomic-rename
+// writes when the watcher has been alive across an earlier write to
+// the same parent directory (#108).
+func FsCopy(vaultRoot string, onModify func(relPath string)) rpc.Handler {
 	return func(_ context.Context, params json.RawMessage) (interface{}, *rpc.Error) {
 		var p proto.CopyParams
 		if e := decodeParams("fs.copy", params, &p); e != nil {
@@ -39,9 +47,12 @@ func FsCopy(vaultRoot string) rpc.Handler {
 		if err != nil {
 			return nil, mapFsError(err, p.SrcPath)
 		}
-		mtime, cerr := atomicWriteFile(dstAbs, p.DestPath, data, 0)
+		mtime, wasModify, cerr := atomicWriteFile(dstAbs, p.DestPath, data, 0)
 		if cerr != nil {
 			return nil, cerr
+		}
+		if wasModify && onModify != nil {
+			onModify(p.DestPath)
 		}
 		return proto.MtimeResult{Mtime: mtime}, nil
 	}

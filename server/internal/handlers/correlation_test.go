@@ -34,7 +34,7 @@ func TestCidCorrelation_WriteToFsChanged(t *testing.T) {
 
 	// Stand up the writer: fs.write registers cid against the path
 	// before performing the disk write.
-	writeH := FsWrite(root, cor)
+	writeH := FsWrite(root, cor, nil)
 
 	// Stand up the watcher: fs.watch's subscriber callback Takes the
 	// cid by path and stamps it on the outgoing notification.
@@ -107,7 +107,7 @@ func TestCidCorrelation_NoMetaPreservesPreviousWireShape(t *testing.T) {
 	// see exactly the wire bytes they used to.
 	root := t.TempDir()
 	cor := correlator.New(time.Second, time.Now)
-	writeH := FsWrite(root, cor)
+	writeH := FsWrite(root, cor, nil)
 	fake := &fakeWatcher{}
 	watchH := FsWatch(fake, cor)
 
@@ -143,7 +143,7 @@ func TestCidCorrelation_NilCorrelatorIsTransparent(t *testing.T) {
 	// startup) must keep working: write succeeds, notification fires,
 	// no meta on the wire.
 	root := t.TempDir()
-	writeH := FsWrite(root, nil)
+	writeH := FsWrite(root, nil, nil)
 	fake := &fakeWatcher{}
 	watchH := FsWatch(fake, nil)
 
