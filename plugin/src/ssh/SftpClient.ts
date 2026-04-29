@@ -10,6 +10,30 @@ import { logger } from '../util/logger';
 
 export type CloseListener = (info: { unexpected: boolean }) => void;
 
+/**
+ * String encoding accepted by Buffer / NodeJS.Buffer's `toString` /
+ * `Buffer.from(..., enc)`. Re-declared here as a local alias so this
+ * file does not depend on the ambient `BufferEncoding` global from
+ * `@types/node`, which trips ESLint's `no-undef` in the ObsidianReviewBot
+ * environment.
+ */
+type SftpEncoding =
+  | 'ascii' | 'utf8' | 'utf-8' | 'utf16le' | 'utf-16le'
+  | 'ucs2' | 'ucs-2' | 'base64' | 'base64url' | 'latin1'
+  | 'binary' | 'hex';
+
+/**
+ * Coerce an unknown error-shaped value into an `Error` so we never
+ * reject a Promise with a non-Error reason. The
+ * `obsidianmd/rule-custom-message` (`prefer-promise-reject-errors`)
+ * lint rule requires every `reject(...)` to receive an `Error`; ssh2
+ * callbacks already pass `Error | undefined`, but the lint rule can't
+ * see through the callback type, so we centralise the coercion.
+ */
+function asError(e: unknown): Error {
+  return e instanceof Error ? e : new Error(String(e));
+}
+
 export interface RemoteEntryWithRel extends RemoteEntry {
   /** Path relative to the listRecursive root (no leading slash). */
   relativePath: string;
@@ -81,27 +105,24 @@ export class SftpClient {
 
     const client = new Client();
     await new Promise<void>((resolve, reject) => {
-      // Plain setTimeout (not activeWindow.setTimeout) — this code path
-      // runs from Node-style integration tests too where `activeWindow`
-      // is undefined, and SSH-handshake timing has no popout-window
-      // semantics to protect.
-      // eslint-disable-next-line obsidianmd/prefer-active-window-timers
-      const timer = setTimeout(() => {
+      // Use Obsidian's `activeWindow` timers as required by
+      // `obsidianmd/prefer-active-window-timers`. The vitest setup
+      // polyfill aliases `activeWindow` to `globalThis` so the same
+      // call works under Node-style integration tests.
+      const timer = activeWindow.setTimeout(() => {
         client.destroy();
         reject(new Error(`Connection timed out after ${profile.connectTimeoutMs}ms`));
       }, profile.connectTimeoutMs);
 
       client.on('ready', () => {
-        // eslint-disable-next-line obsidianmd/prefer-active-window-timers
-        clearTimeout(timer);
+        activeWindow.clearTimeout(timer);
         logger.info(`SftpClient: SSH ready (${profile.host})`);
         resolve();
       });
 
       client.on('error', err => {
-        // eslint-disable-next-line obsidianmd/prefer-active-window-timers
-        clearTimeout(timer);
-        reject(err);
+        activeWindow.clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
       });
 
       client.on('close', () => {
@@ -138,7 +159,7 @@ export class SftpClient {
 
     this.client = client;
     this.sftp = await new Promise<SFTPWrapper>((resolve, reject) => {
-      client.sftp((err, sftp) => err ? reject(err) : resolve(sftp));
+      client.sftp((err, sftp) => err ? reject(asError(err)) : resolve(sftp));
     });
     logger.info(`SftpClient: SFTP channel open`);
   }
@@ -156,7 +177,7 @@ export class SftpClient {
     const client = this.requireClient();
     return new Promise((resolve, reject) => {
       client.openssh_forwardOutStreamLocal(socketPath, (err: Error | undefined, stream: Duplex) => {
-        if (err) reject(err);
+        if (err) reject(asError(err));
         else resolve(stream);
       });
     });
@@ -171,7 +192,7 @@ export class SftpClient {
   async readRemoteFile(remotePath: string): Promise<Buffer> {
     const sftp = this.requireSftp();
     return new Promise((resolve, reject) => {
-      sftp.readFile(remotePath, (err, buf) => err ? reject(err) : resolve(buf));
+      sftp.readFile(remotePath, (err, buf) => err ? reject(asError(err)) : resolve(buf));
     });
   }
 
@@ -184,7 +205,7 @@ export class SftpClient {
   async uploadFile(localPath: string, remotePath: string): Promise<void> {
     const sftp = this.requireSftp();
     return new Promise((resolve, reject) => {
-      sftp.fastPut(localPath, remotePath, { concurrency: 4 }, err => err ? reject(err) : resolve());
+      sftp.fastPut(localPath, remotePath, { concurrency: 4 }, err => err ? reject(asError(err)) : resolve());
     });
   }
 
@@ -197,7 +218,7 @@ export class SftpClient {
     const client = this.requireClient();
     return new Promise((resolve, reject) => {
       client.exec(cmd, (err, stream) => {
-        if (err) { reject(err); return; }
+        if (err) { reject(asError(err)); return; }
         let stdout = '';
         let stderr = '';
         let exitCode = -1;
@@ -205,12 +226,15 @@ export class SftpClient {
         stream.stderr.on('data', (d: Buffer) => { stderr += d.toString('utf8'); });
         stream.on('exit', (code: number) => { exitCode = code; });
         stream.on('close', () => resolve({ stdout, stderr, exitCode }));
-        stream.on('error', (e: Error) => reject(e));
+        stream.on('error', (e: Error) => reject(asError(e)));
       });
     });
   }
 
-  async disconnect(): Promise<void> {
+  disconnect(): Promise<void> {
+    // Synchronous teardown wrapped in a resolved Promise so the public
+    // API (which callers `await`) stays Promise-typed without forcing
+    // a no-op `await` (rejected by `require-await`).
     this.intentionalDisconnect = true;
     const client = this.client;
     this.client = null;
@@ -220,6 +244,7 @@ export class SftpClient {
     if (client) {
       try { client.end(); } catch (e) { logger.warn(`SftpClient.disconnect: ${(e as Error).message}`); }
     }
+    return Promise.resolve();
   }
 
   /**
@@ -257,7 +282,7 @@ export class SftpClient {
     const sftp = this.requireSftp();
     return new Promise((resolve, reject) => {
       sftp.stat(remotePath, (err, stats) => {
-        if (err) reject(err);
+        if (err) reject(asError(err));
         else resolve(toRemoteStat(stats));
       });
     });
@@ -277,7 +302,7 @@ export class SftpClient {
     return new Promise((resolve, reject) => {
       sftp.readdir(remotePath, (err, list) => {
         if (err) {
-          reject(err);
+          reject(asError(err));
           return;
         }
         const out: RemoteEntry[] = [];
@@ -323,12 +348,11 @@ export class SftpClient {
   async readBinary(remotePath: string): Promise<Buffer> {
     const sftp = this.requireSftp();
     return new Promise((resolve, reject) => {
-      sftp.readFile(remotePath, (err, buf) => err ? reject(err) : resolve(buf));
+      sftp.readFile(remotePath, (err, buf) => err ? reject(asError(err)) : resolve(buf));
     });
   }
 
-  // eslint-disable-next-line no-undef -- BufferEncoding is an ambient global from @types/node
-  async readText(remotePath: string, encoding: BufferEncoding = 'utf8'): Promise<string> {
+  async readText(remotePath: string, encoding: SftpEncoding = 'utf8'): Promise<string> {
     const buf = await this.readBinary(remotePath);
     return buf.toString(encoding);
   }
@@ -339,8 +363,7 @@ export class SftpClient {
     return this.atomicWrite(remotePath, data);
   }
 
-  // eslint-disable-next-line no-undef -- BufferEncoding is an ambient global from @types/node
-  async writeText(remotePath: string, data: string, encoding: BufferEncoding = 'utf8'): Promise<void> {
+  async writeText(remotePath: string, data: string, encoding: SftpEncoding = 'utf8'): Promise<void> {
     return this.atomicWrite(remotePath, Buffer.from(data, encoding));
   }
 
@@ -350,7 +373,7 @@ export class SftpClient {
     const tmpPath = remotePath + TMP_SUFFIX;
     try {
       await new Promise<void>((resolve, reject) => {
-        sftp.writeFile(tmpPath, data, err => err ? reject(err) : resolve());
+        sftp.writeFile(tmpPath, data, err => err ? reject(asError(err)) : resolve());
       });
       await this.rename(tmpPath, remotePath);
     } catch (e) {
@@ -367,9 +390,9 @@ export class SftpClient {
         ext_openssh_rename?: (src: string, dst: string, cb: (err: Error | undefined) => void) => void;
       };
       if (sftpAny._extensions && sftpAny._extensions['posix-rename@openssh.com'] && sftpAny.ext_openssh_rename) {
-        sftpAny.ext_openssh_rename(oldPath, newPath, err => err ? reject(err) : resolve());
+        sftpAny.ext_openssh_rename(oldPath, newPath, err => err ? reject(asError(err)) : resolve());
       } else {
-        sftp.rename(oldPath, newPath, err => err ? reject(err) : resolve());
+        sftp.rename(oldPath, newPath, err => err ? reject(asError(err)) : resolve());
       }
     });
   }
@@ -383,7 +406,7 @@ export class SftpClient {
   async remove(remotePath: string): Promise<void> {
     const sftp = this.requireSftp();
     return new Promise((resolve, reject) => {
-      sftp.unlink(remotePath, err => err ? reject(err) : resolve());
+      sftp.unlink(remotePath, err => err ? reject(asError(err)) : resolve());
     });
   }
 
@@ -409,7 +432,7 @@ export class SftpClient {
     }
     return new Promise((resolve, reject) => {
       sftp.mkdir(remotePath, err => {
-        if (err && !err.message.toLowerCase().includes('exist')) reject(err);
+        if (err && !err.message.toLowerCase().includes('exist')) reject(asError(err));
         else resolve();
       });
     });
@@ -439,12 +462,12 @@ export class SftpClient {
       }
       for (const d of dirs) {
         await new Promise<void>((resolve, reject) => {
-          sftp.rmdir(`${remotePath}/${d.relativePath}`, err => err ? reject(err) : resolve());
+          sftp.rmdir(`${remotePath}/${d.relativePath}`, err => err ? reject(asError(err)) : resolve());
         });
       }
     }
     return new Promise((resolve, reject) => {
-      sftp.rmdir(remotePath, err => err ? reject(err) : resolve());
+      sftp.rmdir(remotePath, err => err ? reject(asError(err)) : resolve());
     });
   }
 

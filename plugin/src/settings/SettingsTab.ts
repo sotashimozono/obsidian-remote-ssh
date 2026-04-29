@@ -29,9 +29,7 @@ export class SettingsTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName('Add profile')
       .addButton(btn => btn
-        // Button label uses standard "Add" verb plus the "+" affordance.
-        // eslint-disable-next-line obsidianmd/ui/sentence-case
-        .setButtonText('+ Add')
+        .setButtonText('Add')
         .onClick(() => {
           new ProfileForm(this.app, null, (p) => {
             this.plugin.settings.profiles.push(p);

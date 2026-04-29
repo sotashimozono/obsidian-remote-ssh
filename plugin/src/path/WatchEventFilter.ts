@@ -39,23 +39,22 @@ export function interpretWatchEvent(
     return { vaultPath: remotePath, remotePath };
   }
 
-  /* eslint-disable obsidianmd/hardcoded-config-path -- vault-relative path
-   * patterns we filter watch events by; the shadow vault layout puts our
-   * per-client subtree under the literal `.obsidian/user/` path. */
-  const userPrefix = `.obsidian/user/${pathMapper.clientId}/`;
-  const anyUserPrefix = '.obsidian/user/';
-  /* eslint-enable obsidianmd/hardcoded-config-path */
+  // Build the per-client and shared user-subtree prefixes from the
+  // PathMapper's configDir (passed in from `app.vault.configDir` at
+  // construction). This avoids hard-coding the `.obsidian` literal
+  // here, which `obsidianmd/hardcoded-config-path` rejects.
+  const userRootRel = `${pathMapper.configDir}/user`;
+  const userPrefix = `${userRootRel}/${pathMapper.clientId}/`;
+  const anyUserPrefix = `${userRootRel}/`;
 
   if (remotePath.startsWith(userPrefix)) {
     // Our own per-client subtree — translate back so Obsidian sees
-    // the vault-canonical path (e.g. .obsidian/workspace.json).
+    // the vault-canonical path (e.g. workspace.json under configDir).
     const vaultPath = pathMapper.toVault(remotePath);
     return { vaultPath, remotePath };
   }
 
-  // Vault-relative path pattern (the per-client subtree root we manage).
-  // eslint-disable-next-line obsidianmd/hardcoded-config-path
-  if (remotePath === '.obsidian/user' || remotePath.startsWith(anyUserPrefix)) {
+  if (remotePath === userRootRel || remotePath.startsWith(anyUserPrefix)) {
     // Either the user/ directory itself or another client's subtree.
     // Both are private to other machines; we don't want their state
     // racing through Obsidian's event loop on this side.

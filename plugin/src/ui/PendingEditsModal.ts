@@ -49,7 +49,7 @@ export class PendingEditsModal extends Modal {
     });
 
     if (this.entries.length === 0) {
-      contentEl.createEl('p', { text: '(Queue is empty)' });
+      contentEl.createEl('p', { text: 'No pending edits.' });
     } else {
       const list = contentEl.createDiv({ cls: 'remote-ssh-pending-edits-list' });
 
