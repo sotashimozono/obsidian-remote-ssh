@@ -66,36 +66,22 @@ export class PendingPluginsModal extends Modal {
     const checkedIds = new Set(this.suggestions.map(s => s.id));
 
     const list = contentEl.createDiv({ cls: 'remote-ssh-pending-plugins' });
-    list.style.maxHeight = '40vh';
-    list.style.overflowY = 'auto';
-    list.style.marginBottom = '1em';
-    list.style.padding = '0.5em';
-    list.style.border = '1px solid var(--background-modifier-border)';
-    list.style.borderRadius = '4px';
 
     for (const suggestion of this.suggestions) {
       const row = list.createDiv({ cls: 'remote-ssh-pending-plugin-row' });
-      row.style.display = 'flex';
-      row.style.alignItems = 'center';
-      row.style.padding = '0.25em 0';
 
-      const cb = row.createEl('input', { type: 'checkbox' });
+      const cb = row.createEl('input', { type: 'checkbox', cls: 'remote-ssh-pending-plugin-checkbox' });
       cb.checked = true;
-      cb.style.marginRight = '0.5em';
       cb.addEventListener('change', () => {
         if (cb.checked) checkedIds.add(suggestion.id);
         else            checkedIds.delete(suggestion.id);
       });
 
-      const label = row.createEl('label', { text: suggestion.id });
-      label.style.flex = '1';
+      const label = row.createEl('label', { text: suggestion.id, cls: 'remote-ssh-pending-plugin-label' });
       label.addEventListener('click', () => { cb.click(); });
 
       if (suggestion.sourceData != null) {
-        const tag = row.createEl('span', { text: 'has settings' });
-        tag.style.fontSize = '0.85em';
-        tag.style.color = 'var(--text-muted)';
-        tag.style.marginLeft = '0.5em';
+        row.createEl('span', { text: 'has settings', cls: 'remote-ssh-pending-plugin-tag' });
       }
     }
 
@@ -110,10 +96,6 @@ export class PendingPluginsModal extends Modal {
       .addToggle(t => t.setValue(copyConfig).onChange(v => { copyConfig = v; }));
 
     const buttons = contentEl.createDiv({ cls: 'remote-ssh-pending-buttons' });
-    buttons.style.display = 'flex';
-    buttons.style.justifyContent = 'flex-end';
-    buttons.style.gap = '0.5em';
-    buttons.style.marginTop = '1em';
 
     const askLaterBtn = buttons.createEl('button', { text: 'Ask later' });
     askLaterBtn.addEventListener('click', () => {

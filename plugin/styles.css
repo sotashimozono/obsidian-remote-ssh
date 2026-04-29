@@ -1,3 +1,5 @@
+/* ─── Status bar ─────────────────────────────────────────────────────── */
+
 .remote-ssh-status {
   display: flex;
   align-items: center;
@@ -9,7 +11,33 @@
 .remote-ssh-status.is-syncing   { color: var(--color-yellow); }
 .remote-ssh-status.is-error     { color: var(--color-red); }
 
-/* Conflict Modal */
+/* ─── Pending edits status-bar item ──────────────────────────────────── */
+
+.remote-ssh-pending-edits {
+  cursor: pointer;
+}
+
+.remote-ssh-pending-edits.is-hidden {
+  display: none;
+}
+
+/* ─── Connect modal ──────────────────────────────────────────────────── */
+
+.remote-ssh-connect-secret {
+  width: 100%;
+  margin: 8px 0 16px;
+}
+
+.remote-ssh-connect-back {
+  margin-top: 8px;
+}
+
+.remote-ssh-connect-button {
+  width: 100%;
+}
+
+/* ─── Conflict modal (legacy 2-choice) ───────────────────────────────── */
+
 .conflict-list { max-height: 400px; overflow-y: auto; }
 .conflict-row {
   padding: 8px 0;
@@ -20,7 +48,8 @@
 .conflict-bulk-row { display: flex; gap: 8px; margin-bottom: 12px; }
 .conflict-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 
-/* Sync Log View */
+/* ─── Sync log view ──────────────────────────────────────────────────── */
+
 .sync-log-container {
   font-family: var(--font-monospace);
   font-size: 12px;
@@ -32,3 +61,124 @@
 .sync-log-line.level-error { color: var(--color-red); }
 .sync-log-line.level-warn  { color: var(--color-yellow); }
 .sync-log-line.level-debug { color: var(--text-muted); }
+
+/* ─── Pending edits modal ────────────────────────────────────────────── */
+
+.remote-ssh-pending-edits-list {
+  max-height: 40vh;
+  overflow-y: auto;
+  margin-bottom: 1em;
+  padding: 0.5em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
+}
+
+.remote-ssh-pending-edits-row {
+  padding: 0.15em 0;
+}
+
+/* Shared button row (pending edits + pending plugins modals). */
+.remote-ssh-pending-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5em;
+  margin-top: 1em;
+}
+
+/* ─── Pending plugins modal ──────────────────────────────────────────── */
+
+.remote-ssh-pending-plugins {
+  max-height: 40vh;
+  overflow-y: auto;
+  margin-bottom: 1em;
+  padding: 0.5em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+}
+
+.remote-ssh-pending-plugin-row {
+  display: flex;
+  align-items: center;
+  padding: 0.25em 0;
+}
+
+.remote-ssh-pending-plugin-checkbox {
+  margin-right: 0.5em;
+}
+
+.remote-ssh-pending-plugin-label {
+  flex: 1;
+}
+
+.remote-ssh-pending-plugin-tag {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  margin-left: 0.5em;
+}
+
+/* ─── Three-way merge modal ──────────────────────────────────────────── */
+
+.remote-ssh-merge-panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.5em;
+  margin-bottom: 1em;
+}
+
+.remote-ssh-merge-edit {
+  margin-bottom: 1em;
+}
+
+.remote-ssh-merge-textarea {
+  width: 100%;
+  min-height: 8em;
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
+}
+
+.remote-ssh-merge-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5em;
+}
+
+.remote-ssh-merge-pane {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 0.5em;
+  min-height: 12em;
+  max-height: 24em;
+  overflow: auto;
+}
+
+.remote-ssh-merge-pane-header {
+  font-weight: bold;
+  margin-bottom: 0.5em;
+  font-size: 0.85em;
+}
+
+.remote-ssh-merge-pane-body {
+  margin: 0;
+  font-family: var(--font-monospace);
+  font-size: 0.8em;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.remote-ssh-merge-pane-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Diff line tints. RGBA chosen for ~18% alpha so the highlight
+   reads on both light + dark themes without clashing with body text. */
+.remote-ssh-merge-line.is-add {
+  background-color: rgba(34, 197, 94, 0.18);
+}
+
+.remote-ssh-merge-line.is-del {
+  background-color: rgba(239, 68, 68, 0.18);
+  text-decoration: line-through;
+}

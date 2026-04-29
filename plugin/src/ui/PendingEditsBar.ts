@@ -20,7 +20,6 @@ export class PendingEditsBar {
   constructor(plugin: Plugin, private readonly onClick: () => void) {
     this.el = plugin.addStatusBarItem();
     this.el.addClass('remote-ssh-pending-edits');
-    this.el.style.cursor = 'pointer';
     this.el.addEventListener('click', this.onClick);
     this.hide();
   }
@@ -35,7 +34,7 @@ export class PendingEditsBar {
       return;
     }
     this.el.setText(`✎ ${n} pending edit${n === 1 ? '' : 's'}`);
-    this.el.style.display = '';
+    this.el.removeClass('is-hidden');
   }
 
   /**
@@ -74,6 +73,6 @@ export class PendingEditsBar {
 
   private hide(): void {
     this.el.setText('');
-    this.el.style.display = 'none';
+    this.el.addClass('is-hidden');
   }
 }
