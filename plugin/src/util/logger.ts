@@ -1,8 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { LogLine } from '../types';
+import { redactFields, redactString } from './redact';
 
 type Level = LogLine['level'];
+export type LogFields = Record<string, unknown>;
 
 const LEVELS: Record<Level, number> = { debug: 0, info: 1, warn: 2, error: 3 };
 
@@ -34,23 +36,38 @@ export class Logger {
   setDebug(v: boolean) { this.debug = v; }
   setMaxLines(n: number) { this.maxLines = n; }
 
-  private emit(level: Level, message: string) {
+  private emit(level: Level, message: string, fields?: LogFields) {
     if (LEVELS[level] < LEVELS['info'] && !this.debug) return;
-    const line: LogLine = { level, timestamp: Date.now(), message };
+    // Redact at the boundary so listeners + file sink + console
+    // echo all see the sanitised payload — no secrets leak even
+    // if a downstream sink starts persisting `LogLine` directly.
+    const safeMessage = redactString(message);
+    const safeFields = fields ? redactFields(fields) : undefined;
+    const line: LogLine = {
+      level,
+      timestamp: Date.now(),
+      message: safeMessage,
+      ...(safeFields ? { fields: safeFields } : {}),
+    };
     this.lines.push(line);
     if (this.lines.length > this.maxLines) this.lines.shift();
     this.listeners.forEach(fn => fn(line));
     this.writeToFile(line);
     const echo = this.originalConsole ?? console;
-    if (level === 'error') echo.error(`[RemoteSSH] ${message}`);
-    else if (level === 'warn') echo.warn(`[RemoteSSH] ${message}`);
-    else if (this.debug) echo.log(`[RemoteSSH][${level}] ${message}`);
+    // Console echo shows the human-friendly format (the file sink
+    // gets the JSONL form via writeToFile). When fields are
+    // present, render them as a compact JSON suffix so the dev
+    // console scan stays one-line per emit.
+    const fieldsSuffix = safeFields ? ` ${JSON.stringify(safeFields)}` : '';
+    if (level === 'error') echo.error(`[RemoteSSH] ${safeMessage}${fieldsSuffix}`);
+    else if (level === 'warn') echo.warn(`[RemoteSSH] ${safeMessage}${fieldsSuffix}`);
+    else if (this.debug) echo.log(`[RemoteSSH][${level}] ${safeMessage}${fieldsSuffix}`);
   }
 
-  debug_(msg: string) { this.emit('debug', msg); }
-  info(msg: string)   { this.emit('info', msg); }
-  warn(msg: string)   { this.emit('warn', msg); }
-  error(msg: string)  { this.emit('error', msg); }
+  debug_(msg: string, fields?: LogFields) { this.emit('debug', msg, fields); }
+  info(msg: string, fields?: LogFields)   { this.emit('info', msg, fields); }
+  warn(msg: string, fields?: LogFields)   { this.emit('warn', msg, fields); }
+  error(msg: string, fields?: LogFields)  { this.emit('error', msg, fields); }
 
   getLines(): LogLine[] { return [...this.lines]; }
   clear() { this.lines = []; }
@@ -73,13 +90,31 @@ export class Logger {
     this.openSinkStream();
   }
 
-  uninstallFileSink(): void {
-    if (this.fileSink) {
-      try { this.fileSink.end(); } catch { /* ignore */ }
-    }
+  /**
+   * Stop forwarding to the file sink and wait for the underlying
+   * stream to flush to disk. Returns a Promise so callers (tests
+   * + the plugin's onunload teardown) can `await` actual close;
+   * fire-and-forget behaviour is preserved when the Promise is
+   * discarded.
+   *
+   * Phase D-β change: previously this returned `void` and the
+   * stream's `.end()` callback was never observed, so tests that
+   * read the file immediately after calling uninstall would race
+   * the buffered write.
+   */
+  uninstallFileSink(): Promise<void> {
+    const sink = this.fileSink;
     this.fileSink = null;
     this.fileSinkPath = null;
     this.bytesWritten = 0;
+    if (!sink) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      try {
+        sink.end(() => resolve());
+      } catch {
+        resolve();
+      }
+    });
   }
 
   wrapConsole(): void {
@@ -116,7 +151,12 @@ export class Logger {
     if (!this.fileSink) return;
     const msg = args.map(a => this.formatArg(a)).join(' ');
     if (msg.startsWith('[RemoteSSH]')) return;
-    const line: LogLine = { level, timestamp: Date.now(), message: `[external] ${msg}` };
+    const line: LogLine = {
+      level,
+      timestamp: Date.now(),
+      message: redactString(msg),
+      fields: { external: true },
+    };
     this.writeToFile(line);
   }
 
@@ -128,8 +168,35 @@ export class Logger {
 
   private writeToFile(line: LogLine): void {
     if (!this.fileSink) return;
-    const ts = new Date(line.timestamp).toISOString();
-    const text = `[${ts}] [${line.level}] ${line.message}\n`;
+    // JSONL — one JSON object per line (Phase D-β / F20).
+    // Schema: {"ts": ISO8601, "level": Level, "msg": string,
+    //          "fields"?: object}
+    // Replaces the old `[ts] [level] msg` text format. Existing
+    // `tail -f <log>` works (it's still newline-delimited); for
+    // post-mortem analysis pipe through `jq` instead of grep.
+    const obj: {
+      ts: string;
+      level: Level;
+      msg: string;
+      fields?: Record<string, unknown>;
+    } = {
+      ts: new Date(line.timestamp).toISOString(),
+      level: line.level,
+      msg: line.message,
+    };
+    if (line.fields) obj.fields = line.fields;
+    let text: string;
+    try {
+      text = JSON.stringify(obj) + '\n';
+    } catch (e) {
+      // A field that contains a circular reference would crash
+      // JSON.stringify; fall back to a stringified version so
+      // the line still lands in the log instead of vanishing.
+      text = JSON.stringify({
+        ts: obj.ts, level: obj.level, msg: obj.msg,
+        fields: { _serialiseError: (e as Error).message },
+      }) + '\n';
+    }
     try {
       this.fileSink.write(text);
       this.bytesWritten += Buffer.byteLength(text);
