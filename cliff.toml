@@ -1,0 +1,75 @@
+# git-cliff configuration — Conventional Commits → grouped release notes.
+#
+# Wired into `.github/workflows/release.yml` via `orhun/git-cliff-action@v3`;
+# emits the body that `softprops/action-gh-release@v3` posts as the
+# release description.
+#
+# Resolves the open half of plan §A.D's "changelog grouping" task
+# (D-α / #111 shipped commitlint; this finishes the pair).
+
+[changelog]
+# `header` and `footer` are spliced around the per-tag body the
+# release.yml step already wraps with the Installation block. Keep
+# both empty so the action's own output is *only* the categorised
+# commit list.
+header = ""
+footer = ""
+trim = true
+
+# Per-tag body template. Loops the configured `commit_parsers` groups
+# in their declared order; within each group, commits are listed by
+# commit time (ascending — oldest first inside a release feels more
+# like a story than newest-first).
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+
+## {{ group | upper_first }}
+
+{% for commit in commits %}\
+- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}\
+{{ commit.message | upper_first }}\
+ ({{ commit.id | truncate(length=7, end="") }})
+{% endfor %}\
+{% endfor %}\
+
+"""
+
+[git]
+# Use Conventional Commits as the source of truth for what to include.
+# `filter_unconventional = true` drops anything that doesn't parse
+# (the lint gate already rejects those at PR time, so this is
+# defence-in-depth).
+conventional_commits = true
+filter_unconventional = true
+filter_commits = true
+
+# Match commit messages to group names. Order here = display order in
+# the rendered body. `skip = true` drops the commit from the
+# changelog entirely (used for `chore(deps)` Dependabot noise).
+commit_parsers = [
+  { message = "^feat",     group = "✨ Features" },
+  { message = "^fix",      group = "🐛 Bug Fixes" },
+  { message = "^perf",     group = "⚡ Performance" },
+  { message = "^refactor", group = "🔧 Refactor" },
+  { message = "^test",     group = "🧪 Tests" },
+  { message = "^build",    group = "📦 Build" },
+  { message = "^ci",       group = "🚧 CI" },
+  { message = "^docs",     group = "📚 Documentation" },
+  { message = "^revert",   group = "⏪ Reverts" },
+  { message = "^style",    skip = true },           # whitespace / formatting only
+  { message = "^chore\\(deps", skip = true },        # Dependabot noise
+  { message = "^chore",    skip = true },           # bookkeeping
+  { message = "^release",  skip = true },           # auto-tag commits
+]
+
+# Strip `Co-Authored-By:` trailers from the rendered message — they
+# bloat the changelog and the Co-Author info is already in the commit
+# detail anyway.
+commit_preprocessors = [
+  { pattern = '\n\nCo-Authored-By:.*', replace = "" },
+]
+
+# Keep only the subject line; the long body of each commit doesn't
+# belong in a changelog row.
+protect_breaking_commits = false
+sort_commits = "oldest"
