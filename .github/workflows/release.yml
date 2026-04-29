@@ -1,9 +1,28 @@
 name: Release
 
+# One workflow, one trigger: every merge to main produces a release.
+#
+# Why not tag-trigger?
+#   GitHub Actions deliberately suppresses workflow runs from events
+#   created by GITHUB_TOKEN (anti-loop). The previous design split this
+#   into release-on-merge.yml (push tag) → release.yml (tag-trigger),
+#   and the tag-push handoff silently failed every time, falling back
+#   to a release with no signed binaries and no grouped changelog.
+#
+# softprops/action-gh-release creates the tag *and* the release in a
+# single API call when given `tag_name` + `target_commitish`, so we
+# can drive the whole pipeline directly off `push: branches: [main]`.
+# A `precheck` job reads `plugin/manifest.json` and short-circuits if
+# the tag/release already exists, making re-runs idempotent.
+
 on:
   push:
-    tags:
-      - '[0-9]+.[0-9]+.[0-9]+'
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -14,9 +33,51 @@ permissions:
   id-token: write
 
 jobs:
+  # ─── Precheck: read manifest version, skip if already released ───────────────
+  # Idempotency guard. If main moves but manifest.json wasn't bumped
+  # (e.g. docs-only merge that bypasses version-check.yml — currently
+  # impossible, but defensive), or this workflow re-runs after a
+  # successful release, we exit cleanly instead of double-tagging.
+  precheck:
+    name: Precheck
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      should_release: ${{ steps.gate.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Read manifest version
+        id: ver
+        run: |
+          v=$(jq -r '.version' plugin/manifest.json)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Manifest version: $v"
+
+      - name: Skip if release already exists
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          if gh release view "$v" >/dev/null 2>&1; then
+            echo "Release $v already exists — nothing to do."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          elif git rev-parse "refs/tags/$v" >/dev/null 2>&1; then
+            echo "Tag $v exists but release does not — proceeding (release will reuse tag)."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Will release $v."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   # ─── Gate: must pass tests before releasing ───────────────────────────────────
   test:
     name: Test gate
+    needs: precheck
+    if: needs.precheck.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -45,7 +106,8 @@ jobs:
   # fast and lets a server-build failure surface independently.
   server:
     name: Build + sign server binaries
-    needs: test
+    needs: [precheck, test]
+    if: needs.precheck.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     outputs:
       manifest_sha256: ${{ steps.manifest.outputs.sha256 }}
@@ -117,9 +179,13 @@ jobs:
           retention-days: 7
 
   # ─── Build + publish release ─────────────────────────────────────────────────
+  # softprops/action-gh-release creates the tag (`tag_name`) targeting
+  # `target_commitish` *and* the release in one API call. No separate
+  # `git tag` / `git push` step — that's what broke the previous design.
   release:
     name: Publish release
-    needs: [test, server]
+    needs: [precheck, test, server]
+    if: needs.precheck.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -157,22 +223,19 @@ jobs:
             exit 1
           fi
 
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-
       - name: Generate changelog (git-cliff, grouped by Conventional Commits type)
         id: changelog
-        # Replaces the prior free-form `git log --pretty=format` step
-        # (closes #136 / plan §A.D "changelog grouping" line).
         # `--latest` emits only the entries between the previous tag
-        # and this one (matches the prior step's range semantics).
+        # and this one. Because no tag exists yet for this version
+        # (we're creating it via softprops below), git-cliff falls
+        # back to "everything since the most recent tag", which is
+        # exactly what we want.
         # `--strip header` drops cliff's own `# Changelog` header so
         # the body slots cleanly under the "## What's changed" line
         # the release body builds below.
         # cliff.toml at repo root holds the grouping config (✨ Features
         # / 🐛 Bug Fixes / 🚧 CI / etc.) and the Dependabot-noise
-        # suppression — no inline `grep -v '^- chore(deps'` here.
+        # suppression.
         #
         # Pinned to @v4 (not @v3): @v3's Dockerfile sits on the
         # Debian Buster base image, and Buster reached EOL in
@@ -184,11 +247,12 @@ jobs:
           config: cliff.toml
           args: --latest --strip header
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release (creates tag too)
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: ${{ steps.version.outputs.version }}
+          tag_name: ${{ needs.precheck.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ needs.precheck.outputs.version }}
           body: |
             ## What's changed
 
@@ -238,5 +302,9 @@ jobs:
             server/dist/daemon-manifest.json
             server/dist/daemon-manifest.json.bundle
           draft: false
-          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          # Pre-1.0 we publish everything as pre-release for visibility,
+          # matching the prior release-on-merge.yml IS_PRERELEASE='true'
+          # behavior. Flip this to `contains(needs.precheck.outputs.version, '-')`
+          # once the plugin reaches 1.0.
+          prerelease: true
           make_latest: true
