@@ -1,7 +1,7 @@
 {
   "id": "remote-ssh",
   "name": "Remote SSH",
-  "version": "0.4.55",
+  "version": "0.4.56",
   "minAppVersion": "1.4.0",
   "description": "Edit remote vaults over SSH/SFTP — VS Code Remote SSH for Obsidian",
   "author": "",
