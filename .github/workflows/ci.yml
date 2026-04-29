@@ -86,18 +86,23 @@ jobs:
 
   # ─── Node version compatibility (Ubuntu only) ────────────────────────────────
   # The OS matrix above pins Node 20 (matches Obsidian Electron 30+).
-  # This job widens the Node-version axis on Ubuntu only — the LTS range
-  # 18 → 22 covers everyone realistically running this from a dev shell
-  # and catches Node-version-specific issues (deprecated APIs,
-  # WebStream/Buffer behaviour drift, fs.cp polyfills, etc.) without
-  # the 9-job 3×3 OS×Node combinatorial explosion.
+  # This job widens the Node-version axis on Ubuntu only with Node 22
+  # (the version newer Obsidian Electron builds bundle), catching
+  # Node-version-specific issues — deprecated APIs, WebStream/Buffer
+  # behaviour drift, fs.cp polyfills, etc. — without the 9-job 3×3
+  # OS×Node combinatorial explosion.
+  #
+  # Node 18 is intentionally NOT in the matrix: Vitest 4.x requires
+  # Node 20.19+ (drops `require()` of ESM-only modules), so testing
+  # on 18 would just CI-fail without exercising real plugin code.
+  # `engines.node` is set to >=20 to reflect that.
   node-compat:
     name: Test (ubuntu, node-${{ matrix.node-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['18', '22']
+        node-version: ['22']
     defaults:
       run:
         working-directory: plugin
