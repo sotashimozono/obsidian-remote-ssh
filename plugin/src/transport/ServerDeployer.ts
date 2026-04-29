@@ -332,7 +332,11 @@ function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
+// Plain setTimeout (not activeWindow.setTimeout) — this helper runs
+// from the daemon-deploy retry path including unit tests that don't
+// stand up a DOM. Popout-window safety is irrelevant here.
 function sleep(ms: number): Promise<void> {
+  // eslint-disable-next-line obsidianmd/prefer-active-window-timers
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 

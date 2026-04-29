@@ -28,14 +28,12 @@ jobs:
       - run: npm ci
       - name: TypeScript type-check
         run: node node_modules/typescript/bin/tsc --noEmit
-      # ESLint is wired up but config is optional; skip if no config file
-      - name: Lint (if eslint config present)
-        run: |
-          if [ -f "eslint.config.mjs" ] || [ -f ".eslintrc*" ] || [ -f ".eslintrc.json" ]; then
-            node node_modules/.bin/eslint src --ext .ts
-          else
-            echo "No ESLint config found — skipping"
-          fi
+      # eslint-plugin-obsidianmd recommended preset — same ruleset
+      # ObsidianReviewBot runs against community plugin submissions.
+      # Required check so PRs can't introduce regressions against the
+      # community store guidelines.
+      - name: Lint (eslint-plugin-obsidianmd)
+        run: npm run lint
 
   # ─── Unit tests (matrix: ubuntu / macos / windows) ───────────────────────────
   # Phase B1 — catches OS-specific regressions: path separators, line

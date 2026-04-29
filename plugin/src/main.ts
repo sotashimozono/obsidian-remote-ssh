@@ -68,7 +68,10 @@ export default class RemoteSshPlugin extends Plugin {
   private client!: SftpClient;
   private statusBar!: StatusBar;
   private state: SyncState = SyncState.IDLE;
-  private patcher: AdapterPatcher<object> | null = null;
+  // Use a string-keyed record for the generic so `keyof T & string` resolves
+  // to `string`; an `object` here would collapse to `never` and would reject
+  // the PATCHED_METHODS tuple at the patcher call site.
+  private patcher: AdapterPatcher<Record<string, unknown>> | null = null;
   private dataAdapter: SftpDataAdapter | null = null;
   private readCache: ReadCache | null = null;
   private dirCache: DirCache | null = null;
@@ -114,7 +117,7 @@ export default class RemoteSshPlugin extends Plugin {
     logger.setMaxLines(this.settings.maxLogLines);
     const adapter = this.app.vault.adapter;
     const basePath = adapter instanceof FileSystemAdapter ? adapter.getBasePath() : null;
-    this.observability = new ObservabilityInstaller(this.manifest, basePath);
+    this.observability = new ObservabilityInstaller(this.manifest, basePath, this.app.vault.configDir);
     this.observability.install();
 
     this.fsChangeListener = new FsChangeListener(this.app);
@@ -187,6 +190,8 @@ export default class RemoteSshPlugin extends Plugin {
 
     this.addCommand({
       id: 'debug-test-rpc-tunnel',
+      // "RPC" is an acronym; "obsidian-remote-server" is the literal binary name.
+      // eslint-disable-next-line obsidianmd/ui/sentence-case
       name: 'Debug: test RPC tunnel against obsidian-remote-server',
       callback: () => this.debugTestRpcTunnel(),
     });
@@ -237,18 +242,26 @@ export default class RemoteSshPlugin extends Plugin {
     await this.runAutoConnect('layout-ready');
   }
 
-  async onunload() {
+  onunload() {
     // Restore adapter first so any in-flight Obsidian read calls see the
     // original FileSystemAdapter again before we tear down the SSH session.
     this.restoreAdapter();
-    await this.disconnect().catch(() => {});
+    void this.disconnect().catch(() => { /* ignore */ });
     this.statusBar?.remove();
     this.pendingEditsBar?.remove();
     this.observability?.uninstall();
   }
 
   async loadSettings() {
-    const saved = await this.loadData();
+    // `loadData()` returns `any`; cast through a known shape so downstream
+    // accessors are typed. The fields we actually consume here are the
+    // host-key map and the encrypted-secrets blob; everything else flows
+    // into `Object.assign(...DEFAULT_SETTINGS, saved)` and is shape-checked
+    // by `PluginSettings`.
+    const saved = (await this.loadData()) as Partial<PluginSettings> & {
+      hostKeyStore?: Record<string, string>;
+      secrets?: Parameters<SecretStore['load']>[0];
+    } | null;
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved ?? {});
     // Migration (Phase 5): the old `autoPatchAdapter` field is gone
     // — Object.assign above doesn't pick it up because it's not in
@@ -744,7 +757,7 @@ export default class RemoteSshPlugin extends Plugin {
       logger.info('patchAdapter: adapter already patched');
       return true;
     }
-    const targetAdapter = this.app.vault.adapter as unknown as object;
+    const targetAdapter = this.app.vault.adapter as unknown as Record<string, unknown>;
     this.readCache = new ReadCache();
     this.dirCache = new DirCache();
     // Pick the transport that matches the active session: when an
@@ -842,7 +855,7 @@ export default class RemoteSshPlugin extends Plugin {
     );
     this.patcher = new AdapterPatcher(targetAdapter, this.dataAdapter);
     try {
-      this.patcher.patch(PATCHED_METHODS as unknown as ReadonlyArray<keyof object & string>);
+      this.patcher.patch(PATCHED_METHODS);
       logger.info(`Adapter patched via ${transportLabel}: [${PATCHED_METHODS.join(', ')}]`);
     } catch (e) {
       logger.error(`Adapter patch failed: ${(e as Error).message}`);
@@ -959,10 +972,11 @@ export default class RemoteSshPlugin extends Plugin {
     // vault's plugin install symlinks the same bundle.
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) {
+      // eslint-disable-next-line obsidianmd/ui/sentence-case -- "FileSystemAdapter" is the Obsidian API class name.
       new Notice('Remote SSH: vault is not FileSystemAdapter-backed; cannot locate plugin source');
       return;
     }
-    const sourcePluginDir = path.join(adapter.getBasePath(), '.obsidian', 'plugins', this.manifest.id);
+    const sourcePluginDir = path.join(adapter.getBasePath(), this.app.vault.configDir, 'plugins', this.manifest.id);
 
     // Shadow vaults live under ~/.obsidian-remote/vaults/ on every
     // OS. os.homedir() resolves at runtime — no hardcoded user.
@@ -1139,7 +1153,7 @@ export default class RemoteSshPlugin extends Plugin {
     if (!(adapter instanceof FileSystemAdapter)) {
       throw new Error('vault is not FileSystemAdapter-backed');
     }
-    const dir = path.join(adapter.getBasePath(), '.obsidian', 'plugins', this.manifest.id, 'queue');
+    const dir = path.join(adapter.getBasePath(), this.app.vault.configDir, 'plugins', this.manifest.id, 'queue');
     return await OfflineQueue.open(dir);
   }
 
@@ -1206,6 +1220,7 @@ export default class RemoteSshPlugin extends Plugin {
    */
   private async debugTestRpcTunnel(): Promise<void> {
     if (this.state !== SyncState.CONNECTED || !this.client.isAlive()) {
+      // eslint-disable-next-line obsidianmd/ui/sentence-case -- "RPC" and "SFTP" are acronyms.
       new Notice('Remote SSH: connect first (the RPC tunnel rides the SFTP session)');
       return;
     }
@@ -1280,7 +1295,7 @@ export default class RemoteSshPlugin extends Plugin {
     if (!(adapter instanceof FileSystemAdapter)) return null;
     const candidate = path.join(
       adapter.getBasePath(),
-      '.obsidian', 'plugins', this.manifest.id,
+      this.app.vault.configDir, 'plugins', this.manifest.id,
       'server-bin', 'obsidian-remote-server-linux-amd64',
     );
     return fs.existsSync(candidate) ? candidate : null;
@@ -1304,7 +1319,8 @@ export default class RemoteSshPlugin extends Plugin {
   private promptConnect() {
     const { profiles } = this.settings;
     if (profiles.length === 0) {
-      new Notice('Remote SSH: No profiles configured. Add one in Settings → Remote SSH.');
+      // eslint-disable-next-line obsidianmd/ui/sentence-case -- "Settings" names the Obsidian Settings menu; "Remote SSH" is the plugin name.
+      new Notice('Remote SSH: no profiles configured. Add one in Settings → Remote SSH.');
       return;
     }
     new ConnectModal(
@@ -1319,7 +1335,7 @@ export default class RemoteSshPlugin extends Plugin {
     if (this.state === SyncState.IDLE || this.state === SyncState.ERROR) {
       this.promptConnect();
     } else if (this.state === SyncState.CONNECTED) {
-      this.disconnect();
+      void this.disconnect();
     }
   }
 }

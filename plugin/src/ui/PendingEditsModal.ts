@@ -49,12 +49,12 @@ export class PendingEditsModal extends Modal {
     });
 
     if (this.entries.length === 0) {
-      contentEl.createEl('p', { text: '(queue is empty)' });
+      contentEl.createEl('p', { text: '(Queue is empty)' });
     } else {
       const list = contentEl.createDiv({ cls: 'remote-ssh-pending-edits-list' });
 
       for (const entry of this.entries) {
-        const row = list.createEl('div', { cls: 'remote-ssh-pending-edits-row' });
+        const row = list.createDiv({ cls: 'remote-ssh-pending-edits-row' });
         const ts = formatTs(entry.ts);
         const summary = describeOp(entry.op);
         row.setText(`${ts}  ${summary}`);

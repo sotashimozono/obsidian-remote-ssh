@@ -39,8 +39,12 @@ export function interpretWatchEvent(
     return { vaultPath: remotePath, remotePath };
   }
 
+  /* eslint-disable obsidianmd/hardcoded-config-path -- vault-relative path
+   * patterns we filter watch events by; the shadow vault layout puts our
+   * per-client subtree under the literal `.obsidian/user/` path. */
   const userPrefix = `.obsidian/user/${pathMapper.clientId}/`;
   const anyUserPrefix = '.obsidian/user/';
+  /* eslint-enable obsidianmd/hardcoded-config-path */
 
   if (remotePath.startsWith(userPrefix)) {
     // Our own per-client subtree — translate back so Obsidian sees
@@ -49,6 +53,8 @@ export function interpretWatchEvent(
     return { vaultPath, remotePath };
   }
 
+  // Vault-relative path pattern (the per-client subtree root we manage).
+  // eslint-disable-next-line obsidianmd/hardcoded-config-path
   if (remotePath === '.obsidian/user' || remotePath.startsWith(anyUserPrefix)) {
     // Either the user/ directory itself or another client's subtree.
     // Both are private to other machines; we don't want their state

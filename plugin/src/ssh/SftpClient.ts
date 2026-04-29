@@ -81,18 +81,25 @@ export class SftpClient {
 
     const client = new Client();
     await new Promise<void>((resolve, reject) => {
+      // Plain setTimeout (not activeWindow.setTimeout) — this code path
+      // runs from Node-style integration tests too where `activeWindow`
+      // is undefined, and SSH-handshake timing has no popout-window
+      // semantics to protect.
+      // eslint-disable-next-line obsidianmd/prefer-active-window-timers
       const timer = setTimeout(() => {
         client.destroy();
         reject(new Error(`Connection timed out after ${profile.connectTimeoutMs}ms`));
       }, profile.connectTimeoutMs);
 
       client.on('ready', () => {
+        // eslint-disable-next-line obsidianmd/prefer-active-window-timers
         clearTimeout(timer);
         logger.info(`SftpClient: SSH ready (${profile.host})`);
         resolve();
       });
 
       client.on('error', err => {
+        // eslint-disable-next-line obsidianmd/prefer-active-window-timers
         clearTimeout(timer);
         reject(err);
       });
@@ -119,7 +126,7 @@ export class SftpClient {
         keepaliveCountMax: profile.keepaliveCountMax,
         readyTimeout: profile.connectTimeoutMs,
         hostVerifier: (key: Buffer | string) => {
-          const keyBuf = Buffer.isBuffer(key) ? key : Buffer.from(key as string, 'base64');
+          const keyBuf = Buffer.isBuffer(key) ? key : Buffer.from(key, 'base64');
           return this.hostKeyStore.verify(profile.host, profile.port, keyBuf);
         },
         ...(sock ? { sock } : {}),
@@ -320,6 +327,7 @@ export class SftpClient {
     });
   }
 
+  // eslint-disable-next-line no-undef -- BufferEncoding is an ambient global from @types/node
   async readText(remotePath: string, encoding: BufferEncoding = 'utf8'): Promise<string> {
     const buf = await this.readBinary(remotePath);
     return buf.toString(encoding);
@@ -331,6 +339,7 @@ export class SftpClient {
     return this.atomicWrite(remotePath, data);
   }
 
+  // eslint-disable-next-line no-undef -- BufferEncoding is an ambient global from @types/node
   async writeText(remotePath: string, data: string, encoding: BufferEncoding = 'utf8'): Promise<void> {
     return this.atomicWrite(remotePath, Buffer.from(data, encoding));
   }

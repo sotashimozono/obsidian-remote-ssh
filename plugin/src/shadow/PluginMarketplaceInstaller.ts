@@ -68,8 +68,11 @@ export interface InstallerDeps {
    * Build the per-plugin manifest URL from a repo. Defaults to the
    * `HEAD/manifest.json` convention Obsidian itself uses. Tests can
    * override to point at fixtures.
+   *
+   * Declared as a property (arrow-function type) rather than a method so
+   * extracting it bare in the constructor doesn't trip `unbound-method`.
    */
-  manifestUrlFor?(repo: string): string;
+  manifestUrlFor?: (repo: string) => string;
 }
 
 export interface InstallReport {

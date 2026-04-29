@@ -155,17 +155,17 @@ export class ThreeWayMergeModal extends Modal {
 function renderPane(parent: HTMLElement, title: string, chunks: DiffChunk[]): void {
   const pane = parent.createDiv({ cls: 'remote-ssh-merge-pane' });
 
-  pane.createEl('div', { text: title, cls: 'remote-ssh-merge-pane-header' });
+  pane.createDiv({ text: title, cls: 'remote-ssh-merge-pane-header' });
 
   const body = pane.createEl('pre', { cls: 'remote-ssh-merge-pane-body' });
 
   if (chunks.length === 0) {
-    body.createEl('span', { text: '(empty)', cls: 'remote-ssh-merge-pane-empty' });
+    body.createSpan({ text: '(empty)', cls: 'remote-ssh-merge-pane-empty' });
     return;
   }
 
   for (const chunk of chunks) {
-    const line = body.createEl('span', { cls: 'remote-ssh-merge-line' });
+    const line = body.createSpan({ cls: 'remote-ssh-merge-line' });
     line.textContent = chunk.lines.join('\n') + '\n';
     if (chunk.kind === 'add') {
       line.addClass('is-add');

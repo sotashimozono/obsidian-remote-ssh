@@ -58,7 +58,7 @@ export async function createJumpTunnel(
   if (options.hostKeyStore) {
     const store = options.hostKeyStore;
     config.hostVerifier = (key: Buffer | string) => {
-      const buf = Buffer.isBuffer(key) ? key : Buffer.from(key as string, 'base64');
+      const buf = Buffer.isBuffer(key) ? key : Buffer.from(key, 'base64');
       return store.verify(jump.host, jump.port, buf);
     };
   }
@@ -99,7 +99,7 @@ export async function createJumpTunnel(
           logger.info(`Jump tunnel to ${targetHost}:${targetPort} closed; ending jump client`);
           try { jumpClient.end(); } catch { /* ignore */ }
         });
-        resolve(stream as unknown as Duplex);
+        resolve(stream);
       },
     );
   });
@@ -149,6 +149,8 @@ function buildJumpAuthConfig(
       return { agent: socket };
     }
     default:
-      throw new Error(`Unknown jump host auth method: ${(jump as JumpHostConfig).authMethod}`);
+      // After exhausting the union the field is `never`; widen via String() so
+      // the message still surfaces the value if a future case is forgotten.
+      throw new Error(`Unknown jump host auth method: ${String(jump.authMethod)}`);
   }
 }

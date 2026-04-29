@@ -120,7 +120,9 @@ function redactValue(v: unknown, visited: WeakSet<object>): unknown {
   // Plain object — recurse, applying key-name redaction at each
   // level. Other object subtypes (Date, Buffer, Map, Set) are
   // returned as-is; callers serialise them with their own toJSON.
-  const proto = Object.getPrototypeOf(v);
+  // Object.getPrototypeOf is typed as returning any; narrow to unknown so the
+  // identity comparisons below stay type-safe.
+  const proto: unknown = Object.getPrototypeOf(v);
   if (proto !== Object.prototype && proto !== null) return v;
   return redactObject(v as Record<string, unknown>, visited);
 }

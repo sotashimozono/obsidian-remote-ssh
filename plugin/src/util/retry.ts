@@ -1,6 +1,8 @@
 import { RETRY_BASE_MS, RETRY_MAX_MS, MAX_RETRY } from '../constants';
 import { logger } from './logger';
 
+// Plain setTimeout — this generic retry helper has no DOM context.
+// eslint-disable-next-line obsidianmd/prefer-active-window-timers
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 export async function withRetry<T>(

@@ -724,18 +724,14 @@ export class SftpDataAdapter {
     }
 
     if (cached) {
-      try {
-        const s = await this.client.stat(remote);
-        if (s.mtime === cached.mtime) {
-          this.readCache.get(remote); // bump LRU on hit
-          return cached.data;
-        }
-        const data = await this.client.readBinary(remote);
-        this.readCache.put(remote, data, s.mtime);
-        return data;
-      } catch (e) {
-        throw e;
+      const s = await this.client.stat(remote);
+      if (s.mtime === cached.mtime) {
+        this.readCache.get(remote); // bump LRU on hit
+        return cached.data;
       }
+      const data = await this.client.readBinary(remote);
+      this.readCache.put(remote, data, s.mtime);
+      return data;
     }
 
     const data = await this.client.readBinary(remote);
@@ -980,5 +976,5 @@ function isPreconditionFailed(e: unknown): boolean {
   return typeof e === 'object'
       && e !== null
       && 'code' in e
-      && (e as { code: unknown }).code === -32020;
+      && (e).code === -32020;
 }

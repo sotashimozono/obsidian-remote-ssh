@@ -13,6 +13,11 @@ import * as os from 'os';
  * Patterns are matched as either an exact vault-relative path or a
  * directory prefix (so `.obsidian/cache` covers everything inside).
  */
+/* eslint-disable obsidianmd/hardcoded-config-path -- these are vault-relative
+ * path *patterns* the mapper inspects/matches against, NOT references to
+ * Obsidian's configuration directory. The shadow vault setup that uses this
+ * mapper is created by us (the plugin) under the literal name `.obsidian`,
+ * so matching against that name here is intentional. */
 export const DEFAULT_PRIVATE_PATTERNS: readonly string[] = [
   '.obsidian/workspace.json',
   '.obsidian/workspace-mobile.json',
@@ -23,12 +28,16 @@ export const DEFAULT_PRIVATE_PATTERNS: readonly string[] = [
   '.obsidian/graph.json',
   '.obsidian/canvas.json',
 ];
+/* eslint-enable obsidianmd/hardcoded-config-path */
 
 /**
  * The single directory under `.obsidian/` that we own for per-client
  * subtrees. Listing `.obsidian/` strips this so other clients' state
  * never appears in the vault's UI.
  */
+// Vault-relative path pattern; the shadow vault is created with the literal
+// `.obsidian/` directory by Obsidian, so matching that name here is intentional.
+// eslint-disable-next-line obsidianmd/hardcoded-config-path
 const PRIVATE_ROOT = '.obsidian/user';
 
 /**
@@ -129,9 +138,13 @@ export class PathMapper {
   toRemote(vaultPath: string): string {
     const normalized = stripLeadingSlash(vaultPath);
     if (!this.isPrivate(normalized)) return vaultPath;
+    /* eslint-disable obsidianmd/hardcoded-config-path -- string surgery on
+     * vault-relative paths; the shadow vault layout uses the literal
+     * `.obsidian/` prefix so we strip exactly that. */
     const rest = normalized.startsWith('.obsidian/')
       ? normalized.slice('.obsidian/'.length)
       : normalized;
+    /* eslint-enable obsidianmd/hardcoded-config-path */
     return `${this.privateRoot}/${rest}`;
   }
 
@@ -144,6 +157,7 @@ export class PathMapper {
   toVault(remotePath: string): string {
     const prefix = `${this.privateRoot}/`;
     if (remotePath.startsWith(prefix)) {
+      // Vault-relative string surgery; shadow vault uses the literal `.obsidian/` prefix.
       return `.obsidian/${remotePath.slice(prefix.length)}`;
     }
     return remotePath;

@@ -29,7 +29,7 @@ export class SecretStore {
   private deriveKey(): Buffer {
     const fingerprint = `${os.hostname()}::${os.userInfo().username}::obsidian-remote-ssh`;
     const salt = Buffer.from('rsh-salt-v1');
-    return crypto.scryptSync(fingerprint, salt, 32) as Buffer;
+    return crypto.scryptSync(fingerprint, salt, 32);
   }
 
   // ─── Persistence ──────────────────────────────────────────────────────────
@@ -66,7 +66,7 @@ export class SecretStore {
         Buffer.from(blob.iv, 'hex'),
       );
       decipher.setAuthTag(Buffer.from(blob.tag, 'hex'));
-      return decipher.update(Buffer.from(blob.data, 'hex')) + decipher.final('utf8');
+      return decipher.update(Buffer.from(blob.data, 'hex')).toString('utf8') + decipher.final('utf8');
     } catch {
       logger.warn(`SecretStore: decryption failed for "${ref}" — key may have changed`);
       return undefined;

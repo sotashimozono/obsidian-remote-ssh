@@ -136,13 +136,13 @@ export class ShadowStartupCoordinator {
       logger.warn('installMissingShadowPlugins: vault is not FileSystemAdapter-backed; skipping');
       return;
     }
-    const cpPath = path.join(adapter.getBasePath(), '.obsidian', 'community-plugins.json');
+    const cpPath = path.join(adapter.getBasePath(), this.app.vault.configDir, 'community-plugins.json');
     if (!fs.existsSync(cpPath)) return;
     let wantedIds: string[];
     try {
-      const parsed = JSON.parse(fs.readFileSync(cpPath, 'utf-8'));
+      const parsed: unknown = JSON.parse(fs.readFileSync(cpPath, 'utf-8'));
       if (!Array.isArray(parsed)) return;
-      wantedIds = parsed.filter((s): s is string => typeof s === 'string');
+      wantedIds = (parsed as unknown[]).filter((s): s is string => typeof s === 'string');
     } catch (e) {
       logger.warn(`installMissingShadowPlugins: failed to parse ${cpPath}: ${(e as Error).message}`);
       return;
@@ -200,7 +200,7 @@ export class ShadowStartupCoordinator {
       logger.warn('copyPluginConfigsForInstalled: vault is not FileSystemAdapter-backed; skipping');
       return;
     }
-    const pluginsRoot = path.join(adapter.getBasePath(), '.obsidian', 'plugins');
+    const pluginsRoot = path.join(adapter.getBasePath(), this.app.vault.configDir, 'plugins');
     let written = 0;
     for (const s of suggestions) {
       if (!installedIds.has(s.id)) continue;
