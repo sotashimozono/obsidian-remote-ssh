@@ -39,14 +39,6 @@ import { assertSyncReflect } from './helpers/assertSyncReflect';
  *
  * Intentionally deferred (will land in M9b/M9c follow-ups):
  *
- *   - nested-folder: daemon's fsnotify auto-watch races against
- *                    `os.MkdirAll` — `IN_CREATE` for level2 is
- *                    never dispatched because level1 isn't on
- *                    the watch list yet when the kernel emits it.
- *                    Test is in-source `it.skip` with the full
- *                    failure-mode write-up + two viable fix
- *                    directions; lands as its own PR (the right
- *                    fix is daemon-side, in Go).
  *   - modify:       same fsnotify "no IN_MOVED_TO across-watcher
  *                   atomic-rename" quirk that M6's bench skipped
  *                   on; the per-iter re-subscribe workaround needs
@@ -261,41 +253,15 @@ describe('Phase C E2E — sync reflect matrix', () => {
     expect(fakeFE.snapshot().paths).not.toContain(oldPath);
   });
 
-  // **nested-folder is skipped on the M9 MVP slice** — the daemon's
-  // fsnotify auto-watch path has a kernel-level race for `os.MkdirAll`
-  // sequences:
-  //
-  //     SftpDataAdapter.writeBuffer mkdirs `level1/level2` recursively
-  //       → daemon: os.MkdirAll(<vault>/.../level1/level2)
-  //         → kernel creates level1, then level2, in fast succession
-  //       → fsnotify fires IN_CREATE for level1 in <vault>/.../e2e-…
-  //         → daemon's dispatch goroutine processes the event,
-  //           THEN adds level1 to inotify watches via notify.Add(…)
-  //       → BUT level2 was already created on disk by the time the
-  //          watcher's auto-watch ran, so IN_CREATE for level2 in
-  //          level1 is never dispatched (level1 wasn't on the watch
-  //          list yet when kernel emitted the event).
-  //
-  // This is a daemon-side limitation, not an M9 bug. CI run for the
-  // first sub-tree depth confirmed the failure mode:
-  //   `history=[{path:"…/level1", event:"create"}]` (just level1)
-  //   while the test awaited `…/level1/level2/leaf.bin` create.
-  //
-  // Two viable follow-up fixes (own PR each):
-  //   - **Daemon side**: after handling an IN_CREATE for a directory,
-  //     do a one-shot `addTree(path)` on the new dir to catch any
-  //     children that were already created. Bounds the race window
-  //     to a single recursive walk that the dispatch goroutine owns.
-  //   - **Bench side**: stage the directory creation explicitly via
-  //     two sequential `writerAdapter.mkdir(...)` calls (each
-  //     awaiting its own `create` reflect), then write the leaf —
-  //     gives the watcher time between mkdirs to flush each event
-  //     and Add the new dir.
-  //
-  // The first fix is the right one (closes the race for any client),
-  // but it touches Go and changes daemon behaviour, so it lands as
-  // a separate atomic step. M9b will revisit.
-  it.skip('nested-folder — writer write into a deep new sub-tree reflects parents + child', async () => {
+  // nested-folder: previously skipped because the daemon's fsnotify
+  // auto-watch dropped IN_CREATE for descendants of a directory
+  // created via os.MkdirAll (the kernel created the children before
+  // the dispatch goroutine got a chance to call notify.Add on the
+  // parent). Closed by #107 — the watcher now walks the new sub-tree
+  // and emits synthetic `created` events for any descendants caught
+  // by the race window. See server/internal/watcher/watcher.go's
+  // catchUpAfterRace.
+  it('nested-folder — writer write into a deep new sub-tree reflects parents + child', async () => {
     const dir1 = `${subdirRel}/level1`;
     const dir2 = `${subdirRel}/level1/level2`;
     const target = `${dir2}/leaf.bin`;
@@ -347,7 +313,7 @@ function handleFsChangedForReader(
             ctime: stat.ctime ?? 0,
             mtime: stat.mtime ?? 0,
             size: stat.size ?? 0,
-          });
+          }, { ensureParents: true });
           return;
         }
         case 'modified': {

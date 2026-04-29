@@ -49,6 +49,19 @@ export interface ObsidianClassDeps {
 }
 
 /**
+ * Per-call options for `insertOne`.
+ *
+ * `ensureParents`: when true and the entry's parent folder is missing,
+ * recursively synthesise the missing folder ancestors instead of
+ * failing. Use from live-update paths (#107) where fs.changed events
+ * can arrive out of order; leave off for bulk `build()` so a
+ * malformed walk is still caught as an error.
+ */
+export interface InsertOneOptions {
+  ensureParents?: boolean;
+}
+
+/**
  * Build (or extend) the in-memory vault file tree from a list of
  * remote entries. Used by the shadow-vault flow once the RPC session
  * is up and the patched adapter is in place.
@@ -142,10 +155,20 @@ export class VaultModelBuilder {
    * Used by both the bulk `build()` path and the `fs.watch` live-update
    * handler — same insertion semantics regardless of source.
    */
-  insertOne(entry: RemoteEntry): TFile | TFolder | null {
+  insertOne(entry: RemoteEntry, opts?: InsertOneOptions): TFile | TFolder | null {
     if (!entry.path) return null;
     if (this.vault.getAbstractFileByPath(entry.path)) return null;
-    const parent = this.resolveParent(entry.path);
+    let parent = this.resolveParent(entry.path);
+    if (!parent && opts?.ensureParents) {
+      // Race-window self-heal (#107): the daemon's catch-up walk for a
+      // nested mkdir may push child events ahead of their ancestors,
+      // and applyChange's async stat fan-out can reorder them further.
+      // Walk up and synthesise the missing folder ancestors so a leaf
+      // is never silently lost. Opt-in so the bulk `build()` path
+      // (which sorts parents-first and treats "parent missing" as a
+      // malformed-walk error) keeps its sanity check.
+      parent = this.ensureParentFolder(entry.path);
+    }
     if (!parent) {
       logger.warn(`VaultModelBuilder.insertOne: parent missing for "${entry.path}"`);
       return null;
@@ -153,6 +176,32 @@ export class VaultModelBuilder {
     return entry.isDirectory
       ? this.insertFolder(entry.path, parent)
       : this.insertFile(entry, parent);
+  }
+
+  /**
+   * Idempotently materialise the chain of folder ancestors for
+   * `childPath`. Recursively walks up from `childPath`'s parent,
+   * stopping at the vault root (which always exists). Returns the
+   * direct parent TFolder, or null if even the root can't be found
+   * (catastrophic — shouldn't happen in any real Obsidian session).
+   */
+  private ensureParentFolder(childPath: string): TFolder | null {
+    const i = childPath.lastIndexOf('/');
+    if (i < 0) {
+      // Top-level path; resolveParent should have returned the
+      // root folder. If it didn't, there's nothing we can do here.
+      return this.resolveParent(childPath);
+    }
+    const parentPath = childPath.slice(0, i);
+    const existing = this.vault.getAbstractFileByPath(parentPath);
+    if (existing && isFolder(existing)) return existing;
+    // Recursively insert the parent folder. insertOne re-enters this
+    // helper for grandparents until we reach a path that's already
+    // in the model (typically the vault root).
+    return this.insertOne(
+      { path: parentPath, isDirectory: true, ctime: 0, mtime: 0, size: 0 },
+      { ensureParents: true },
+    ) as TFolder | null;
   }
 
   /**

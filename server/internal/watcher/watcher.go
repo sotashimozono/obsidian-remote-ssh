@@ -209,6 +209,15 @@ func (w *Watcher) handleFsEvent(ev fsnotify.Event) {
 	if ev.Has(fsnotify.Create) {
 		if info, err := lstat(ev.Name); err == nil && info.IsDir() {
 			_ = w.notify.Add(ev.Name)
+			// #107: close the os.MkdirAll race. fsnotify is not
+			// recursive — by the time the dispatch goroutine reaches
+			// this Add, the kernel may have created descendants of
+			// `ev.Name` whose IN_CREATE events were silently dropped
+			// (their parent wasn't on the watch list yet). Walk the
+			// new sub-tree, add any descendant directories to the
+			// watcher, and emit a synthetic `created` event for every
+			// path discovered so subscribers see them.
+			w.catchUpAfterRace(ev.Name)
 		}
 	}
 
@@ -216,15 +225,18 @@ func (w *Watcher) handleFsEvent(ev fsnotify.Event) {
 	if !ok {
 		return // chmod and friends — not interesting
 	}
-	event := Event{Path: relative, Type: out}
+	w.emit(Event{Path: relative, Type: out})
+}
 
-	// Dispatch under a snapshot of the subscription map. Callbacks
-	// run synchronously, but they hold no locks; an unsubscribe
-	// during dispatch is safe (we're operating on the snapshot).
+// emit dispatches an event to all matching subscribers under a snapshot
+// of the subscription map. Callbacks run synchronously, but they hold
+// no locks; an unsubscribe during dispatch is safe (we're operating on
+// the snapshot).
+func (w *Watcher) emit(event Event) {
 	w.mu.Lock()
 	subs := make([]*subscription, 0, len(w.subs))
 	for _, s := range w.subs {
-		if matches(s, relative) {
+		if matches(s, event.Path) {
 			subs = append(subs, s)
 		}
 	}
@@ -233,6 +245,44 @@ func (w *Watcher) handleFsEvent(ev fsnotify.Event) {
 	for _, s := range subs {
 		s.callback(event)
 	}
+}
+
+// catchUpAfterRace is invoked after we Add()'d a freshly-created
+// directory to the watcher. fsnotify isn't recursive, so any
+// descendants the kernel created during the race window between
+// IN_CREATE arriving on the events channel and our Add() call were
+// never reported to us. Walk the sub-tree, add descendant
+// directories to the watcher, and synthesise `created` events for
+// every discovered descendant path so subscribers see them.
+//
+// Idempotency note: a path discovered here may also surface via a
+// real fsnotify event (the kernel emitted it after our Add ran).
+// Subscribers must treat duplicate `created` events as a no-op
+// (the plugin-side VaultModelBuilder does — insertOne is idempotent
+// against an already-present path). The race window is sub-millisecond
+// in practice so duplicates are rare.
+func (w *Watcher) catchUpAfterRace(absDir string) {
+	_ = filepath.WalkDir(absDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // best-effort; permission errors don't stop the walk
+		}
+		if path == absDir {
+			return nil // the dir itself was already reported by fsnotify
+		}
+		if d.IsDir() {
+			_ = w.notify.Add(path)
+		}
+		rel, err := filepath.Rel(w.root, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if strings.HasPrefix(rel, "..") {
+			return nil
+		}
+		w.emit(Event{Path: rel, Type: EventCreated})
+		return nil
+	})
 }
 
 // classify maps an fsnotify op flag set to one of our high-level

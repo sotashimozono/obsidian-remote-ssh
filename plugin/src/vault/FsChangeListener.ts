@@ -225,7 +225,7 @@ export class FsChangeListener {
             ctime: stat.ctime ?? 0,
             mtime: stat.mtime ?? 0,
             size: stat.size ?? 0,
-          });
+          }, { ensureParents: true });
           return;
         }
         case 'deleted': {
