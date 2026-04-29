@@ -225,11 +225,13 @@ jobs:
 
       - name: Generate changelog (git-cliff, grouped by Conventional Commits type)
         id: changelog
-        # `--latest` emits only the entries between the previous tag
-        # and this one. Because no tag exists yet for this version
-        # (we're creating it via softprops below), git-cliff falls
-        # back to "everything since the most recent tag", which is
-        # exactly what we want.
+        # `--unreleased` (NOT `--latest`): the new tag for this run
+        # doesn't exist at this step — softprops creates it below —
+        # so `--latest` would resolve to the *previous* tag and emit
+        # the *previous* version's changelog (broken in 0.4.61). We
+        # want everything between the most recent tag and HEAD, which
+        # is exactly what `--unreleased` returns. `--tag` lets git-cliff
+        # show the about-to-be-created version in headings.
         # `--strip header` drops cliff's own `# Changelog` header so
         # the body slots cleanly under the "## What's changed" line
         # the release body builds below.
@@ -245,7 +247,7 @@ jobs:
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
-          args: --latest --strip header
+          args: --unreleased --tag ${{ needs.precheck.outputs.version }} --strip header
 
       - name: Create GitHub Release (creates tag too)
         uses: softprops/action-gh-release@v3
