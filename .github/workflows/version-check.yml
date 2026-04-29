@@ -56,6 +56,29 @@ jobs:
             exit 1
           fi
 
+      - name: Root manifest.json mirror must match plugin/manifest.json
+        # Obsidian's community plugin browser fetches manifest.json
+        # from the repo root (HEAD/manifest.json convention). The
+        # bump-version script writes both files; this check fails
+        # closed if someone hand-edits one without the other.
+        run: |
+          plugin_v=$(jq -r '.version' plugin/manifest.json)
+          root_v=$(jq -r '.version' manifest.json)
+          if [ "$plugin_v" != "$root_v" ]; then
+            echo "::error::manifest.json ($root_v) does not match plugin/manifest.json ($plugin_v)."\
+              " Run 'cd plugin && npm version <X.Y.Z>' to sync."
+            exit 1
+          fi
+          # Also assert full content equality so a divergence in any
+          # field (id / description / authorUrl / minAppVersion) is
+          # caught before submission to obsidianmd/obsidian-releases.
+          if ! diff -q plugin/manifest.json manifest.json > /dev/null; then
+            echo "::error::manifest.json content differs from plugin/manifest.json."\
+              " Re-run 'cd plugin && npm version <same>' or copy manually."
+            diff plugin/manifest.json manifest.json || true
+            exit 1
+          fi
+
       - name: PR version must be strictly greater than base
         run: |
           # Pure-shell semver compare: strip pre-release suffix, split,
