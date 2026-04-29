@@ -14,7 +14,6 @@ const MAX_GENERATIONS = 3;
 
 type ConsoleFn = (...args: unknown[]) => void;
 interface ConsoleSnapshot {
-  log: ConsoleFn;
   warn: ConsoleFn;
   error: ConsoleFn;
 }
@@ -59,10 +58,15 @@ export class Logger {
     // gets the JSONL form via writeToFile). When fields are
     // present, render them as a compact JSON suffix so the dev
     // console scan stays one-line per emit.
+    //
+    // Note: info/debug emits route through `console.debug` (allowed
+    // by `obsidianmd/rule-custom-message`). `console.log` would also
+    // work for users but the rule disallows it; debug-level visibility
+    // is identical in DevTools.
     const fieldsSuffix = safeFields ? ` ${JSON.stringify(safeFields)}` : '';
     if (level === 'error') echo.error(`[RemoteSSH] ${safeMessage}${fieldsSuffix}`);
     else if (level === 'warn') echo.warn(`[RemoteSSH] ${safeMessage}${fieldsSuffix}`);
-    else if (this.debug) echo.log(`[RemoteSSH][${level}] ${safeMessage}${fieldsSuffix}`);
+    else if (this.debug) console.debug(`[RemoteSSH][${level}] ${safeMessage}${fieldsSuffix}`);
   }
 
   debug_(msg: string, fields?: LogFields) { this.emit('debug', msg, fields); }
@@ -120,23 +124,21 @@ export class Logger {
 
   wrapConsole(): void {
     if (this.originalConsole) return;
-    // The whole point of this method is intercepting global console
-    // calls — including console.log — so user-side console.log
-    // output lands in the JSONL log file alongside our own emit.
-    // The no-console rule flags every reference; here we're saving
-    // and reassigning, not logging, so it's working-as-intended.
+    // We intercept `console.warn` / `console.error` so that anything a
+    // user (or a third-party plugin) logs at warn/error severity also
+    // lands in our JSONL file sink, giving us complete forensic
+    // context when triaging support reports.
+    //
+    // We deliberately do NOT wrap `console.log` / `console.info` /
+    // `console.debug` — the Obsidian community guidelines (enforced by
+    // `obsidianmd/rule-custom-message`) disallow gratuitous use of
+    // those methods, so capturing them would encourage exactly the
+    // anti-pattern the rule exists to prevent.
     const snapshot: ConsoleSnapshot = {
-      // eslint-disable-next-line obsidianmd/rule-custom-message
-      log: console.log.bind(console),
       warn: console.warn.bind(console),
       error: console.error.bind(console),
     };
     this.originalConsole = snapshot;
-    // eslint-disable-next-line obsidianmd/rule-custom-message
-    console.log = (...args: unknown[]) => {
-      snapshot.log(...args);
-      this.captureExternal('debug', args);
-    };
     console.warn = (...args: unknown[]) => {
       snapshot.warn(...args);
       this.captureExternal('warn', args);
@@ -149,8 +151,6 @@ export class Logger {
 
   unwrapConsole(): void {
     if (!this.originalConsole) return;
-    // eslint-disable-next-line obsidianmd/rule-custom-message
-    console.log = this.originalConsole.log;
     console.warn = this.originalConsole.warn;
     console.error = this.originalConsole.error;
     this.originalConsole = null;

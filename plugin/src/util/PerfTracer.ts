@@ -37,12 +37,13 @@ interface PerfHostApi {
 }
 
 function getHostPerf(): PerfHostApi | undefined {
-  // We're probing for the cross-environment `performance` global (browser or
-  // Node's perf_hooks) — not for a popout-window-specific DOM API — so the
-  // `prefer-active-doc` suggestion (`activeDocument.defaultView`) doesn't
-  // apply: this code runs in workers and tests where there is no document.
-  // eslint-disable-next-line obsidianmd/prefer-active-doc
-  return (globalThis as { performance?: PerfHostApi }).performance;
+  // We're probing for the cross-environment `performance` global (browser
+  // and Node 16+). `performance` is a standard global in both runtimes,
+  // so we reach for it directly instead of going through `globalThis`
+  // (which the `prefer-active-doc` rule bans). The `typeof` guard keeps
+  // us safe in unusual hosts that lack the global entirely.
+  if (typeof performance === 'undefined') return undefined;
+  return performance;
 }
 
 export class PerfTracer {

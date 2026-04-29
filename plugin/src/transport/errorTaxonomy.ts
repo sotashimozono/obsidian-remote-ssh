@@ -128,9 +128,13 @@ export function classifyError(err: unknown): ClassifiedError {
   return {
     category: 'unknown',
     title: original.message || 'Remote SSH: unknown error',
-    // Documentation string shown to the user; we name the typical default path for clarity.
-    // eslint-disable-next-line obsidianmd/hardcoded-config-path
-    hint: 'Open the plugin\'s log file (`<vault>/.obsidian/plugins/remote-ssh/console.log`) for the full stack — the JSONL line for this error carries the original message + any structured context.',
+    // Hint is intentionally configDir-agnostic: the user may have
+    // remapped Obsidian's config directory away from the default name,
+    // and we don't have an `App` reference here to read
+    // `app.vault.configDir`. Pointing them at "the plugin's data
+    // folder" is enough; Obsidian's own settings tab shows the actual
+    // location.
+    hint: 'Open the plugin\'s log file (`<vault>/<configDir>/plugins/remote-ssh/console.log`) for the full stack — the JSONL line for this error carries the original message + any structured context.',
     original,
   };
 }

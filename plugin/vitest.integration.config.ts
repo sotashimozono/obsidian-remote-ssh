@@ -11,6 +11,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
+    setupFiles: ['./vitest.setup.ts'],
     include: ['tests/integration/**/*.test.ts'],
     // Each test usually opens its own SSH session; serialise so we
     // don't fight over the single sshd container.

@@ -130,7 +130,7 @@ export default class RemoteSshPlugin extends Plugin {
       // the patched adapter alive via swapClient instead of forcing a
       // restore + re-patch round-trip.
       if (unexpected) {
-        new Notice('Remote SSH: Connection lost — reconnecting…');
+        new Notice('Remote SSH: connection lost — reconnecting…');
         void this.startReconnect();
       }
     });
@@ -165,7 +165,7 @@ export default class RemoteSshPlugin extends Plugin {
       checkCallback: (checking) => {
         const active = this.reconnectManager?.isActive() ?? false;
         if (checking) return active;
-        if (active) void this.cancelReconnect();
+        if (active) this.cancelReconnect();
         return true;
       },
     });
@@ -190,9 +190,7 @@ export default class RemoteSshPlugin extends Plugin {
 
     this.addCommand({
       id: 'debug-test-rpc-tunnel',
-      // "RPC" is an acronym; "obsidian-remote-server" is the literal binary name.
-      // eslint-disable-next-line obsidianmd/ui/sentence-case
-      name: 'Debug: test RPC tunnel against obsidian-remote-server',
+      name: 'Debug: test daemon tunnel',
       callback: () => this.debugTestRpcTunnel(),
     });
 
@@ -290,7 +288,7 @@ export default class RemoteSshPlugin extends Plugin {
 
   async connectProfile(profile: SshProfile) {
     if (this.client.isAlive()) {
-      new Notice('Remote SSH: Already connected. Disconnect first.');
+      new Notice('Remote SSH: already connected. Disconnect first.');
       return;
     }
     this.setState(SyncState.CONNECTING);
@@ -531,7 +529,11 @@ export default class RemoteSshPlugin extends Plugin {
    * the user can hit "connect" again from the StatusBar without
    * picking the profile again.
    */
-  private async cancelReconnect(): Promise<void> {
+  private cancelReconnect(): void {
+    // Synchronous cleanup. Was previously `async` because callers used
+    // to await; the body never had an await, so dropping `async` keeps
+    // the same behaviour and silences `@typescript-eslint/require-await`
+    // (no `await Promise.resolve()` filler needed).
     if (!this.reconnectManager?.isActive()) return;
     this.reconnectManager.cancel();
     this.reconnectManager = null;
@@ -540,7 +542,7 @@ export default class RemoteSshPlugin extends Plugin {
     // user is on their own to reconnect.
     this.restoreAdapter();
     this.setState(SyncState.ERROR);
-    new Notice('Remote SSH: Reconnect cancelled');
+    new Notice('Remote SSH: reconnect cancelled');
   }
 
   /**
@@ -659,7 +661,7 @@ export default class RemoteSshPlugin extends Plugin {
     } else if (s.kind === 'recovered') {
       this.dataAdapter?.setReconnecting(false);
       this.setState(SyncState.CONNECTED);
-      new Notice('Remote SSH: Reconnected');
+      new Notice('Remote SSH: reconnected');
       this.reconnectManager = null;
       // Drain any writes that landed during the disconnect. Fire-and-
       // forget: the user's already-back state is independent of the
@@ -735,7 +737,7 @@ export default class RemoteSshPlugin extends Plugin {
       this.settings.activeProfileId = null;
       await this.saveSettings();
     }
-    if (wasActive) new Notice('Remote SSH: Disconnected');
+    if (wasActive) new Notice('Remote SSH: disconnected');
   }
 
   /**
@@ -773,7 +775,10 @@ export default class RemoteSshPlugin extends Plugin {
     // on the remote so two machines on the same vault don't trample
     // each other's UI state. Phase 4-J0.
     const clientId = this.resolveClientId();
-    const mapper = new PathMapper(clientId);
+    // Pass `app.vault.configDir` so PathMapper builds its private-subtree
+    // routing against the user's actual config directory (defaults to
+    // `.obsidian` but is configurable in Obsidian's appearance settings).
+    const mapper = new PathMapper(clientId, this.app.vault.configDir);
     logger.info(`PathMapper: clientId="${clientId}"`);
 
     // Spin up the localhost binary bridge so getResourcePath has
@@ -972,8 +977,7 @@ export default class RemoteSshPlugin extends Plugin {
     // vault's plugin install symlinks the same bundle.
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) {
-      // eslint-disable-next-line obsidianmd/ui/sentence-case -- "FileSystemAdapter" is the Obsidian API class name.
-      new Notice('Remote SSH: vault is not FileSystemAdapter-backed; cannot locate plugin source');
+      new Notice('Remote SSH: vault is not file-system-backed; cannot locate plugin source');
       return;
     }
     const sourcePluginDir = path.join(adapter.getBasePath(), this.app.vault.configDir, 'plugins', this.manifest.id);
@@ -1220,8 +1224,7 @@ export default class RemoteSshPlugin extends Plugin {
    */
   private async debugTestRpcTunnel(): Promise<void> {
     if (this.state !== SyncState.CONNECTED || !this.client.isAlive()) {
-      // eslint-disable-next-line obsidianmd/ui/sentence-case -- "RPC" and "SFTP" are acronyms.
-      new Notice('Remote SSH: connect first (the RPC tunnel rides the SFTP session)');
+      new Notice('Remote SSH: connect first (the tunnel rides on SFTP)');
       return;
     }
     const activeId = this.settings.activeProfileId;
@@ -1319,8 +1322,7 @@ export default class RemoteSshPlugin extends Plugin {
   private promptConnect() {
     const { profiles } = this.settings;
     if (profiles.length === 0) {
-      // eslint-disable-next-line obsidianmd/ui/sentence-case -- "Settings" names the Obsidian Settings menu; "Remote SSH" is the plugin name.
-      new Notice('Remote SSH: no profiles configured. Add one in Settings → Remote SSH.');
+      new Notice('Remote SSH: no profiles configured. Open settings to add one.');
       return;
     }
     new ConnectModal(

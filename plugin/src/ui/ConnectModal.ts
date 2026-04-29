@@ -80,9 +80,13 @@ export class ConnectModal extends Modal {
 
     const input = contentEl.createEl('input', { type: 'password', cls: 'remote-ssh-connect-secret' });
 
-    const btn = this.renderConnectButton(profile, contentEl, async () => {
+    const btn = this.renderConnectButton(profile, contentEl, () => {
+      // No `async` keyword: every step here is synchronous (read input,
+      // persist secret to disk via the resolver). We return a resolved
+      // Promise so the caller can keep the `() => Promise<boolean>`
+      // contract without us tripping `@typescript-eslint/require-await`.
       const secret = input.value;
-      if (needsPassword && !secret) { new Notice('Password is required'); return false; }
+      if (needsPassword && !secret) { new Notice('Password is required'); return Promise.resolve(false); }
       if (secret) {
         const ref = `${profile.id}:${needsPassword ? 'password' : 'passphrase'}`;
         // persistSecret encrypts and saves to disk so the next session skips this prompt
@@ -90,14 +94,14 @@ export class ConnectModal extends Modal {
         if (needsPassword) profile.passwordRef = ref;
         else profile.passphraseRef = ref;
       }
-      return true;
+      return Promise.resolve(true);
     });
 
     input.addEventListener('keydown', e => { if (e.key === 'Enter') btn.click(); });
 
     // Back button when multiple profiles available
     if (this.profiles.length > 1) {
-      const back = contentEl.createEl('button', { text: '← Back', cls: 'remote-ssh-connect-back' }); // eslint-disable-line obsidianmd/ui/sentence-case -- standard "Back" button label.
+      const back = contentEl.createEl('button', { text: 'Back', cls: 'remote-ssh-connect-back' });
       back.onclick = () => this.renderPicker();
     }
   }

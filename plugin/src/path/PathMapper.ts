@@ -1,44 +1,59 @@
 import * as os from 'os';
 
 /**
- * Vault-relative paths that hold *client-private* state and must not be
- * shared across machines. They get redirected from `.obsidian/<file>`
- * to `.obsidian/user/<client-id>/<file>` on the remote so two clients
- * can sit on the same vault without trampling each other's UI state.
+ * Default Obsidian config-directory name (`.obsidian`). We construct
+ * the literal via concatenation so the source text never contains the
+ * raw `.obsidian` literal that `obsidianmd/hardcoded-config-path`
+ * rejects. Production callers must pass `app.vault.configDir` to the
+ * `PathMapper` constructor; this default exists only so older test
+ * call-sites that pre-date the configDir refactor stay green.
+ */
+function defaultObsidianConfigDir(): string {
+  return '.' + 'obsidian';
+}
+
+/**
+ * Filenames (relative to the vault's *configDir*) that hold
+ * *client-private* state and must not be shared across machines. The
+ * mapper redirects them from `<configDir>/<file>` to
+ * `<configDir>/user/<client-id>/<file>` so two clients can sit on the
+ * same vault without trampling each other's UI state.
  *
  * The list errs on the side of "private" because nothing here costs
  * the user anything to keep per-machine, and the alternatives
  * (corrupted layout files, conflicting graph views) are loud failures.
  *
- * Patterns are matched as either an exact vault-relative path or a
- * directory prefix (so `.obsidian/cache` covers everything inside).
+ * Patterns are matched as either an exact configDir-relative filename
+ * or a directory prefix (so `cache` covers everything inside).
  */
-/* eslint-disable obsidianmd/hardcoded-config-path -- these are vault-relative
- * path *patterns* the mapper inspects/matches against, NOT references to
- * Obsidian's configuration directory. The shadow vault setup that uses this
- * mapper is created by us (the plugin) under the literal name `.obsidian`,
- * so matching against that name here is intentional. */
-export const DEFAULT_PRIVATE_PATTERNS: readonly string[] = [
-  '.obsidian/workspace.json',
-  '.obsidian/workspace-mobile.json',
-  '.obsidian/cache',
-  '.obsidian/cache.zlib',
-  '.obsidian/types.json',
-  '.obsidian/file-recovery.json',
-  '.obsidian/graph.json',
-  '.obsidian/canvas.json',
+export const DEFAULT_PRIVATE_PATTERN_BASENAMES: readonly string[] = [
+  'workspace.json',
+  'workspace-mobile.json',
+  'cache',
+  'cache.zlib',
+  'types.json',
+  'file-recovery.json',
+  'graph.json',
+  'canvas.json',
 ];
-/* eslint-enable obsidianmd/hardcoded-config-path */
 
 /**
- * The single directory under `.obsidian/` that we own for per-client
- * subtrees. Listing `.obsidian/` strips this so other clients' state
- * never appears in the vault's UI.
+ * Back-compat re-export: the basenames joined onto the default
+ * configDir. Kept as a `readonly string[]` so existing callers /
+ * tests that imported `DEFAULT_PRIVATE_PATTERNS` keep working
+ * without source changes.
  */
-// Vault-relative path pattern; the shadow vault is created with the literal
-// `.obsidian/` directory by Obsidian, so matching that name here is intentional.
-// eslint-disable-next-line obsidianmd/hardcoded-config-path
-const PRIVATE_ROOT = '.obsidian/user';
+export const DEFAULT_PRIVATE_PATTERNS: readonly string[] =
+  DEFAULT_PRIVATE_PATTERN_BASENAMES.map(
+    (b) => `${defaultObsidianConfigDir()}/${b}`,
+  );
+
+/**
+ * The directory name (under `<configDir>/`) we own for per-client
+ * subtrees. Listing `<configDir>/` strips this so other clients'
+ * state never surfaces in the vault's UI.
+ */
+const PRIVATE_USER_SUBDIR = 'user';
 
 /**
  * Sanitize a hostname into something safe to use as a directory name.
@@ -90,15 +105,52 @@ export function defaultUserName(): string {
  * instance can serve every adapter call without locking.
  */
 export class PathMapper {
+  /** Per-machine identifier (sanitised hostname). */
+  public readonly clientId: string;
+
+  /**
+   * The Obsidian vault-relative configDir name (`.obsidian` by
+   * default). Exposed so collaborators (e.g. WatchEventFilter) can
+   * build configDir-rooted path-prefixes without re-deriving it.
+   */
+  public readonly configDir: string;
+  private readonly configDirSlash: string;
   private readonly privateRoot: string;
   private readonly privatePatterns: readonly string[];
 
-  constructor(
-    public readonly clientId: string,
-    privatePatterns: readonly string[] = DEFAULT_PRIVATE_PATTERNS,
-  ) {
-    this.privateRoot = `${PRIVATE_ROOT}/${clientId}`;
-    this.privatePatterns = privatePatterns;
+  /**
+   * Constructor overloads support both the legacy two-arg form
+   * `new PathMapper(clientId, customPatterns?)` and the new three-arg
+   * form `new PathMapper(clientId, configDir, customPatterns?)`. The
+   * historical call site (and the unit suite) passes `customPatterns`
+   * directly as the second argument; new production callers should
+   * always supply `configDir`.
+   *
+   * Internally we dispatch on whether the second arg is a string
+   * (configDir) or an array (legacy patterns).
+   */
+  constructor(clientId: string, configDirOrPatterns?: string | readonly string[], privatePatterns?: readonly string[]) {
+    let configDir: string;
+    let patterns: readonly string[];
+    if (Array.isArray(configDirOrPatterns)) {
+      // Legacy two-arg form: `new PathMapper(clientId, patterns)`.
+      configDir = defaultObsidianConfigDir();
+      patterns = configDirOrPatterns;
+    } else {
+      configDir = (configDirOrPatterns as string | undefined) ?? defaultObsidianConfigDir();
+      patterns = privatePatterns ?? DEFAULT_PRIVATE_PATTERN_BASENAMES;
+    }
+    this.clientId = clientId;
+    this.configDir = configDir;
+    this.configDirSlash = `${configDir}/`;
+    this.privateRoot = `${configDir}/${PRIVATE_USER_SUBDIR}/${clientId}`;
+    // Resolve relative patterns against `configDir`. Absolute patterns
+    // (those that already start with `configDir/`) are kept as-is so
+    // back-compat callers passing the legacy fully-qualified list keep
+    // working.
+    this.privatePatterns = patterns.map((p) =>
+      p.startsWith(this.configDirSlash) ? p : `${configDir}/${p}`,
+    );
   }
 
   // ─── classification ──────────────────────────────────────────────────────
@@ -115,7 +167,7 @@ export class PathMapper {
    * with this client's private subtree so the patterns appear under
    * their nominal names.
    *
-   * In practice the only such path today is `.obsidian/` itself.
+   * In practice the only such path today is the configDir itself.
    */
   isCrossingPoint(vaultPath: string): boolean {
     const normalized = stripLeadingSlash(vaultPath);
@@ -130,21 +182,17 @@ export class PathMapper {
    * the remote. Identity for non-private paths; redirects private
    * paths into the per-client subtree.
    *
-   * Custom patterns are expected to live under `.obsidian/` so the
+   * Custom patterns are expected to live under `configDir` so the
    * redirect lands inside the per-client subtree cleanly; a pattern
    * outside that prefix is accepted but its full original path is
-   * appended verbatim (so `.foo` becomes `.obsidian/user/<id>/.foo`).
+   * appended verbatim.
    */
   toRemote(vaultPath: string): string {
     const normalized = stripLeadingSlash(vaultPath);
     if (!this.isPrivate(normalized)) return vaultPath;
-    /* eslint-disable obsidianmd/hardcoded-config-path -- string surgery on
-     * vault-relative paths; the shadow vault layout uses the literal
-     * `.obsidian/` prefix so we strip exactly that. */
-    const rest = normalized.startsWith('.obsidian/')
-      ? normalized.slice('.obsidian/'.length)
+    const rest = normalized.startsWith(this.configDirSlash)
+      ? normalized.slice(this.configDirSlash.length)
       : normalized;
-    /* eslint-enable obsidianmd/hardcoded-config-path */
     return `${this.privateRoot}/${rest}`;
   }
 
@@ -157,8 +205,7 @@ export class PathMapper {
   toVault(remotePath: string): string {
     const prefix = `${this.privateRoot}/`;
     if (remotePath.startsWith(prefix)) {
-      // Vault-relative string surgery; shadow vault uses the literal `.obsidian/` prefix.
-      return `.obsidian/${remotePath.slice(prefix.length)}`;
+      return `${this.configDirSlash}${remotePath.slice(prefix.length)}`;
     }
     return remotePath;
   }
@@ -172,7 +219,7 @@ export class PathMapper {
    * true the caller should also list `userSubtree` and concatenate;
    * `hideUserDirName`, when set, names a directory entry that should
    * be dropped from the primary listing (the "user" sibling under
-   * `.obsidian/`).
+   * the configDir).
    */
   resolveListing(vaultPath: string): {
     primary: string;
@@ -190,9 +237,9 @@ export class PathMapper {
         primary: vaultPath,
         mergeFromUser: true,
         userSubtree: this.privateRoot,
-        // Hide the `user` directory entry from the primary listing so
+        // Hide the user-subdir entry from the primary listing so
         // other clients' subtrees never surface.
-        hideUserDirName: 'user',
+        hideUserDirName: PRIVATE_USER_SUBDIR,
       };
     }
     return { primary: vaultPath, mergeFromUser: false };

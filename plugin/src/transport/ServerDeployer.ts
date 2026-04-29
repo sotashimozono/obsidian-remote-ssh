@@ -332,12 +332,12 @@ function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
-// Plain setTimeout (not activeWindow.setTimeout) — this helper runs
-// from the daemon-deploy retry path including unit tests that don't
-// stand up a DOM. Popout-window safety is irrelevant here.
+// Sleep via `activeWindow.setTimeout` so we honour Obsidian's
+// popout-window scoping rule (`obsidianmd/prefer-active-window-timers`).
+// In tests / non-DOM hosts the vitest setup polyfill aliases
+// `activeWindow` to `globalThis`, so this still works there.
 function sleep(ms: number): Promise<void> {
-  // eslint-disable-next-line obsidianmd/prefer-active-window-timers
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise(resolve => { activeWindow.setTimeout(resolve, ms); });
 }
 
 /**
