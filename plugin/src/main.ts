@@ -26,16 +26,14 @@ import { ReconnectManager } from './transport/ReconnectManager';
 import type { ReconnectState } from './transport/ReconnectManager';
 import { DEFAULT_BACKOFF } from './transport/Backoff';
 import { PathMapper, defaultClientId, defaultUserName, sanitizeClientId } from './path/PathMapper';
-import { interpretWatchEvent } from './path/WatchEventFilter';
-import type { FsChangedParams } from './proto/types';
 import * as fs from 'fs';
 import { StatusBar } from './ui/StatusBar';
 import { ConnectModal } from './ui/ConnectModal';
 import { SettingsTab } from './settings/SettingsTab';
 import { logger } from './util/logger';
 import { classifyToNotice } from './transport/errorTaxonomy';
-import { perfTracer } from './util/PerfTracer';
 import { VaultModelBuilder } from './vault/VaultModelBuilder';
+import { FsChangeListener } from './vault/FsChangeListener';
 import { BulkWalker } from './vault/BulkWalker';
 import { ObsidianRegistry } from './shadow/ObsidianRegistry';
 import { ShadowVaultBootstrap } from './shadow/ShadowVaultBootstrap';
@@ -91,12 +89,8 @@ export default class RemoteSshPlugin extends Plugin {
   private rpcConnection: Awaited<ReturnType<typeof establishRpcConnection>> | null = null;
   /** ServerDeployer that owns the daemon process; invoked on disconnect to tear it down. */
   private daemonDeployer: ServerDeployer | null = null;
-  /** Active daemon-side fs.watch subscription id (set after debugPatchAdapter). */
-  private rpcWatchSubscriptionId: string | null = null;
-  /** Disposer returned by RpcClient.onNotification('fs.changed', ...). */
-  private rpcWatchHandlerDisposer: (() => void) | null = null;
-  /** PathMapper used by the active patched adapter; needed to interpret fs.changed paths. */
-  private activePathMapper: PathMapper | null = null;
+  /** Owns the daemon fs.watch subscription + notification dispatch. */
+  private fsChangeListener!: FsChangeListener;
   /** Localhost HTTP bridge serving binary vault assets to the webview. */
   private resourceBridge: ResourceBridge | null = null;
   /**
@@ -121,6 +115,8 @@ export default class RemoteSshPlugin extends Plugin {
     const basePath = adapter instanceof FileSystemAdapter ? adapter.getBasePath() : null;
     this.observability = new ObservabilityInstaller(this.manifest, basePath);
     this.observability.install();
+
+    this.fsChangeListener = new FsChangeListener(this.app);
 
     this.client = new SftpClient(this.authResolver, this.hostKeyStore);
     this.client.onClose(({ unexpected }) => {
@@ -598,13 +594,12 @@ export default class RemoteSshPlugin extends Plugin {
 
     // 4. fs.watch re-subscribe. The old subscription id is dead with
     // its session, so clear local bookkeeping before resubscribing.
-    this.rpcWatchSubscriptionId = null;
-    if (this.rpcWatchHandlerDisposer) {
-      this.rpcWatchHandlerDisposer();
-      this.rpcWatchHandlerDisposer = null;
-    }
-    if (this.activePathMapper && this.rpcConnection) {
-      await this.subscribeToFsChanged();
+    this.fsChangeListener.prepareForReconnect();
+    if (this.rpcConnection && this.dataAdapter) {
+      await this.fsChangeListener.resumeAfterReconnect({
+        rpcConnection: this.rpcConnection,
+        dataAdapter: this.dataAdapter,
+      });
     }
   }
 
@@ -824,7 +819,6 @@ export default class RemoteSshPlugin extends Plugin {
     this.patcher = new AdapterPatcher(targetAdapter, this.dataAdapter);
     try {
       this.patcher.patch(PATCHED_METHODS as unknown as ReadonlyArray<keyof object & string>);
-      this.activePathMapper = mapper;
       logger.info(`Adapter patched via ${transportLabel}: [${PATCHED_METHODS.join(', ')}]`);
     } catch (e) {
       logger.error(`Adapter patch failed: ${(e as Error).message}`);
@@ -841,7 +835,11 @@ export default class RemoteSshPlugin extends Plugin {
     // Live-update subscription is only meaningful on the RPC transport;
     // the SFTP fallback has no notification channel.
     if (this.rpcConnection) {
-      void this.subscribeToFsChanged();
+      void this.fsChangeListener.subscribe({
+        rpcConnection: this.rpcConnection,
+        dataAdapter: this.dataAdapter,
+        pathMapper: mapper,
+      });
     }
 
     // The legacy `reconcileVaultRoot()` walk used to fire here to
@@ -990,180 +988,6 @@ export default class RemoteSshPlugin extends Plugin {
     }
   }
 
-  /**
-   * Register an `fs.changed` notification handler and ask the daemon to
-   * watch the entire vault. Failure here is non-fatal: the adapter
-   * still works, the only loss is auto-refresh on remote-side edits.
-   */
-  private async subscribeToFsChanged(): Promise<void> {
-    if (!this.rpcConnection) return;
-    if (this.rpcWatchSubscriptionId) return;
-
-    const rpc = this.rpcConnection.rpc;
-    // Register the notification handler *before* sending fs.watch so we
-    // can't miss the very first event the daemon emits.
-    const handler = (params: FsChangedParams) => this.handleFsChanged(params);
-    this.rpcWatchHandlerDisposer = rpc.onNotification('fs.changed', handler);
-
-    try {
-      const result = await rpc.call('fs.watch', { path: '', recursive: true });
-      this.rpcWatchSubscriptionId = result.subscriptionId;
-      logger.info(`fs.watch subscribed: ${this.rpcWatchSubscriptionId}`);
-    } catch (e) {
-      logger.error(`fs.watch failed: ${(e as Error).message}`);
-      this.rpcWatchHandlerDisposer?.();
-      this.rpcWatchHandlerDisposer = null;
-    }
-  }
-
-  /**
-   * Translate a daemon-pushed `fs.changed` notification into a cache
-   * invalidation + a vault reconcile so the File Explorer, Quick
-   * Switcher, etc. pick up creates / deletes / renames the same way
-   * Obsidian's own filesystem watcher would.
-   */
-  private handleFsChanged(params: FsChangedParams): void {
-    // T4a — first thing the reader sees after the daemon push frame
-    // is decoded. Stamping here (before any per-handler short-circuits)
-    // gives PerfAggregator the cleanest reader-side latency anchor.
-    // M3 will swap perfTracer.newCid() for the cid carried on the
-    // notification's envelope meta so this point joins the writer's
-    // S.adp/S.rpc spans on the same correlation id.
-    perfTracer.point('T4a', perfTracer.newCid(), {
-      path: params.path,
-      event: params.event,
-      subscriptionId: params.subscriptionId,
-    });
-
-    if (!this.dataAdapter) return;
-    if (this.rpcWatchSubscriptionId && params.subscriptionId !== this.rpcWatchSubscriptionId) {
-      return;
-    }
-
-    const action = interpretWatchEvent(params.path, this.activePathMapper);
-    if (!action) return;
-
-    this.dataAdapter.invalidateRemotePath(action.remotePath);
-
-    let newVaultPath: string | undefined;
-    if (params.event === 'renamed' && params.newPath) {
-      const newAction = interpretWatchEvent(params.newPath, this.activePathMapper);
-      if (newAction) {
-        this.dataAdapter.invalidateRemotePath(newAction.remotePath);
-        newVaultPath = newAction.vaultPath;
-      }
-    }
-
-    // The notification handler is sync; the model-mutation work
-    // ahead is async (we may need to stat through the patched
-    // adapter). Fire-and-forget with internal error logging so a
-    // failure doesn't bubble back to the RpcClient.
-    void this.applyFsChange(action.vaultPath, newVaultPath, params.event);
-  }
-
-  /**
-   * Apply one daemon-side filesystem notification to the vault model.
-   *
-   * Replaces the legacy `reconcileVaultPath` path that drove
-   * Obsidian's private `reconcileFile` / `reconcileFolder` API. That
-   * API throws on this Obsidian build (the `iu`/`nu` storm of
-   * `Cannot read properties of undefined (reading 'startsWith')`).
-   * `VaultModelBuilder` mutates the same `vault.fileMap` and fires
-   * the same `vault.trigger(create|delete|modify|rename)` events
-   * that File Explorer / MetadataCache / Templater / Dataview
-   * subscribe to, but does so via an event bus that doesn't trip the
-   * broken subscriber chain.
-   */
-  private async applyFsChange(
-    oldVaultPath: string,
-    newVaultPath: string | undefined,
-    event: FsChangedParams['event'],
-  ): Promise<void> {
-    // T4b → T5a — the model-mutation half of the reader-side pipeline.
-    // S.app spans the entry into applyFsChange through every
-    // VaultModelBuilder mutator (which emit T5a points just before
-    // their `vault.trigger(...)` calls).
-    const __t4b = perfTracer.begin('S.app');
-    const builder = new VaultModelBuilder(this.app.vault, { TFile, TFolder });
-
-    try {
-      switch (event) {
-        case 'created': {
-          // We need isDirectory + stat. Stat through the patched
-          // adapter so PathMapper / cache invalidation are honoured.
-          const stat = await this.app.vault.adapter.stat(oldVaultPath).catch(() => null);
-          if (!stat) {
-            logger.warn(`applyFsChange(created): stat failed for ${oldVaultPath}`);
-            return;
-          }
-          builder.insertOne({
-            path: oldVaultPath,
-            isDirectory: stat.type === 'folder',
-            ctime: stat.ctime ?? 0,
-            mtime: stat.mtime ?? 0,
-            size: stat.size ?? 0,
-          });
-          return;
-        }
-        case 'deleted': {
-          builder.removeOne(oldVaultPath);
-          return;
-        }
-        case 'modified': {
-          const stat = await this.app.vault.adapter.stat(oldVaultPath).catch(() => null);
-          if (stat) {
-            builder.modifyOne(oldVaultPath, {
-              ctime: stat.ctime ?? 0,
-              mtime: stat.mtime ?? 0,
-              size: stat.size ?? 0,
-            });
-          } else {
-            // Stat failed — race with a concurrent delete? Fire the
-            // modify event anyway so subscribers know the file
-            // changed; absent stat is better than swallowing.
-            builder.modifyOne(oldVaultPath);
-          }
-          return;
-        }
-        case 'renamed': {
-          if (!newVaultPath) {
-            logger.warn(`applyFsChange(renamed): missing newPath for ${oldVaultPath}`);
-            return;
-          }
-          builder.renameOne(oldVaultPath, newVaultPath);
-          return;
-        }
-      }
-    } catch (e) {
-      logger.warn(`applyFsChange(${event}) failed for ${oldVaultPath}: ${(e as Error).message}`);
-    } finally {
-      perfTracer.end(__t4b, { event, path: oldVaultPath, newPath: newVaultPath });
-    }
-  }
-
-  /**
-   * Drop the daemon-side subscription and the local notification
-   * handler. Safe to call when nothing was subscribed (the patch
-   * never ran, the RPC tunnel was never established, etc.).
-   */
-  private unsubscribeFromFsChanged(): void {
-    const id = this.rpcWatchSubscriptionId;
-    this.rpcWatchSubscriptionId = null;
-    this.activePathMapper = null;
-
-    if (id && this.rpcConnection) {
-      // Best-effort: if the daemon-side subscription is already gone
-      // (process restart, connection drop) the call will reject and
-      // we just log it.
-      this.rpcConnection.rpc.call('fs.unwatch', { subscriptionId: id })
-        .catch(e => logger.warn(`fs.unwatch failed: ${(e as Error).message}`));
-    }
-    if (this.rpcWatchHandlerDisposer) {
-      this.rpcWatchHandlerDisposer();
-      this.rpcWatchHandlerDisposer = null;
-    }
-  }
-
   private debugRestoreAdapter(): void {
     if (!this.patcher?.isPatched()) {
       new Notice('Remote SSH: adapter is not patched');
@@ -1177,7 +1001,7 @@ export default class RemoteSshPlugin extends Plugin {
     // Drop the watch subscription before tearing the adapter down so
     // any in-flight fs.changed callbacks find a still-valid adapter
     // (or, if the handler races, a null `dataAdapter` which it tolerates).
-    this.unsubscribeFromFsChanged();
+    this.fsChangeListener.unsubscribe(this.rpcConnection);
     const wasPatched = this.patcher?.isPatched() ?? false;
     if (wasPatched) {
       try {
