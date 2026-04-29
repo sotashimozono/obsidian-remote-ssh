@@ -311,13 +311,34 @@ describe('VaultModelBuilder.insertOne', () => {
     expect(triggers).toEqual([]);
   });
 
-  it('returns null when the parent folder is missing', () => {
+  it('returns null when the parent folder is missing (default — bulk build sanity check)', () => {
     const { vault, fileMap, triggers } = makeFakeVault();
     const builder = new VaultModelBuilder(vault as never, deps);
     const out = builder.insertOne({ path: 'orphan/file.md', isDirectory: false, ctime: 0, mtime: 0, size: 0 });
     expect(out).toBeNull();
     expect(fileMap['orphan/file.md']).toBeUndefined();
     expect(triggers).toEqual([]);
+  });
+
+  it('synthesises missing ancestor folders when ensureParents is set (#107 race-window self-heal)', () => {
+    const { vault, fileMap, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    // a/ and a/b/ are both missing — the helper must walk up,
+    // create folders for each, then insert the leaf file.
+    const out = builder.insertOne(
+      { path: 'a/b/file.md', isDirectory: false, ctime: 1, mtime: 2, size: 3 },
+      { ensureParents: true },
+    );
+    expect(out).not.toBeNull();
+    expect(fileMap['a']).toBeDefined();
+    expect(fileMap['a/b']).toBeDefined();
+    expect(fileMap['a/b/file.md']).toBeDefined();
+    // Synthesised ancestors fire create triggers too — File Explorer
+    // wants to render them as folders.
+    const createPaths = triggers
+      .filter((t) => t.event === 'create')
+      .map((t) => (t.args[0] as { path: string }).path);
+    expect(createPaths).toEqual(['a', 'a/b', 'a/b/file.md']);
   });
 });
 
