@@ -173,7 +173,13 @@ jobs:
         # cliff.toml at repo root holds the grouping config (✨ Features
         # / 🐛 Bug Fixes / 🚧 CI / etc.) and the Dependabot-noise
         # suppression — no inline `grep -v '^- chore(deps'` here.
-        uses: orhun/git-cliff-action@v3
+        #
+        # Pinned to @v4 (not @v3): @v3's Dockerfile sits on the
+        # Debian Buster base image, and Buster reached EOL in
+        # 2024-06 — `deb.debian.org` now returns 404 for its
+        # `apt-get install jq` step, breaking every release run.
+        # @v4 is on a current Debian base.
+        uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
           args: --latest --strip header
