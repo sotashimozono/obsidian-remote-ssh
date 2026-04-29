@@ -78,8 +78,7 @@ export class ConnectModal extends Modal {
     const label = needsPassword ? 'Password' : 'Key passphrase (leave blank if none)';
     contentEl.createEl('label', { text: label });
 
-    const input = contentEl.createEl('input', { type: 'password' });
-    input.style.cssText = 'width:100%;margin:8px 0 16px;';
+    const input = contentEl.createEl('input', { type: 'password', cls: 'remote-ssh-connect-secret' });
 
     const btn = this.renderConnectButton(profile, contentEl, async () => {
       const secret = input.value;
@@ -98,8 +97,7 @@ export class ConnectModal extends Modal {
 
     // Back button when multiple profiles available
     if (this.profiles.length > 1) {
-      const back = contentEl.createEl('button', { text: '← Back' });
-      back.style.marginTop = '8px';
+      const back = contentEl.createEl('button', { text: '← Back', cls: 'remote-ssh-connect-back' });
       back.onclick = () => this.renderPicker();
     }
   }
@@ -109,8 +107,7 @@ export class ConnectModal extends Modal {
     container: HTMLElement,
     preConnect?: () => Promise<boolean>,
   ): HTMLButtonElement {
-    const btn = container.createEl('button', { text: 'Connect', cls: 'mod-cta' });
-    btn.style.width = '100%';
+    const btn = container.createEl('button', { text: 'Connect', cls: 'mod-cta remote-ssh-connect-button' });
 
     btn.onclick = async () => {
       if (preConnect) {

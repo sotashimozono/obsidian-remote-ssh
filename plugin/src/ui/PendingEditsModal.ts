@@ -52,18 +52,9 @@ export class PendingEditsModal extends Modal {
       contentEl.createEl('p', { text: '(queue is empty)' });
     } else {
       const list = contentEl.createDiv({ cls: 'remote-ssh-pending-edits-list' });
-      list.style.maxHeight = '40vh';
-      list.style.overflowY = 'auto';
-      list.style.marginBottom = '1em';
-      list.style.padding = '0.5em';
-      list.style.border = '1px solid var(--background-modifier-border)';
-      list.style.borderRadius = '4px';
-      list.style.fontFamily = 'var(--font-monospace)';
-      list.style.fontSize = '0.85em';
 
       for (const entry of this.entries) {
-        const row = list.createEl('div');
-        row.style.padding = '0.15em 0';
+        const row = list.createEl('div', { cls: 'remote-ssh-pending-edits-row' });
         const ts = formatTs(entry.ts);
         const summary = describeOp(entry.op);
         row.setText(`${ts}  ${summary}`);
@@ -71,10 +62,6 @@ export class PendingEditsModal extends Modal {
     }
 
     const buttons = contentEl.createDiv({ cls: 'remote-ssh-pending-buttons' });
-    buttons.style.display = 'flex';
-    buttons.style.justifyContent = 'flex-end';
-    buttons.style.gap = '0.5em';
-    buttons.style.marginTop = '1em';
 
     const closeBtn = buttons.createEl('button', { text: 'Close' });
     closeBtn.addEventListener('click', () => {
