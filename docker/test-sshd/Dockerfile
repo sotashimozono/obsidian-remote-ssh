@@ -7,7 +7,7 @@
 # sshd accept the bind-mounted key file regardless of host UID/GID
 # permissions — fine for a throwaway test container, never for prod.
 
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssh-server iproute2 \
