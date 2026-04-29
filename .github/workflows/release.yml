@@ -161,25 +161,22 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
 
-      - name: Generate changelog from commits
+      - name: Generate changelog (git-cliff, grouped by Conventional Commits type)
         id: changelog
-        run: |
-          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
-          if [ -z "$PREV_TAG" ]; then
-            RANGE="HEAD"
-          else
-            RANGE="${PREV_TAG}..HEAD"
-          fi
-
-          CHANGELOG=$(git log $RANGE --pretty=format:"- %s" \
-            --no-merges \
-            | grep -v '^- chore(deps' \
-            || true)
-
-          # Escape for GitHub output (multiline)
-          echo "changelog<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$CHANGELOG" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+        # Replaces the prior free-form `git log --pretty=format` step
+        # (closes #136 / plan §A.D "changelog grouping" line).
+        # `--latest` emits only the entries between the previous tag
+        # and this one (matches the prior step's range semantics).
+        # `--strip header` drops cliff's own `# Changelog` header so
+        # the body slots cleanly under the "## What's changed" line
+        # the release body builds below.
+        # cliff.toml at repo root holds the grouping config (✨ Features
+        # / 🐛 Bug Fixes / 🚧 CI / etc.) and the Dependabot-noise
+        # suppression — no inline `grep -v '^- chore(deps'` here.
+        uses: orhun/git-cliff-action@v3
+        with:
+          config: cliff.toml
+          args: --latest --strip header
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
@@ -189,7 +186,7 @@ jobs:
           body: |
             ## What's changed
 
-            ${{ steps.changelog.outputs.changelog }}
+            ${{ steps.changelog.outputs.content }}
 
             ---
 
