@@ -518,19 +518,48 @@ through the picker for users who prefer that.
 
 ### F2 — First-time auto-connect prompt: inherit settings from source
 
-When a profile's shadow vault is opened for the first time (= no
-prior `data.json` exists for it), the auto-connect could surface a
-modal:
+**Status (2026-04-29, post-#129 investigation): partially shipped.**
 
-> "This is a fresh shadow vault for `<profile>`. Inherit your
-> source vault's community plugins, hotkeys, and settings? You can
-> always undo this from Settings → Community plugins."
-> [ Yes, inherit ] [ Start blank ]
+The community plugin half is fully wired and lives in production today:
 
-If yes, copy the source's `.obsidian/community-plugins.json`,
-`.obsidian/hotkeys.json`, `.obsidian/themes/`, etc. into the
-shadow vault's `.obsidian/`. The user lands in a familiar
-environment instead of an empty one.
+```text
+ShadowVaultBootstrap.bootstrap (first-bootstrap branch)
+  ├─ collectPendingPluginSuggestions()
+  │    walks the source vault's enabled community plugins, snapshots
+  │    each one's `data.json` content, returns PendingPluginSuggestion[]
+  └─ writes data.pendingPluginSuggestions to the shadow's data.json
 
-Today the bootstrap only seeds shadow `data.json` from source —
-plugin enablement, hotkeys, etc. start empty. F2 closes that gap.
+main.ts onLayoutReady (shadow window)
+  └─ runShadowStartup → ShadowStartupCoordinator.prepareForAutoConnect
+        ├─ handlePendingPluginSuggestions
+        │    └─ if data.pendingPluginSuggestions non-empty:
+        │         new PendingPluginsModal(...).prompt()
+        │         decision === 'install' →
+        │           PluginMarketplaceInstaller.installMissing(ids)
+        │             → app.plugins.installPlugin(repo, ver, manifest)
+        │             → app.plugins.enablePluginAndSave(id)
+        │           if copyConfig: copyPluginConfigsForInstalled(...)
+        │             → writes <configDir>/plugins/<id>/data.json
+        │               from the snapshot
+        │         decision === 'skip'   → clear field (no re-prompt)
+        │         decision === 'later'  → keep field (re-prompt next reload)
+        └─ installMissingShadowPlugins (re-bootstrap safety net)
+             reads shadow's community-plugins.json, downloads any
+             still-missing binaries from the marketplace
+```
+
+Failure surfaces (master-list fetch, manifest fetch, id mismatch,
+install crash) are caught per-id and reported via `Notice` + JSONL log.
+
+What's NOT shipped yet (the F2 backlog):
+
+- **Hotkeys** (`hotkeys.json`)
+- **Themes** (`themes/`, plus the `cssTheme` field in `appearance.json`)
+- **Custom snippets** (`snippets/`, `appearance.json#enabledCssSnippets`)
+- **Workspace layout** (`workspace.json`) — partially intentional;
+  PathMapper already routes layout to the per-client subtree, but
+  initial layout from source still doesn't seed.
+
+These are independent features; each can ship as its own PR
+mirroring the community-plugin pattern (collect snapshot at
+bootstrap, prompt at first layout-ready, copy on accept).
