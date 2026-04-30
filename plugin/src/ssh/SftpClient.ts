@@ -1,5 +1,5 @@
 import { Client } from 'ssh2';
-import type { ConnectConfig, SFTPWrapper, Stats } from 'ssh2';
+import type { ConnectConfig, KeyboardInteractiveCallback, Prompt, SFTPWrapper, Stats } from 'ssh2';
 import type { Duplex } from 'stream';
 import type { RemoteEntry, RemoteStat, SshProfile } from '../types';
 import { TMP_SUFFIX } from '../constants';
@@ -9,6 +9,24 @@ import { createJumpTunnel } from './JumpHostTunnel';
 import { logger } from '../util/logger';
 
 export type CloseListener = (info: { unexpected: boolean }) => void;
+
+/**
+ * Async callback invoked when the SSH server asks for a
+ * `keyboard-interactive` round (TOTP / RSA SecurID / PAM PIN, etc.).
+ * Receives the server's per-prompt challenge list and resolves with
+ * one response per prompt in the same order. Returning `null` is
+ * treated as cancel — `SftpClient` forwards `[]` to ssh2's `finish`
+ * callback, which fails the auth round cleanly.
+ *
+ * Wired only by the plugin's UI layer (`main.ts` constructs the
+ * callback as `prompts => new KbdInteractiveModal(app, prompts).prompt()`).
+ * Integration tests and the rest of the codebase that doesn't need
+ * an interactive prompt simply pass nothing — `tryKeyboard` stays
+ * off and ssh2 behaves exactly as before.
+ */
+export type KbdInteractiveHandlerFn = (
+  prompts: Array<{ prompt: string; echo: boolean }>,
+) => Promise<string[] | null>;
 
 /**
  * String encoding accepted by Buffer / NodeJS.Buffer's `toString` /
@@ -56,6 +74,14 @@ export class SftpClient {
   constructor(
     private authResolver: AuthResolver,
     private hostKeyStore: HostKeyStore,
+    /**
+     * Optional. When supplied, `connect()` enables ssh2's
+     * `tryKeyboard` and forwards keyboard-interactive challenges to
+     * this callback (typically a Modal in the UI). Omitted by the
+     * integration test fixtures and any non-UI caller, so existing
+     * 2-arg constructions stay valid.
+     */
+    private kbdInteractiveHandler?: KbdInteractiveHandlerFn,
   ) {}
 
   // ─── lifecycle ───────────────────────────────────────────────────────────
@@ -139,6 +165,48 @@ export class SftpClient {
         }
       });
 
+      // keyboard-interactive (TOTP / SecurID / Duo Push / PAM PIN).
+      // ssh2 only fires this event when `tryKeyboard: true` is in the
+      // config AND the server actively asks for it; absence of a
+      // handler means we leave the flag off entirely so the previous
+      // pubkey/agent/password-only behaviour is preserved bit-for-bit.
+      if (this.kbdInteractiveHandler) {
+        const handler = this.kbdInteractiveHandler;
+        client.on('keyboard-interactive', (
+          _name: string,
+          _instructions: string,
+          _lang: string,
+          prompts: Prompt[],
+          finish: KeyboardInteractiveCallback,
+        ) => {
+          // ssh2's Prompt.echo is optional (treated as false when
+          // missing — the typical TOTP / PAM PIN case). Coerce here
+          // so the handler contract stays simple (`echo: boolean`
+          // required) and the modal doesn't have to hand-roll the
+          // default.
+          const normalised = prompts.map(p => ({
+            prompt: p.prompt,
+            echo:   p.echo ?? false,
+          }));
+          // ssh2 expects `finish` to be called eventually; we drive
+          // it off the async callback. Errors / cancels become an
+          // empty response list, which ssh2 treats as auth failure —
+          // the `client.on('error', ...)` handler above then rejects
+          // the connect promise with the underlying SSH error.
+          handler(normalised).then(
+            (responses) => {
+              finish(responses ?? []);
+            },
+            (err: unknown) => {
+              logger.warn(
+                `SftpClient: keyboard-interactive handler threw: ${asError(err).message}; failing auth`,
+              );
+              finish([]);
+            },
+          );
+        });
+      }
+
       const config: ConnectConfig = {
         host: profile.host,
         port: profile.port,
@@ -150,6 +218,12 @@ export class SftpClient {
           const keyBuf = Buffer.isBuffer(key) ? key : Buffer.from(key, 'base64');
           return this.hostKeyStore.verify(profile.host, profile.port, keyBuf);
         },
+        // Only flip tryKeyboard on when a handler exists. The flag's
+        // presence makes ssh2 advertise keyboard-interactive in the
+        // method list it offers the server — leaving it off when no
+        // handler is wired keeps integration tests deterministic
+        // (some test sshd images would otherwise prompt).
+        ...(this.kbdInteractiveHandler ? { tryKeyboard: true } : {}),
         ...(sock ? { sock } : {}),
         ...authConfig,
       };
