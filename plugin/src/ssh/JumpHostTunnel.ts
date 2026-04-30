@@ -4,7 +4,7 @@ import type { ConnectConfig } from 'ssh2';
 import type { Duplex } from 'stream';
 import type { JumpHostConfig } from '../types';
 import type { AuthResolver } from './AuthResolver';
-import type { HostKeyStore } from './HostKeyStore';
+import type { HostKeyMismatchHandler, HostKeyStore } from './HostKeyStore';
 import { expandHome } from '../util/pathUtils';
 import { logger } from '../util/logger';
 
@@ -16,6 +16,19 @@ import { logger } from '../util/logger';
 export interface CreateJumpTunnelOptions {
   /** TOFU verifier shared with the main session. Strongly recommended. */
   hostKeyStore?: HostKeyStore;
+  /**
+   * Optional. When supplied alongside `hostKeyStore`, a host-key
+   * mismatch on the jump connection surfaces this callback (typically
+   * the same `HostKeyMismatchModal` the main session uses) instead of
+   * failing closed. Without it, the jump-host hostVerifier keeps the
+   * existing sync `verify()` path — fail-closed on mismatch.
+   *
+   * The callback's contract is identical to {@link HostKeyMismatchHandler}:
+   * `'trust'` → forget the old jump-host fingerprint, pin the new one,
+   * proceed; `'abort'` → leave the pin untouched and refuse the
+   * tunnel handshake.
+   */
+  hostKeyMismatchHandler?: HostKeyMismatchHandler;
   /** Forwarded to ssh2's keepalive on the jump connection. */
   keepaliveIntervalMs?: number;
   /** Forwarded as `readyTimeout` to ssh2's connect. */
@@ -57,10 +70,32 @@ export async function createJumpTunnel(
   };
   if (options.hostKeyStore) {
     const store = options.hostKeyStore;
-    config.hostVerifier = (key: Buffer | string) => {
-      const buf = Buffer.isBuffer(key) ? key : Buffer.from(key, 'base64');
-      return store.verify(jump.host, jump.port, buf);
-    };
+    // Mirror SftpClient (#132): switch to ssh2's async HostVerifier
+    // overload when a mismatch handler is wired so the user can be
+    // prompted on a jump-host fingerprint change instead of getting
+    // a generic "Jump host connect failed" error. Without a handler,
+    // the existing sync verify() path stays in place — fail-closed
+    // on mismatch, no async surface, identical to today.
+    const mismatchHandler = options.hostKeyMismatchHandler;
+    if (mismatchHandler) {
+      config.hostVerifier = (key: Buffer, verify: (valid: boolean) => void): void => {
+        const buf = Buffer.isBuffer(key) ? key : Buffer.from(key, 'base64');
+        store.verifyAsync(jump.host, jump.port, buf, mismatchHandler).then(verify, (e: unknown) => {
+          // verifyAsync swallows handler errors internally; this is a
+          // defence-in-depth path for impossible failures.
+          logger.warn(
+            `Jump host hostVerifier rejected unexpectedly for ` +
+            `${jump.host}:${jump.port}: ${(e as Error).message}`,
+          );
+          verify(false);
+        });
+      };
+    } else {
+      config.hostVerifier = (key: Buffer | string): boolean => {
+        const buf = Buffer.isBuffer(key) ? key : Buffer.from(key, 'base64');
+        return store.verify(jump.host, jump.port, buf);
+      };
+    }
   }
 
   // Wait for the jump client to handshake. Both 'ready' and 'error'
