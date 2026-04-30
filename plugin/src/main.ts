@@ -59,6 +59,14 @@ const PATCHED_METHODS = [
   'trashSystem', 'trashLocal',
   // resources (binary URL for <img> / <iframe> / <audio>)
   'getResourcePath',
+  // basePath surface — patched so plugins that join paths against
+  // it (Templater's tp.file.path, Kanban clipboard paste, Importer,
+  // Copilot — see docs/plugin-compatibility.md "basePath compat
+  // survey") get the shadow-vault local root explicitly. The natural
+  // FileSystemAdapter getter already returns this value, but routing
+  // through the replacement makes the contract explicit and gives
+  // tests a single hook to assert on. #170, follow-up to #133.
+  'basePath', 'getBasePath',
 ] as const;
 
 export default class RemoteSshPlugin extends Plugin {
@@ -779,6 +787,17 @@ export default class RemoteSshPlugin extends Plugin {
       return true;
     }
     const targetAdapter = this.app.vault.adapter as unknown as Record<string, unknown>;
+    // Capture the shadow vault's local root *before* patching. The
+    // running window is the shadow window, so its FileSystemAdapter
+    // already points at `~/.obsidian-remote/vaults/<P-id>/`; we feed
+    // that value back into SftpDataAdapter so the patched basePath /
+    // getBasePath surface returns it explicitly. Falls back to '' if
+    // the host adapter isn't a FileSystemAdapter (mobile / unusual
+    // builds) — plugins that read basePath in those environments
+    // already had no useful answer. #170.
+    const shadowBasePath = this.app.vault.adapter instanceof FileSystemAdapter
+      ? this.app.vault.adapter.getBasePath()
+      : '';
     this.readCache = new ReadCache();
     this.dirCache = new DirCache();
     // Pick the transport that matches the active session: when an
@@ -884,6 +903,7 @@ export default class RemoteSshPlugin extends Plugin {
       // (ancestor / mine / theirs) and let the user pick or hand-merge.
       (vaultPath, panes) => new ThreeWayMergeModal(this.app, { path: vaultPath, ...panes }).prompt(),
       this.offlineQueue,
+      shadowBasePath,
     );
     this.patcher = new AdapterPatcher(targetAdapter, this.dataAdapter);
     try {
