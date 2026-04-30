@@ -521,3 +521,151 @@ describe('ResourceBridge — fetchBinaryRange fast path (#134)', () => {
     expect(fullFileFetcher).toHaveBeenCalledTimes(1);
   });
 });
+
+// ─── #171 — expectedMtime threading + retry on PreconditionFailed ────────
+
+describe('ResourceBridge — fetchBinaryRange mtime cache (#171)', () => {
+  let bridge: ResourceBridge;
+  beforeEach(() => { bridge = new ResourceBridge(); });
+  afterEach(async () => { await bridge.stop(); });
+
+  it('first request flows without expectedMtime; the response\'s mtime is cached', async () => {
+    const fullFileFetcher = vi.fn(async () => new Uint8Array());
+    const rangeFetcher = vi.fn(async (
+      _p: string, _o: number, _l: number, _expected?: number,
+    ) => ({
+      bytes: new TextEncoder().encode('abcde'), mtime: 1000, totalSize: 11,
+    }));
+    await bridge.start(fullFileFetcher, undefined, rangeFetcher);
+    const r = await fetchUrl(bridge.urlFor('movie.mp4'), { Range: 'bytes=0-4' });
+    expect(r.statusCode).toBe(206);
+    expect(rangeFetcher).toHaveBeenCalledTimes(1);
+    expect(rangeFetcher.mock.calls[0]).toEqual(['movie.mp4', 0, 5, undefined]);
+  });
+
+  it('passes the cached mtime as expectedMtime on follow-up requests for the same path', async () => {
+    const fullFileFetcher = vi.fn(async () => new Uint8Array());
+    const rangeFetcher = vi.fn(async (
+      _p: string, _o: number, _l: number, _expected?: number,
+    ) => ({
+      bytes: new TextEncoder().encode('abcde'), mtime: 1000, totalSize: 11,
+    }));
+    await bridge.start(fullFileFetcher, undefined, rangeFetcher);
+    await fetchUrl(bridge.urlFor('movie.mp4'), { Range: 'bytes=0-4' });
+    await fetchUrl(bridge.urlFor('movie.mp4'), { Range: 'bytes=5-9' });
+    expect(rangeFetcher).toHaveBeenCalledTimes(2);
+    // First call: no precondition (priming the cache).
+    expect(rangeFetcher.mock.calls[0]).toEqual(['movie.mp4', 0, 5, undefined]);
+    // Second call: precondition pinned to the first response's mtime.
+    expect(rangeFetcher.mock.calls[1]).toEqual(['movie.mp4', 5, 5, 1000]);
+  });
+
+  it('on PreconditionFailed, drops the cache entry, re-issues without expectedMtime, and serves the fresh slice', async () => {
+    const fullFileFetcher = vi.fn(async () => new Uint8Array());
+    let callCount = 0;
+    const rangeFetcher = vi.fn(async (
+      _p: string, _o: number, _l: number, expected?: number,
+    ) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return { bytes: new TextEncoder().encode('OLD..'), mtime: 1000, totalSize: 11 };
+      }
+      // Second call: bridge passed expectedMtime: 1000 (from cache).
+      // The remote was edited; daemon throws PreconditionFailed.
+      if (callCount === 2 && expected === 1000) {
+        // Mimic the RPC error shape — { code: -32020 } is enough for
+        // the duck-type check in `isPreconditionFailed`.
+        throw Object.assign(new Error('precondition failed'), { code: -32020 });
+      }
+      // Retry: bridge re-issues with expectedMtime: undefined and
+      // gets the fresh slice + new mtime.
+      expect(expected).toBeUndefined();
+      return { bytes: new TextEncoder().encode('NEW..'), mtime: 2000, totalSize: 11 };
+    });
+    await bridge.start(fullFileFetcher, undefined, rangeFetcher);
+    // Prime the cache.
+    await fetchUrl(bridge.urlFor('movie.mp4'), { Range: 'bytes=0-4' });
+    // Mid-scrub edit happens here. The next request rejects then retries.
+    const r = await fetchUrl(bridge.urlFor('movie.mp4'), { Range: 'bytes=0-4' });
+    expect(r.statusCode).toBe(206);
+    expect(r.body.toString('utf8')).toBe('NEW..');
+    expect(rangeFetcher).toHaveBeenCalledTimes(3);
+    // Subsequent request after recovery should pin to the new mtime
+    // (2000), not the dropped 1000 — proves the retry's response
+    // mtime was cached.
+    await fetchUrl(bridge.urlFor('movie.mp4'), { Range: 'bytes=5-9' });
+    expect(rangeFetcher.mock.calls[3]).toEqual(['movie.mp4', 5, 5, 2000]);
+  });
+
+  it('non-PreconditionFailed errors propagate to the legacy fall-back path (no retry)', async () => {
+    // A non-precondition fetcher error (e.g. transport hiccup) is
+    // already handled by the existing fall-back to fetchBinary — this
+    // test confirms the new retry logic doesn't swallow it or call
+    // the fetcher twice.
+    const fullFileFetcher = vi.fn(async () => new TextEncoder().encode('hello world'));
+    const rangeFetcher = vi.fn(async () => {
+      throw new Error('transient transport error');
+    });
+    await bridge.start(fullFileFetcher, undefined, rangeFetcher);
+    const r = await fetchUrl(bridge.urlFor('a.txt'), { Range: 'bytes=6-10' });
+    expect(r.statusCode).toBe(206);
+    expect(r.body.toString('utf8')).toBe('world');
+    expect(rangeFetcher).toHaveBeenCalledTimes(1);
+    expect(fullFileFetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('TTL expiry: a stale cached mtime is dropped on read so the next request flows without expectedMtime', async () => {
+    vi.useFakeTimers();
+    try {
+      const fullFileFetcher = vi.fn(async () => new Uint8Array());
+      const rangeFetcher = vi.fn(async (
+        _p: string, _o: number, _l: number, _expected?: number,
+      ) => ({
+        bytes: new TextEncoder().encode('abcde'), mtime: 1000, totalSize: 11,
+      }));
+      await bridge.start(fullFileFetcher, undefined, rangeFetcher);
+      // Prime the cache at t=0.
+      await fetchUrl(bridge.urlFor('movie.mp4'), { Range: 'bytes=0-4' });
+      // Advance 31 seconds — past the 30 s TTL.
+      vi.setSystemTime(new Date(Date.now() + 31_000));
+      await fetchUrl(bridge.urlFor('movie.mp4'), { Range: 'bytes=5-9' });
+      expect(rangeFetcher).toHaveBeenCalledTimes(2);
+      // Both calls flowed without expectedMtime — first one priming,
+      // second one finding a stale entry that was dropped on read.
+      expect(rangeFetcher.mock.calls[0][3]).toBeUndefined();
+      expect(rangeFetcher.mock.calls[1][3]).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('LRU evict: at the max-entries cap, the least-recently-used path is dropped from the cache', async () => {
+    // The cap is 64. Prime 65 distinct paths in order; the first one
+    // becomes the LRU and is evicted, so a follow-up request for it
+    // re-enters the cache-miss path (= no expectedMtime).
+    const fullFileFetcher = vi.fn(async () => new Uint8Array());
+    const rangeFetcher = vi.fn(async (
+      path: string, _o: number, _l: number, _expected?: number,
+    ) => ({
+      // Each path gets a distinct mtime so we can tell which entry
+      // the second-to-last call pinned against. Match only the first
+      // run of digits so `p64.mp4` becomes `64`, not `644`.
+      bytes: new TextEncoder().encode('abcde'),
+      mtime: 1000 + parseInt(path.match(/\d+/)![0], 10),
+      totalSize: 11,
+    }));
+    await bridge.start(fullFileFetcher, undefined, rangeFetcher);
+    for (let i = 0; i < 65; i++) {
+      await fetchUrl(bridge.urlFor(`p${i}.mp4`), { Range: 'bytes=0-4' });
+    }
+    // p0 should now be evicted. Re-request it: the call must pass
+    // expectedMtime: undefined (cache miss), proving eviction.
+    rangeFetcher.mockClear();
+    await fetchUrl(bridge.urlFor('p0.mp4'), { Range: 'bytes=0-4' });
+    expect(rangeFetcher.mock.calls[0][3]).toBeUndefined();
+    // Conversely p64 (the most recent) should still be cached.
+    rangeFetcher.mockClear();
+    await fetchUrl(bridge.urlFor('p64.mp4'), { Range: 'bytes=0-4' });
+    expect(rangeFetcher.mock.calls[0][3]).toBe(1000 + 64);
+  });
+});

@@ -31,6 +31,7 @@ import type { AncestorTracker } from '../conflict/AncestorTracker';
 import type { OfflineQueue, QueuedOp } from '../offline/OfflineQueue';
 import { logger } from '../util/logger';
 import { perfTracer } from '../util/PerfTracer';
+import { isPreconditionFailed } from '../proto/rpcError';
 
 /**
  * Inputs to a 3-way conflict prompt. The adapter assembles these
@@ -1003,17 +1004,3 @@ function reconnectingError(): Error {
   return new Error('Remote SSH: reconnecting — try again once the connection is restored');
 }
 
-/**
- * Recognise the `PreconditionFailed` (-32020) error the daemon
- * returns when an `fs.write` with `expectedMtime` finds the remote
- * mtime has moved. Duck-typed against the `code` property so we
- * don't have to import `RpcError` from the transport layer (the
- * SFTP path also passes through this adapter and wraps its own
- * errors differently).
- */
-function isPreconditionFailed(e: unknown): boolean {
-  return typeof e === 'object'
-      && e !== null
-      && 'code' in e
-      && (e).code === -32020;
-}
