@@ -109,6 +109,9 @@ export function scaffoldTestVault(): ScaffoldResult {
     'utf8',
   );
 
+  // Seed demo notes so the vault isn't empty in screenshots / tests
+  seedDemoNotes(vaultPath);
+
   const cleanup = () => {
     try {
       fs.rmSync(vaultPath, { recursive: true, force: true });
@@ -118,4 +121,54 @@ export function scaffoldTestVault(): ScaffoldResult {
   };
 
   return { vaultPath, cleanup };
+}
+
+/**
+ * Seed the vault with sample markdown notes so the file explorer
+ * has visible content in E2E tests and demo screenshots.
+ */
+function seedDemoNotes(vaultPath: string): void {
+  const notes: Array<{ dir?: string; name: string; content: string }> = [
+    {
+      name: 'welcome_local.md',
+      content: [
+        '# Welcome (local)',
+        '',
+        'This note was created **locally** in the scaffold vault.',
+        'When connected, the remote vault will also contain',
+        '`welcome_remote.md` and `notes_remote.md` — files that',
+        'already existed on the server before you connected.',
+        '',
+        '## Try it',
+        '',
+        '1. Connect to the remote via **Remote SSH: Connect**',
+        '2. The file explorer shows both `*_local` and `*_remote` files',
+        '3. Create `demonstration.md` — it appears on the server too',
+        '',
+      ].join('\n'),
+    },
+    {
+      name: 'setup_local.md',
+      content: [
+        '# Setup (local)',
+        '',
+        'This note describes the local Obsidian environment.',
+        '',
+        '- **Plugin**: Remote SSH',
+        '- **Transport**: RPC (recommended) or SFTP',
+        '- **Auth**: private key / password / ssh-agent',
+        '',
+        'Edits here are written to the remote in real time.',
+        '',
+      ].join('\n'),
+    },
+  ];
+
+  for (const note of notes) {
+    const dir = note.dir
+      ? path.join(vaultPath, note.dir)
+      : vaultPath;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, note.name), note.content, 'utf8');
+  }
 }

@@ -29,3 +29,4 @@ docker/keys/id_test.pub
 docker/test-vault/*
 !docker/test-vault/.gitkeep
 !docker/test-vault/README.md
+!docker/test-vault/*_remote.md
