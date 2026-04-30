@@ -1,10 +1,15 @@
 {
   "id": "remote-ssh",
   "name": "Remote SSH",
-  "version": "0.4.89",
+  "version": "0.4.90",
   "minAppVersion": "1.4.0",
   "description": "Edit remote vaults over SSH/SFTP — VS Code Remote-SSH style.",
   "author": "souta shimozono",
   "authorUrl": "https://codes.sota-shimozono.com/",
+  "fundingUrl": {
+    "Buy Me a Coffee": "https://buymeacoffee.com/sotashimozono",
+    "GitHub Sponsors": "https://github.com/sponsors/sotashimozono"
+  },
+  "helpUrl": "https://github.com/sotashimozono/obsidian-remote-ssh#readme",
   "isDesktopOnly": true
 }
