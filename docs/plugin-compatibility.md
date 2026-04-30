@@ -121,8 +121,9 @@ Things that aren't a specific plugin but trip plugins in general:
   `FileSystemAdapter`'s base path — pointing at your local dev vault,
   not the remote. Plugins that join paths against `basePath` and feed
   them to Node `fs` directly will read/write *local* files, missing the
-  remote vault entirely. There's no good general fix for this from our
-  side; we can only document it.
+  remote vault entirely. See the **basePath compat survey** section
+  below (#133, 2026-04-29) for which top-20 plugins are affected and
+  how the shadow-vault path mitigates it.
 - **Worker threads** spawned by plugins are independent JS contexts —
   they don't see our patched `app.vault.adapter`. Plugins that pass file
   paths to a worker for parsing (some search-heavy plugins do this)
@@ -146,3 +147,95 @@ clicked X and it didn't render"). A unit-test approximation would
 exercise our adapter, not the plugin's actual code path. So this doc
 is maintained by hand from manual smoke testing — when something
 unexpected breaks, please update the row.
+
+## basePath compat survey (#133, 2026-04-29)
+
+Investigation tracker for issue #133. We surveyed the top-20
+most-installed community plugins (sorted by lifetime downloads from
+`obsidianmd/obsidian-releases`'s `community-plugin-stats.json` on
+2026-04-29) for direct reads of `app.vault.adapter.basePath` /
+`getBasePath()`. The goal is to decide what `basePath` should return
+on a remote vault — the issue is **investigation only**; no code
+changes ship with this survey.
+
+### Headline
+
+- **6 / 20** plugins read `basePath` (or the equivalent
+  `getBasePath()` method) from the adapter.
+- **3 are high-risk** (`fs-read`): Templater, Kanban, Importer.
+- **1 is fundamentally incompatible** even with patching: Git
+  (Vinzent03), via `simple-git` shelling out to a local `git` binary.
+- The method form `getBasePath()` is more common in real usage than
+  the property `.basePath` (Templater, Importer, Copilot, Remotely
+  Save, Git all prefer it). **Both must be patched** if we ship a fix.
+
+### Per-plugin findings
+
+Categories: `none` (no usage), `display-only` (UI / metadata),
+`fs-read` (joined and passed to Node `fs`), `fs-stat`, `passthrough`
+(handed back to a patched adapter method), `other` (URL prefix
+compare, child-process cwd, etc.).
+
+| Plugin | Installs | Where | Category | Risk | Mitigation |
+| --- | --- | --- | --- | --- | --- |
+| Excalidraw | 5.9M | `src/utils/fileUtils.ts:343` — `pathToFileURL(adapter.basePath)` for drag-drop "is this file in the vault?" prefix-match | other | medium | Shadow-vault path keeps the prefix check internally consistent |
+| Templater | 4.2M | `InternalModuleFile.ts:256/262` — `tp.file.path(false)` joins `basePath` with the target path; `UserSystemFunctions.ts:23` uses it as `child_process.exec` cwd | fs-read + exec cwd | high | Patch `basePath`/`getBasePath()` to return shadow-vault path; user scripts run against the synced shadow copy |
+| Dataview | 4.1M | none in plugin source (only hit was a bundled `hot-reload` dev tool) | none | none | n/a — uses `metadataCache` only |
+| Tasks | 3.4M | none in plugin source | none | none | n/a |
+| Advanced Tables | 2.8M | none | none | none | n/a |
+| Calendar | 2.6M | none | none | none | n/a |
+| Git (Vinzent03) | 2.5M | `src/main.ts:466` — `path.join(getBasePath(), filePath)` for `electron.shell.showItemInFolder`; `simpleGit.ts:44` uses `getBasePath()` as `simple-git` `baseDir` (spawns local `git`) | fs-read + child-process | high (un-fixable) | `simple-git` shells out to the *local* `git` binary against a *local* path; patching `basePath` to the shadow vault would silently mis-route operations. Document as known-incompatible |
+| Style Settings | 2.3M | none | none | none | n/a |
+| Kanban | 2.2M | `src/components/Item/helpers.ts:450` — `(adapter as any).basePath` joined with attachment path, fed to `fs.copyFile` on Electron clipboard image paste | fs-read | high | Patch returns shadow-vault path; `fs.copyFile` lands in shadow vault and syncs up |
+| Iconize | 2.0M | none | none | none | n/a |
+| Remotely Save | 1.9M | `src/main.ts:1736` — `getBasePath().split("?")[0]` as a vault-instance ID for cloud-sync conflict detection | display-only | low | Shadow-vault path is fine; gives a stable per-machine ID |
+| QuickAdd | 1.7M | none | none | none | n/a |
+| Minimal Theme Settings | 1.5M | none | none | none | n/a |
+| Omnisearch | 1.4M | none | none | none | n/a |
+| Editing Toolbar | 1.4M | none | none | none | n/a |
+| Copilot | 1.3M | `src/miyo/miyoUtils.ts:105-110` — defensive `getBasePath?.()` then `basePath` fallback; flows into local-context AI machinery | passthrough | medium | Shadow-vault path lets Copilot index the synced local copy |
+| Importer | 1.2M | `src/formats/evernote-enex.ts:34` — `path.join(getBasePath(), folder.path)` as `outputDir` for the Yarle Evernote converter (Node `fs` writes) | fs-read | high | Same shape as Kanban; shadow-vault path lands writes in the synced copy |
+| Outliner | 1.2M | none | none | none | n/a |
+| Homepage | 1.1M | none | none | none | n/a |
+| Recent Files | 1.0M | none | none | none | n/a |
+
+### Recommendations
+
+- **Patch both `basePath` (getter) and `getBasePath()` (method)** to
+  return the shadow-vault local path. This single change makes
+  Templater, Kanban, Importer, and Copilot work transparently —
+  `path.join(basePath, …)` plus Node `fs.*` writes land in the shadow
+  vault, which the file-watcher syncs up to the remote.
+- **Returning the shadow-vault path is also safe for the
+  display/metadata cases** (Excalidraw URL-prefix compare, Remotely
+  Save instance ID): both want a stable, internally consistent local
+  path, which the shadow-vault path provides.
+- **obsidian-Git is the one genuine casualty** — `simple-git` shells
+  out to a local `git` binary, so even with `basePath` patched it
+  would operate on the shadow vault rather than the canonical remote
+  one. Document as incompatible; a separate "remote git over SSH"
+  feature would be the only fix.
+- **14 / 20 top plugins read no `basePath` at all**, so the blast
+  radius of the current "do nothing" stance is ~30% of the most-
+  installed plugins. That is too large to ignore but small enough
+  that a single uniform patch (no per-plugin shim layer) is the
+  high-leverage choice.
+- **Next step is a follow-up implementation issue**, not a change in
+  this PR. Scope: extend `PATCHED_METHODS` (`plugin/src/main.ts:49`)
+  to include `basePath` and `getBasePath`, route both to the shadow
+  vault's local root, and add an `app://local/<path>` rewrite check
+  for plugins that build asset URLs by hand from `basePath` (out of
+  scope of this survey but worth keeping on the radar).
+
+### Method
+
+- Registry source: `community-plugins.json` +
+  `community-plugin-stats.json` from `obsidianmd/obsidian-releases`,
+  fetched 2026-04-29.
+- Top-20 selected by lifetime `downloads` desc.
+- Per-repo search: GitHub code-search API restricted to TS/JS
+  sources; matches inside bundled `hot-reload` dev tools or
+  `sample_vault/.../main.js` test fixtures were excluded.
+- One-to-two representative usage sites recorded per plugin —
+  exhaustive coverage was not the goal; the categorization is what
+  drives the recommendation.
