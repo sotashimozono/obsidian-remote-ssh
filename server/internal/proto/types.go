@@ -92,6 +92,38 @@ type ReadBinaryResult struct {
 	Size          int64  `json:"size"`
 }
 
+// ReadBinaryRangeParams are the inputs to fs.readBinaryRange — the
+// partial-read sibling of fs.readBinary. Offset is bytes from the
+// start of the file; Length is the number of bytes the caller wants.
+// Reads past EOF clamp silently — the caller can detect the clamp
+// by comparing len(decoded ContentBase64) against the requested
+// Length, and Size in the result always reports the total file size.
+//
+// ExpectedMtime, when non-zero, fails the request with
+// PreconditionFailed if the file's current mtime differs. Range-aware
+// callers (e.g. ResourceBridge serving HTTP byte ranges to the
+// webview) thread the first response's Mtime back as ExpectedMtime
+// on follow-up range requests so a mid-read edit invalidates cleanly
+// instead of silently stitching slices from two different file
+// generations.
+type ReadBinaryRangeParams struct {
+	Path          string `json:"path"`
+	Offset        int64  `json:"offset"`
+	Length        int64  `json:"length"`
+	ExpectedMtime int64  `json:"expectedMtime,omitempty"`
+}
+
+// ReadBinaryRangeResult mirrors ReadBinaryResult but Size always
+// reports the TOTAL on-disk file size, not the returned slice length.
+// HTTP Content-Range responses need the total to build
+// `bytes start-end/<total>`; the returned slice length can be derived
+// from len(decoded ContentBase64).
+type ReadBinaryRangeResult struct {
+	ContentBase64 string `json:"contentBase64"`
+	Mtime         int64  `json:"mtime"`
+	Size          int64  `json:"size"`
+}
+
 type WriteTextParams struct {
 	Path          string `json:"path"`
 	Content       string `json:"content"`

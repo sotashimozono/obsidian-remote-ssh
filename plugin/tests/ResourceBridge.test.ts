@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as http from 'http';
-import { ResourceBridge, parseRangeHeader } from '../src/adapter/ResourceBridge';
+import { ResourceBridge, parseRangeHeader, parseExplicitByteRange } from '../src/adapter/ResourceBridge';
 
 /**
  * End-to-end tests against a real localhost http.Server. The bridge is
@@ -371,5 +371,153 @@ describe('ResourceBridge Range responses', () => {
     expect(r.statusCode).toBe(206);
     expect(r.headers['content-range']).toBe('bytes 6-10/11');
     expect(r.body.toString('utf8')).toBe('world');
+  });
+});
+
+// ─── #134 — fetchBinaryRange fast path ──────────────────────────────────
+
+describe('parseExplicitByteRange (#134)', () => {
+  it('parses an explicit bytes=N-M as { start, length }', () => {
+    expect(parseExplicitByteRange('bytes=0-99')).toEqual({ start: 0, length: 100 });
+    expect(parseExplicitByteRange('bytes=100-199')).toEqual({ start: 100, length: 100 });
+    expect(parseExplicitByteRange('bytes=5-5')).toEqual({ start: 5, length: 1 });
+  });
+
+  it('returns null for forms that need the total size to parse', () => {
+    expect(parseExplicitByteRange('bytes=500-')).toBeNull();
+    expect(parseExplicitByteRange('bytes=-100')).toBeNull();
+    expect(parseExplicitByteRange('bytes=-')).toBeNull();
+    expect(parseExplicitByteRange('bytes=')).toBeNull();
+  });
+
+  it('returns null for malformed headers', () => {
+    expect(parseExplicitByteRange('items=0-100')).toBeNull();
+    expect(parseExplicitByteRange('bytes=abc-100')).toBeNull();
+    expect(parseExplicitByteRange('bytes=0-50,100-150')).toBeNull();
+  });
+
+  it('returns null for start > end (RFC 7233 unsatisfiable)', () => {
+    expect(parseExplicitByteRange('bytes=200-100')).toBeNull();
+  });
+});
+
+describe('ResourceBridge — fetchBinaryRange fast path (#134)', () => {
+  let bridge: ResourceBridge;
+  beforeEach(() => { bridge = new ResourceBridge(); });
+  afterEach(async () => { await bridge.stop(); });
+
+  it('routes Range:bytes=N-M to fetchBinaryRange when wired (= no full-file fetch)', async () => {
+    const fullFileFetcher = vi.fn(async (_p: string) => new TextEncoder().encode('XXXXXXXXXXX'));
+    const rangeFetcher = vi.fn(async (path: string, offset: number, length: number) => {
+      expect(path).toBe('big.bin');
+      expect(offset).toBe(6);
+      expect(length).toBe(5);
+      // Daemon returns the requested slice + the true total size of
+      // the whole file. The bridge should use the totalSize to build
+      // Content-Range, NOT call back into fullFileFetcher.
+      return {
+        bytes:     new TextEncoder().encode('world'),
+        mtime:     1234,
+        totalSize: 11,
+      };
+    });
+    await bridge.start(fullFileFetcher, undefined, rangeFetcher);
+    const r = await fetchUrl(bridge.urlFor('big.bin'), { Range: 'bytes=6-10' });
+    expect(r.statusCode).toBe(206);
+    expect(r.headers['content-range']).toBe('bytes 6-10/11');
+    expect(r.body.toString('utf8')).toBe('world');
+    expect(rangeFetcher).toHaveBeenCalledTimes(1);
+    expect(fullFileFetcher).not.toHaveBeenCalled();
+  });
+
+  it('falls back to fetchBinary when no fetchBinaryRange was wired (= SFTP transport)', async () => {
+    const fullFileFetcher = vi.fn(async () => new TextEncoder().encode('hello world'));
+    await bridge.start(fullFileFetcher);
+    const r = await fetchUrl(bridge.urlFor('a.txt'), { Range: 'bytes=6-10' });
+    expect(r.statusCode).toBe(206);
+    expect(r.headers['content-range']).toBe('bytes 6-10/11');
+    expect(r.body.toString('utf8')).toBe('world');
+    expect(fullFileFetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to fetchBinary for bytes=N- (open-ended needs total size)', async () => {
+    const fullFileFetcher = vi.fn(async () => new TextEncoder().encode('hello world'));
+    const rangeFetcher = vi.fn(async () => ({
+      bytes: new Uint8Array(), mtime: 0, totalSize: 0,
+    }));
+    await bridge.start(fullFileFetcher, undefined, rangeFetcher);
+    const r = await fetchUrl(bridge.urlFor('a.txt'), { Range: 'bytes=6-' });
+    expect(r.statusCode).toBe(206);
+    expect(r.headers['content-range']).toBe('bytes 6-10/11');
+    expect(rangeFetcher).not.toHaveBeenCalled();
+    expect(fullFileFetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to fetchBinary for bytes=-N (suffix needs total size)', async () => {
+    const fullFileFetcher = vi.fn(async () => new TextEncoder().encode('hello world'));
+    const rangeFetcher = vi.fn(async () => ({
+      bytes: new Uint8Array(), mtime: 0, totalSize: 0,
+    }));
+    await bridge.start(fullFileFetcher, undefined, rangeFetcher);
+    const r = await fetchUrl(bridge.urlFor('a.txt'), { Range: 'bytes=-5' });
+    expect(r.statusCode).toBe(206);
+    expect(r.headers['content-range']).toBe('bytes 6-10/11');
+    expect(rangeFetcher).not.toHaveBeenCalled();
+    expect(fullFileFetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 416 when the daemon reports the start is past EOF', async () => {
+    const fullFileFetcher = vi.fn(async () => new Uint8Array());
+    const rangeFetcher = vi.fn(async () => ({
+      bytes: new Uint8Array(), mtime: 0, totalSize: 100,
+    }));
+    await bridge.start(fullFileFetcher, undefined, rangeFetcher);
+    const r = await fetchUrl(bridge.urlFor('a.txt'), { Range: 'bytes=200-300' });
+    expect(r.statusCode).toBe(416);
+    expect(r.headers['content-range']).toBe('bytes */100');
+    expect(fullFileFetcher).not.toHaveBeenCalled();
+  });
+
+  it('falls back to fetchBinary when the range fetcher throws (e.g. daemon mid-deploy)', async () => {
+    const fullFileFetcher = vi.fn(async () => new TextEncoder().encode('hello world'));
+    const rangeFetcher = vi.fn(async () => {
+      throw new Error('method not registered');
+    });
+    await bridge.start(fullFileFetcher, undefined, rangeFetcher);
+    const r = await fetchUrl(bridge.urlFor('a.txt'), { Range: 'bytes=6-10' });
+    expect(r.statusCode).toBe(206);
+    expect(r.headers['content-range']).toBe('bytes 6-10/11');
+    expect(r.body.toString('utf8')).toBe('world');
+    expect(rangeFetcher).toHaveBeenCalledTimes(1);
+    expect(fullFileFetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles a daemon-clamped past-EOF response (returned slice shorter than requested)', async () => {
+    const fullFileFetcher = vi.fn(async () => new Uint8Array());
+    const rangeFetcher = vi.fn(async () => ({
+      // Asked for 100 bytes; daemon only had 20 left after offset.
+      bytes:     new TextEncoder().encode('hello-clamped-to-EOF'), // 20 bytes
+      mtime:     0,
+      totalSize: 100,
+    }));
+    await bridge.start(fullFileFetcher, undefined, rangeFetcher);
+    const r = await fetchUrl(bridge.urlFor('a.txt'), { Range: 'bytes=80-179' });
+    expect(r.statusCode).toBe(206);
+    expect(r.headers['content-range']).toBe('bytes 80-99/100');
+    expect(Number(r.headers['content-length'])).toBe(20);
+    expect(r.body.toString('utf8')).toBe('hello-clamped-to-EOF');
+  });
+
+  it('does not invoke fetchBinaryRange when there is no Range header', async () => {
+    const fullFileFetcher = vi.fn(async () => new TextEncoder().encode('hello world'));
+    const rangeFetcher = vi.fn(async () => ({
+      bytes: new Uint8Array(), mtime: 0, totalSize: 0,
+    }));
+    await bridge.start(fullFileFetcher, undefined, rangeFetcher);
+    const r = await fetchUrl(bridge.urlFor('a.txt'));
+    expect(r.statusCode).toBe(200);
+    expect(r.body.toString('utf8')).toBe('hello world');
+    expect(rangeFetcher).not.toHaveBeenCalled();
+    expect(fullFileFetcher).toHaveBeenCalledTimes(1);
   });
 });

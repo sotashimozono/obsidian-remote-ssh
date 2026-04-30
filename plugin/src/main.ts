@@ -791,11 +791,19 @@ export default class RemoteSshPlugin extends Plugin {
     // instead of pulling the full original on every <img>.
     const bridge = new ResourceBridge();
     const fetchThumbnail = this.makeThumbnailFetcherIfSupported();
+    const fetchBinaryRange = this.makeBinaryRangeFetcherIfSupported();
     try {
-      await bridge.start(p => this.fetchBinaryForBridge(p), fetchThumbnail ?? undefined);
+      await bridge.start(
+        p => this.fetchBinaryForBridge(p),
+        fetchThumbnail ?? undefined,
+        fetchBinaryRange ?? undefined,
+      );
       this.resourceBridge = bridge;
       if (fetchThumbnail) {
         logger.info('ResourceBridge: thumbnail fast path enabled (daemon supports fs.thumbnail)');
+      }
+      if (fetchBinaryRange) {
+        logger.info('ResourceBridge: range fast path enabled (daemon supports fs.readBinaryRange)');
       }
     } catch (e) {
       logger.warn(`ResourceBridge: start failed: ${(e as Error).message}`);
@@ -1177,6 +1185,33 @@ export default class RemoteSshPlugin extends Plugin {
       return {
         bytes:  new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength),
         format: result.format,
+      };
+    };
+  }
+
+  /**
+   * Build the bridge's range fetcher when the active session can
+   * support it (#134). Returns `null` for SFTP transports or for
+   * daemons that don't advertise `fs.readBinaryRange` — the bridge
+   * then transparently falls back to the full-binary path on every
+   * `Range:` request, which still works but allocates the whole file
+   * into memory just to slice.
+   */
+  private makeBinaryRangeFetcherIfSupported(): null | ((vaultPath: string, offset: number, length: number) => Promise<{ bytes: Uint8Array; mtime: number; totalSize: number }>) {
+    const conn = this.rpcConnection;
+    if (!conn) return null;
+    if (!conn.info.capabilities.includes('fs.readBinaryRange')) return null;
+    return async (vaultPath, offset, length) => {
+      const result = await conn.rpc.call('fs.readBinaryRange', {
+        path: vaultPath,
+        offset,
+        length,
+      });
+      const buf = Buffer.from(result.contentBase64, 'base64');
+      return {
+        bytes:     new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength),
+        mtime:     result.mtime,
+        totalSize: result.size,
       };
     };
   }

@@ -55,6 +55,36 @@ export class RpcRemoteFsClient implements RemoteFsClient {
     return Buffer.from(r.contentBase64, 'base64');
   }
 
+  /**
+   * fs.readBinaryRange — partial-read sibling of {@link readBinary}.
+   * Returned slice may be shorter than `length` if the request runs
+   * past EOF; `size` always reports the total file size so HTTP
+   * Content-Range responses can build `bytes start-end/<total>`.
+   *
+   * Pass `expectedMtime` to bind the read to a specific file generation:
+   * the daemon returns `PreconditionFailed` if the file changed in the
+   * meantime, so a range-aware caller can invalidate its cache and
+   * restart from offset 0 cleanly.
+   */
+  async readBinaryRange(
+    path: string,
+    offset: number,
+    length: number,
+    expectedMtime?: number,
+  ): Promise<{ data: Buffer; mtime: number; size: number }> {
+    const r = await this.rpc.call('fs.readBinaryRange', {
+      path,
+      offset,
+      length,
+      ...(expectedMtime !== undefined ? { expectedMtime } : {}),
+    });
+    return {
+      data: Buffer.from(r.contentBase64, 'base64'),
+      mtime: r.mtime,
+      size: r.size,
+    };
+  }
+
   // ─── write side ───────────────────────────────────────────────────────
 
   async writeBinary(path: string, data: Buffer, expectedMtime?: number): Promise<void> {

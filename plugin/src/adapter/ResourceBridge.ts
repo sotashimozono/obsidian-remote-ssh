@@ -11,6 +11,26 @@ import { logger } from '../util/logger';
 export type FetchBinaryFn = (vaultPath: string) => Promise<Uint8Array>;
 
 /**
+ * Async fetcher for partial binary reads. Optional: the bridge falls
+ * back to {@link FetchBinaryFn} + post-fetch slicing when a request
+ * carries a `Range:` header but no range fetcher was wired (= SFTP
+ * transport, or a daemon that doesn't advertise `fs.readBinaryRange`).
+ *
+ * `bytes` may be shorter than the requested `length` when the request
+ * runs past EOF; the bridge uses `totalSize` to build the
+ * `Content-Range: bytes start-end/<total>` header regardless of how
+ * much was actually returned. `mtime` is the source file's mtime at
+ * read time — informational for now; a future revision can thread it
+ * back as `expectedMtime` on follow-up requests so a mid-scrub edit
+ * invalidates cleanly.
+ */
+export type FetchBinaryRangeFn = (
+  vaultPath: string,
+  offset: number,
+  length: number,
+) => Promise<{ bytes: Uint8Array; mtime: number; totalSize: number }>;
+
+/**
  * Async fetcher for daemon-resized image thumbnails. Optional: the
  * bridge falls back to `FetchBinaryFn` when the request asks for a
  * thumbnail but no fetcher is wired (= SFTP transport, or a daemon
@@ -51,6 +71,7 @@ export class ResourceBridge {
   private port: number | null = null;
   private fetchBinary: FetchBinaryFn | null = null;
   private fetchThumbnail: FetchThumbnailFn | null = null;
+  private fetchBinaryRange: FetchBinaryRangeFn | null = null;
 
   /**
    * Start the HTTP server and return the chosen port + token. Calling
@@ -61,10 +82,18 @@ export class ResourceBridge {
    * when omitted, the bridge falls back to `fetchBinary` for the same
    * URL (so the webview's `<img>` still renders, just without the
    * bandwidth + CPU savings).
+   *
+   * `fetchBinaryRange` is optional: when supplied, requests with a
+   * `Range:` header are served from a single `fs.readBinaryRange` RPC
+   * (= true partial read, no full-file allocation); when omitted, the
+   * bridge falls back to fetching the full file via `fetchBinary` and
+   * slicing post-hoc (the existing path; correct but bandwidth-
+   * expensive on >ReadCache-sized files like long videos and big PDFs).
    */
   async start(
     fetchBinary: FetchBinaryFn,
     fetchThumbnail?: FetchThumbnailFn,
+    fetchBinaryRange?: FetchBinaryRangeFn,
   ): Promise<StartResult> {
     if (this.server) {
       throw new Error('ResourceBridge already started');
@@ -72,6 +101,7 @@ export class ResourceBridge {
     this.token = randomBytes(32).toString('hex');
     this.fetchBinary = fetchBinary;
     this.fetchThumbnail = fetchThumbnail ?? null;
+    this.fetchBinaryRange = fetchBinaryRange ?? null;
 
     const server = http.createServer((req, res) => {
       void this.handleRequest(req, res);
@@ -83,6 +113,8 @@ export class ResourceBridge {
         this.server = null;
         this.token = null;
         this.fetchBinary = null;
+        this.fetchThumbnail = null;
+        this.fetchBinaryRange = null;
         reject(err);
       };
       server.once('error', onError);
@@ -105,6 +137,7 @@ export class ResourceBridge {
     this.port = null;
     this.fetchBinary = null;
     this.fetchThumbnail = null;
+    this.fetchBinaryRange = null;
 
     return new Promise<void>(resolve => {
       // Force-close any in-flight responses so we don't hang on a slow
@@ -219,6 +252,63 @@ export class ResourceBridge {
       }
     }
 
+    // Range fast path: when an explicit `bytes=N-M` request arrives
+    // and we have a true partial-read fetcher wired (= RPC daemon
+    // supports `fs.readBinaryRange`, #134), skip the full-file load
+    // entirely. The daemon ReadAt's the slice off disk, returning
+    // both the bytes and the total file size so we can build a
+    // well-formed `Content-Range` header without an extra stat.
+    //
+    // `bytes=N-` (open-ended) and `bytes=-N` (suffix) need the total
+    // size to parse, so they fall through to the legacy full-file
+    // path below — not the common case for video scrubbing or PDF
+    // chunk requests, which use the explicit `bytes=N-M` form.
+    const fetchBinaryRange = this.fetchBinaryRange;
+    const rangeHeaderForFastPath = req.headers.range;
+    if (fetchBinaryRange && rangeHeaderForFastPath) {
+      const explicit = parseExplicitByteRange(rangeHeaderForFastPath);
+      if (explicit !== null) {
+        try {
+          const result = await fetchBinaryRange(rawPath, explicit.start, explicit.length);
+          const totalSize = result.totalSize;
+          if (explicit.start >= totalSize) {
+            // RFC 7233: a range starting past EOF is unsatisfiable.
+            res.writeHead(416, {
+              'Content-Range': `bytes */${totalSize}`,
+              'Cache-Control': 'no-store',
+            }).end();
+            return;
+          }
+          const sliceLen = result.bytes.byteLength;
+          const end = explicit.start + sliceLen - 1;
+          const contentType = guessMimeType(rawPath);
+          res.writeHead(206, {
+            'Content-Type': contentType,
+            'Content-Length': sliceLen,
+            'Content-Range': `bytes ${explicit.start}-${end}/${totalSize}`,
+            'Cache-Control': 'no-store',
+            'Accept-Ranges': 'bytes',
+          });
+          if (req.method === 'HEAD') {
+            res.end();
+          } else {
+            res.end(Buffer.from(result.bytes.buffer, result.bytes.byteOffset, sliceLen));
+          }
+          return;
+        } catch (e) {
+          // Fall through to the legacy full-file path so the webview
+          // still gets *something* even if the partial read broke
+          // server-side (e.g. daemon mid-deploy without the new
+          // method registered yet).
+          logger.warn(
+            `ResourceBridge: fs.readBinaryRange failed for "${rawPath}" ` +
+            `${rangeHeaderForFastPath}: ${(e as Error).message}; ` +
+            `falling back to full binary`,
+          );
+        }
+      }
+    }
+
     let bytes: Uint8Array;
     try {
       bytes = await fetchBinary(rawPath);
@@ -233,9 +323,13 @@ export class ResourceBridge {
 
     // Range support. We always advertise byte ranges in 200 responses;
     // when the client asks for a range we respond with 206 and a
-    // sliced body. Note: we still load the *full* bytes through
-    // fetchBinary above — true partial reads would need
-    // `fs.readBinaryRange` in the daemon protocol (Phase 6-B.2).
+    // sliced body. The bytes were loaded through `fetchBinary` above,
+    // so for an explicit `bytes=N-M` request we already have a fast
+    // path higher up in `handleRequest` that uses `fetchBinaryRange`
+    // to avoid the full-file load (#134); we only reach this point
+    // for ranges that need total-size knowledge to parse (`bytes=N-`
+    // and suffix `bytes=-N`), or when no range fetcher was wired (=
+    // SFTP transport, or a daemon without `fs.readBinaryRange`).
     // ReadCache means repeated range requests for the same file
     // don't re-read across the SSH link as long as it fits.
     const rangeHeader = req.headers.range;
@@ -333,6 +427,36 @@ export function parseRangeHeader(
   // Spec allows clamping a too-large end; do so.
   if (end >= totalSize) end = totalSize - 1;
   return { start, end };
+}
+
+/**
+ * Parse a `Range:` header WITHOUT knowing the resource's total size,
+ * for the {@link FetchBinaryRangeFn} fast path (#134) that fetches
+ * the slice in a single round-trip and learns the total from the
+ * daemon's response.
+ *
+ * Only the **explicit** form `bytes=N-M` is handled — the only
+ * widely-used shape that doesn't require advance knowledge of the
+ * resource size. `bytes=N-` (open-ended) needs total to compute
+ * `end`, and `bytes=-N` (suffix) needs total to compute `start`;
+ * both forms return `null` so the caller can fall back to the
+ * full-file path that has total in hand.
+ *
+ * Returns `null` for non-explicit forms or syntax errors; returns
+ * `{ start, length }` for an explicit `bytes=N-M`. Length is `M-N+1`
+ * (inclusive end). The daemon clamps past-EOF reads, so callers do
+ * not need to bound `length` against any local size estimate.
+ */
+export function parseExplicitByteRange(
+  headerValue: string,
+): { start: number; length: number } | null {
+  const m = /^bytes=(\d+)-(\d+)$/.exec(headerValue.trim());
+  if (!m) return null;
+  const start = parseInt(m[1], 10);
+  const end = parseInt(m[2], 10);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  if (start < 0 || end < start) return null;
+  return { start, length: end - start + 1 };
 }
 
 /**
