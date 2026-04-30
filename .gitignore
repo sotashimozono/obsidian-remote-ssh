@@ -17,6 +17,9 @@ plugin/perf-results/
 # never appear in the working tree of a clean checkout.
 plugin/tests-replay/
 
+# Playwright E2E test results (HTML report + traces).
+plugin/e2e-results/
+
 # Docker test environment artefacts: keypair generated on first run,
 # bind-mounted vault contents written by integration tests.
 docker/keys/id_test
