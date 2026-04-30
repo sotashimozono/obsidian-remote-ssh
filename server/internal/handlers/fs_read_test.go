@@ -337,3 +337,210 @@ func TestFsReadBinary_RejectsDirectory(t *testing.T) {
 		t.Fatalf("want IsADirectory, got %+v", rerr)
 	}
 }
+
+// ─── fs.readBinaryRange ──────────────────────────────────────────────────
+
+// rangeFixture seeds a temp file with a known sequential byte pattern
+// so range reads can assert exact byte positions, not just length.
+// The pattern wraps at 251 (largest prime < 256) so an off-by-one in
+// offset arithmetic shows up as a clearly wrong byte rather than an
+// aligned-and-deceptive 0/0xff pattern.
+func rangeFixture(t *testing.T, size int) (root, relPath string, mtimeMs int64) {
+	t.Helper()
+	root = t.TempDir()
+	relPath = "blob.bin"
+	abs := filepath.Join(root, relPath)
+	data := make([]byte, size)
+	for i := range data {
+		data[i] = byte(i % 251)
+	}
+	if err := os.WriteFile(abs, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root, relPath, info.ModTime().UnixMilli()
+}
+
+func TestFsReadBinaryRange_Happy(t *testing.T) {
+	root, relPath, mtimeMs := rangeFixture(t, 1024)
+	h := FsReadBinaryRange(root)
+	raw, _ := json.Marshal(proto.ReadBinaryRangeParams{
+		Path:   relPath,
+		Offset: 100,
+		Length: 50,
+	})
+	result, rerr := h(context.Background(), raw)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	got := result.(proto.ReadBinaryRangeResult)
+	decoded, err := base64.StdEncoding.DecodeString(got.ContentBase64)
+	if err != nil {
+		t.Fatalf("base64 decode: %v", err)
+	}
+	if len(decoded) != 50 {
+		t.Fatalf("len(decoded) = %d, want 50", len(decoded))
+	}
+	for i := 0; i < 50; i++ {
+		want := byte((100 + i) % 251)
+		if decoded[i] != want {
+			t.Errorf("decoded[%d] = %#x, want %#x", i, decoded[i], want)
+		}
+	}
+	if got.Size != 1024 {
+		t.Errorf("Size = %d, want 1024 (total file size, not slice length)", got.Size)
+	}
+	if got.Mtime != mtimeMs {
+		t.Errorf("Mtime = %d, want %d", got.Mtime, mtimeMs)
+	}
+}
+
+func TestFsReadBinaryRange_ClampsPastEOF(t *testing.T) {
+	root, relPath, _ := rangeFixture(t, 100)
+	h := FsReadBinaryRange(root)
+	raw, _ := json.Marshal(proto.ReadBinaryRangeParams{
+		Path:   relPath,
+		Offset: 80,
+		Length: 100, // 80..180 requested; only 80..100 exists
+	})
+	result, rerr := h(context.Background(), raw)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	got := result.(proto.ReadBinaryRangeResult)
+	decoded, err := base64.StdEncoding.DecodeString(got.ContentBase64)
+	if err != nil {
+		t.Fatalf("base64 decode: %v", err)
+	}
+	if len(decoded) != 20 {
+		t.Fatalf("len(decoded) = %d, want 20 (clamped to EOF)", len(decoded))
+	}
+	if got.Size != 100 {
+		t.Errorf("Size = %d, want 100", got.Size)
+	}
+}
+
+func TestFsReadBinaryRange_OffsetAtOrPastEOF(t *testing.T) {
+	root, relPath, _ := rangeFixture(t, 100)
+	h := FsReadBinaryRange(root)
+	for _, offset := range []int64{100, 500} {
+		raw, _ := json.Marshal(proto.ReadBinaryRangeParams{
+			Path:   relPath,
+			Offset: offset,
+			Length: 50,
+		})
+		result, rerr := h(context.Background(), raw)
+		if rerr != nil {
+			t.Fatalf("offset=%d: %+v", offset, rerr)
+		}
+		got := result.(proto.ReadBinaryRangeResult)
+		if got.ContentBase64 != "" {
+			t.Errorf("offset=%d: ContentBase64 = %q, want empty", offset, got.ContentBase64)
+		}
+		if got.Size != 100 {
+			t.Errorf("offset=%d: Size = %d, want 100", offset, got.Size)
+		}
+	}
+}
+
+func TestFsReadBinaryRange_PreconditionFailedOnMtimeMismatch(t *testing.T) {
+	root, relPath, mtimeMs := rangeFixture(t, 100)
+	h := FsReadBinaryRange(root)
+	raw, _ := json.Marshal(proto.ReadBinaryRangeParams{
+		Path:          relPath,
+		Offset:        0,
+		Length:        10,
+		ExpectedMtime: mtimeMs + 1, // off-by-one ms — guaranteed mismatch
+	})
+	_, rerr := h(context.Background(), raw)
+	if rerr == nil || rerr.Code != proto.ErrorPreconditionFailed {
+		t.Fatalf("want PreconditionFailed, got %+v", rerr)
+	}
+}
+
+func TestFsReadBinaryRange_PreconditionAcceptedWhenMtimeMatches(t *testing.T) {
+	root, relPath, mtimeMs := rangeFixture(t, 100)
+	h := FsReadBinaryRange(root)
+	raw, _ := json.Marshal(proto.ReadBinaryRangeParams{
+		Path:          relPath,
+		Offset:        0,
+		Length:        10,
+		ExpectedMtime: mtimeMs,
+	})
+	if _, rerr := h(context.Background(), raw); rerr != nil {
+		t.Fatalf("matching ExpectedMtime should succeed, got %+v", rerr)
+	}
+}
+
+func TestFsReadBinaryRange_RejectsNegativeOffset(t *testing.T) {
+	root, relPath, _ := rangeFixture(t, 100)
+	h := FsReadBinaryRange(root)
+	raw, _ := json.Marshal(proto.ReadBinaryRangeParams{
+		Path:   relPath,
+		Offset: -1,
+		Length: 10,
+	})
+	_, rerr := h(context.Background(), raw)
+	if rerr == nil || rerr.Code != proto.ErrorInvalidParams {
+		t.Fatalf("want InvalidParams, got %+v", rerr)
+	}
+}
+
+func TestFsReadBinaryRange_RejectsNegativeLength(t *testing.T) {
+	root, relPath, _ := rangeFixture(t, 100)
+	h := FsReadBinaryRange(root)
+	raw, _ := json.Marshal(proto.ReadBinaryRangeParams{
+		Path:   relPath,
+		Offset: 0,
+		Length: -5,
+	})
+	_, rerr := h(context.Background(), raw)
+	if rerr == nil || rerr.Code != proto.ErrorInvalidParams {
+		t.Fatalf("want InvalidParams, got %+v", rerr)
+	}
+}
+
+func TestFsReadBinaryRange_RejectsDirectory(t *testing.T) {
+	v := newVault(t)
+	h := FsReadBinaryRange(v.Root)
+	raw, _ := json.Marshal(proto.ReadBinaryRangeParams{
+		Path:   "docs",
+		Offset: 0,
+		Length: 10,
+	})
+	_, rerr := h(context.Background(), raw)
+	if rerr == nil || rerr.Code != proto.ErrorIsADirectory {
+		t.Fatalf("want IsADirectory, got %+v", rerr)
+	}
+}
+
+func TestFsReadBinaryRange_PathOutsideVault(t *testing.T) {
+	v := newVault(t)
+	h := FsReadBinaryRange(v.Root)
+	raw, _ := json.Marshal(proto.ReadBinaryRangeParams{
+		Path:   "../etc/passwd",
+		Offset: 0,
+		Length: 10,
+	})
+	_, rerr := h(context.Background(), raw)
+	if rerr == nil || rerr.Code != proto.ErrorPathOutsideVault {
+		t.Fatalf("want PathOutsideVault, got %+v", rerr)
+	}
+}
+
+func TestFsReadBinaryRange_MissingReturnsFileNotFound(t *testing.T) {
+	v := newVault(t)
+	h := FsReadBinaryRange(v.Root)
+	raw, _ := json.Marshal(proto.ReadBinaryRangeParams{
+		Path:   "nope.bin",
+		Offset: 0,
+		Length: 10,
+	})
+	_, rerr := h(context.Background(), raw)
+	if rerr == nil || rerr.Code != proto.ErrorFileNotFound {
+		t.Fatalf("want FileNotFound, got %+v", rerr)
+	}
+}

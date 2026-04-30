@@ -184,4 +184,71 @@ describe('RpcRemoteFsClient', () => {
     fake.isClosed = vi.fn(() => true);
     expect(client.isAlive()).toBe(false);
   });
+
+  // ─── readBinaryRange (#134) ───────────────────────────────────────────
+
+  it('readBinaryRange forwards offset/length and decodes the slice', async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const slice = Buffer.from([100, 101, 102, 103]);
+    const client = new RpcRemoteFsClient({
+      isClosed: () => false,
+      onClose: () => () => { /* noop */ },
+      call: vi.fn(async (method: string, params: unknown) => {
+        calls.push({ method, params });
+        if (method === 'fs.readBinaryRange') {
+          return { contentBase64: slice.toString('base64'), mtime: 12345, size: 1024 };
+        }
+        throw new RpcError(-32601, method);
+      }),
+    } as unknown as RpcClient);
+
+    const result = await client.readBinaryRange('big.bin', 100, 4);
+    expect(calls.length).toBe(1);
+    expect(calls[0].method).toBe('fs.readBinaryRange');
+    expect(calls[0].params).toEqual({ path: 'big.bin', offset: 100, length: 4 });
+    expect([...result.data]).toEqual([100, 101, 102, 103]);
+    expect(result.mtime).toBe(12345);
+    expect(result.size).toBe(1024); // total file size, not slice length
+  });
+
+  it('readBinaryRange forwards expectedMtime when provided', async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const client = new RpcRemoteFsClient({
+      isClosed: () => false,
+      onClose: () => () => { /* noop */ },
+      call: vi.fn(async (method: string, params: unknown) => {
+        calls.push({ method, params });
+        return { contentBase64: '', mtime: 999, size: 50 };
+      }),
+    } as unknown as RpcClient);
+
+    await client.readBinaryRange('x.bin', 0, 10, 999);
+    const params = calls[0].params as { expectedMtime?: number };
+    expect(params.expectedMtime).toBe(999);
+  });
+
+  it('readBinaryRange omits expectedMtime when not provided', async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const client = new RpcRemoteFsClient({
+      isClosed: () => false,
+      onClose: () => () => { /* noop */ },
+      call: vi.fn(async (method: string, params: unknown) => {
+        calls.push({ method, params });
+        return { contentBase64: '', mtime: 0, size: 0 };
+      }),
+    } as unknown as RpcClient);
+
+    await client.readBinaryRange('x.bin', 0, 10);
+    const params = calls[0].params as Record<string, unknown>;
+    expect('expectedMtime' in params).toBe(false);
+  });
+
+  it('readBinaryRange returns an empty Buffer when the slice is empty (past EOF)', async () => {
+    const client = new RpcRemoteFsClient(mockRpc({
+      'fs.readBinaryRange': () => ({ contentBase64: '', mtime: 0, size: 50 }),
+    }));
+    const result = await client.readBinaryRange('x.bin', 100, 10);
+    expect(result.data.byteLength).toBe(0);
+    expect(result.size).toBe(50);
+  });
 });

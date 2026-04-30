@@ -148,6 +148,7 @@ func run(args []string) (int, error) {
 	disp.Handle("fs.thumbnail", handlers.RequireAuth(handlers.FsThumbnail(absRoot, thumbCache)))
 	disp.Handle("fs.readText", handlers.RequireAuth(handlers.FsReadText(absRoot)))
 	disp.Handle("fs.readBinary", handlers.RequireAuth(handlers.FsReadBinary(absRoot)))
+	disp.Handle("fs.readBinaryRange", handlers.RequireAuth(handlers.FsReadBinaryRange(absRoot)))
 	// Write side. Handlers that produce fs.changed events take the
 	// cid correlator so the resulting notification carries the cid
 	// the client supplied via request envelope meta.

@@ -51,6 +51,7 @@ export type MethodName =
   | 'fs.walk'
   | 'fs.readText'
   | 'fs.readBinary'
+  | 'fs.readBinaryRange'
   | 'fs.thumbnail'
   | 'fs.write'
   | 'fs.writeBinary'
@@ -74,9 +75,10 @@ export interface MethodMap {
   'fs.list':         { params: PathOnlyParams;        result: ListResult };
   'fs.walk':         { params: WalkParams;            result: WalkResult };
 
-  'fs.readText':     { params: ReadTextParams;        result: ReadTextResult };
-  'fs.readBinary':   { params: PathOnlyParams;        result: ReadBinaryResult };
-  'fs.thumbnail':    { params: ThumbnailParams;       result: ThumbnailResult };
+  'fs.readText':       { params: ReadTextParams;        result: ReadTextResult };
+  'fs.readBinary':     { params: PathOnlyParams;        result: ReadBinaryResult };
+  'fs.readBinaryRange':{ params: ReadBinaryRangeParams; result: ReadBinaryRangeResult };
+  'fs.thumbnail':      { params: ThumbnailParams;       result: ThumbnailResult };
 
   'fs.write':        { params: WriteTextParams;       result: MtimeResult };
   'fs.writeBinary':  { params: WriteBinaryParams;     result: MtimeResult };
@@ -133,6 +135,34 @@ export interface WalkResult {
 export interface ReadTextParams { path: string; encoding?: 'utf8' }
 export interface ReadTextResult { content: string; mtime: number; size: number; encoding: 'utf8' }
 export interface ReadBinaryResult { contentBase64: string; mtime: number; size: number }
+
+/**
+ * fs.readBinaryRange — partial-read sibling of fs.readBinary.
+ * `offset` is bytes from BOF; `length` is the number of bytes the
+ * caller wants. Reads past EOF clamp silently — the response carries
+ * however many bytes were available (which may be zero when offset
+ * is past EOF). `size` in the result is always the TOTAL on-disk
+ * file size, not the returned slice length.
+ *
+ * `expectedMtime`, when set, fails the request with PreconditionFailed
+ * when the file's current mtime differs. Range-aware callers (e.g.
+ * `ResourceBridge` serving HTTP byte ranges to the webview) thread
+ * the first response's `mtime` back as `expectedMtime` on follow-up
+ * range requests so a mid-read edit invalidates cleanly instead of
+ * stitching slices from two file generations.
+ */
+export interface ReadBinaryRangeParams {
+  path: string;
+  offset: number;
+  length: number;
+  expectedMtime?: number;
+}
+export interface ReadBinaryRangeResult {
+  contentBase64: string;
+  mtime: number;
+  /** Total on-disk file size, not the returned slice length. */
+  size: number;
+}
 
 export interface WriteTextParams {
   path: string;
