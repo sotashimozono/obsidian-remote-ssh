@@ -13,6 +13,7 @@ import { AdapterPatcher } from './adapter/AdapterPatcher';
 import { ResourceBridge } from './adapter/ResourceBridge';
 import { WriteConflictModal } from './ui/WriteConflictModal';
 import { ThreeWayMergeModal } from './ui/ThreeWayMergeModal';
+import { KbdInteractiveModal } from './ui/KbdInteractiveModal';
 import { AncestorTracker } from './conflict/AncestorTracker';
 import { OfflineQueue } from './offline/OfflineQueue';
 import { QueueReplayer } from './offline/QueueReplayer';
@@ -122,7 +123,18 @@ export default class RemoteSshPlugin extends Plugin {
 
     this.fsChangeListener = new FsChangeListener(this.app);
 
-    this.client = new SftpClient(this.authResolver, this.hostKeyStore);
+    this.client = new SftpClient(
+      this.authResolver,
+      this.hostKeyStore,
+      // keyboard-interactive (TOTP / RSA SecurID / Duo Push / PAM PIN)
+      // — wired here so the SftpClient stays UI-agnostic and the
+      // integration test fixtures (which construct it with two
+      // args) keep working unchanged. The handler returns `null` on
+      // user-cancel; SftpClient forwards `[]` to ssh2's `finish`,
+      // which fails the auth round and surfaces as a normal connect
+      // error in the connect promise rejection.
+      (prompts) => new KbdInteractiveModal(this.app, prompts).prompt(),
+    );
     this.client.onClose(({ unexpected }) => {
       // Intentional disconnects are driven by `disconnect()` which
       // already handles cleanup. Unexpected ones (network drop, peer
