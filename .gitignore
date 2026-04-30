@@ -19,6 +19,8 @@ plugin/tests-replay/
 
 # Playwright E2E test results (HTML report + traces).
 plugin/e2e-results/
+plugin/e2e/demo-screenshots/
+plugin/test-results/
 
 # Docker test environment artefacts: keypair generated on first run,
 # bind-mounted vault contents written by integration tests.
@@ -27,3 +29,4 @@ docker/keys/id_test.pub
 docker/test-vault/*
 !docker/test-vault/.gitkeep
 !docker/test-vault/README.md
+!docker/test-vault/*_remote.md

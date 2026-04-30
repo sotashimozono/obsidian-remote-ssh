@@ -1,6 +1,8 @@
 import { type Browser, type Page, chromium } from '@playwright/test';
 import { type ChildProcess, spawn } from 'node:child_process';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 
 const CDP_PORT = Number(process.env.CDP_PORT ?? '9222');
 
@@ -53,14 +55,19 @@ export async function launchObsidian(
 ): Promise<ObsidianHandle> {
   const obsidianBin = resolveObsidianPath();
 
+  // Kill any existing Obsidian process so we get a clean instance
+  // pointing at the scaffold vault instead of the user's last vault.
+  await killExistingObsidian();
+
+  // Register the scaffold vault in Obsidian's app config and mark
+  // it as the only open vault so Obsidian opens it on launch.
+  const restore = registerVault(vaultPath);
+
   const proc = spawn(obsidianBin, [
     `--remote-debugging-port=${CDP_PORT}`,
     '--no-sandbox',
   ], {
-    env: {
-      ...process.env,
-      OBSIDIAN_VAULT_PATH: vaultPath,
-    },
+    env: { ...process.env },
     stdio: 'pipe',
     detached: false,
   });
@@ -89,9 +96,77 @@ export async function launchObsidian(
         proc.on('exit', () => { clearTimeout(timer); resolve(); });
       });
     }
+    restore();
   };
 
   return { browser, page, process: proc, cleanup };
+}
+
+/**
+ * Kill any running Obsidian process. Obsidian is single-instance —
+ * if one is already running, our spawn just signals the existing
+ * process and exits, so we'd connect to the user's real vault
+ * instead of the scaffold vault.
+ */
+async function killExistingObsidian(): Promise<void> {
+  const { execSync } = await import('node:child_process');
+  try {
+    if (process.platform === 'win32') {
+      execSync('taskkill /F /IM Obsidian.exe /T', { stdio: 'ignore' });
+    } else {
+      execSync('pkill -f Obsidian || true', { stdio: 'ignore' });
+    }
+  } catch {
+    // No existing process — fine
+  }
+  // Brief wait for the process to fully exit
+  await new Promise((r) => setTimeout(r, 2_000));
+}
+
+/**
+ * Register the scaffold vault in Obsidian's app config (`obsidian.json`)
+ * and mark it as the only `open: true` vault so Obsidian opens it on
+ * launch. Returns a restore function that puts back the original config.
+ */
+function registerVault(vaultPath: string): () => void {
+  const configPath = path.join(
+    process.env.APPDATA ?? path.join(process.env.HOME ?? '', '.config'),
+    'obsidian',
+    'obsidian.json',
+  );
+
+  let original: string | null = null;
+  if (fs.existsSync(configPath)) {
+    original = fs.readFileSync(configPath, 'utf8');
+  }
+
+  const config = original ? JSON.parse(original) : { vaults: {} };
+
+  // Unset open on all existing vaults
+  for (const id of Object.keys(config.vaults ?? {})) {
+    delete config.vaults[id].open;
+  }
+
+  // Add scaffold vault as open
+  const vaultId = crypto.randomBytes(8).toString('hex');
+  config.vaults[vaultId] = {
+    path: vaultPath.replace(/\//g, '\\'),
+    ts: Date.now(),
+    open: true,
+  };
+
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+
+  return () => {
+    // Restore original config
+    if (original) {
+      fs.writeFileSync(configPath, original, 'utf8');
+    } else {
+      // Remove the vault we added
+      delete config.vaults[vaultId];
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+    }
+  };
 }
 
 async function waitForCDP(url: string, timeoutMs: number): Promise<void> {
