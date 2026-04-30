@@ -1,6 +1,6 @@
-// Sync `plugin/manifest.json`, the repo-root mirror `manifest.json`,
-// and `plugin/versions.json` with the version that npm has just
-// written into `plugin/package.json`.
+// Sync `plugin/manifest.json`, the repo-root mirrors `manifest.json`
+// and `versions.json`, and `plugin/versions.json` with the version
+// that npm has just written into `plugin/package.json`.
 //
 // Wired into `package.json`'s `"version"` lifecycle script so
 // `npm version <X.Y.Z>` (run from `plugin/`) updates all four
@@ -32,6 +32,7 @@ const packagePath = path.join(pluginRoot, 'package.json');
 const manifestPath = path.join(pluginRoot, 'manifest.json');
 const versionsPath = path.join(pluginRoot, 'versions.json');
 const rootManifestPath = path.join(repoRoot, 'manifest.json');
+const rootVersionsPath = path.join(repoRoot, 'versions.json');
 
 const pkg = readJson(packagePath);
 const manifest = readJson(manifestPath);
@@ -49,9 +50,10 @@ versions[newVersion] = manifest.minAppVersion;
 writeJson(manifestPath, manifest);
 writeJson(versionsPath, versions);
 writeJson(rootManifestPath, manifest);
+writeJson(rootVersionsPath, versions);
 
 console.log(
-  `bump-version: synced plugin/manifest.json + manifest.json + versions.json to ${newVersion} `
+  `bump-version: synced plugin/manifest.json + manifest.json + versions.json (plugin + root) to ${newVersion} `
   + `(minAppVersion ${manifest.minAppVersion})`,
 );
 
