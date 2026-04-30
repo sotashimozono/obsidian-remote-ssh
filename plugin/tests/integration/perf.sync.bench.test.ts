@@ -75,26 +75,14 @@ const SIZES = [1_024, 100_000] as const;
 /**
  * Operations per the plan §C.4 matrix.
  *
- * `modify` is intentionally absent in this MVP: when the cell-level
- * `watchFor` is alive across the pre-create's atomic-write rename,
- * the Linux fsnotify backend in the test container drops the
- * `IN_MOVED_TO` event for the rename's destination — only the tmp
- * file's `created`/`modified`/`deleted` events make it through, and
- * the `awaitNext({path: targetRel})` for the pre-create times out.
- * The other ops are unaffected because `create` writes a
- * never-before-seen path (no pre-create), and `delete`/`rename`
- * accept any event on the target path so the pre-create's `created`
- * event suffices when it does fire — and where it doesn't, the
- * post-pre-create drain (introduced alongside this skip) prevents
- * stale events from false-matching the measured action.
- *
- * A future PR should either re-subscribe per iteration for modify
- * (~50 ms RPC overhead × N iters, but reliably reproduces the
- * "fresh watcher" condition that `multiclient.rpc.test.ts` already
- * passes under) or instrument the bench at the `SftpDataAdapter.write`
- * boundary instead of synchronising on fs.watch notifications.
+ * `modify` uses a per-iteration re-subscribe pattern to avoid the
+ * fsnotify race that previously blocked it (#108, fixed in PR #156):
+ * a fresh watcher per iter eliminates stale `IN_MOVED_TO` events
+ * from the pre-create's atomic-write rename leaking into the
+ * measured action's `awaitNext`. The ~50 ms RPC overhead per
+ * re-subscribe is acceptable for a bench (not a latency test).
  */
-const OPS = ['create', 'delete', 'rename'] as const;
+const OPS = ['create', 'delete', 'rename', 'modify'] as const;
 type Op = typeof OPS[number];
 
 /** Iteration counts per fixture size — the plan's 200/30 schedule. */
@@ -212,16 +200,19 @@ describe('perf bench: sync latency (Phase C MVP)', () => {
           activeSize = size;
           const data = makeFixture(size);
 
-          // One watcher for the whole cell; drained after every iter so
-          // a stray notification can't leak into the next path.
-          const watch = await watchFor(reader, subdirRel);
+          // For most ops, one watcher per cell suffices — drained after
+          // every iter so stray notifications don't leak. For `modify`,
+          // a fresh watcher per iter avoids the fsnotify race (#108)
+          // where the pre-create's atomic-write rename event leaks into
+          // the measured action's awaitNext.
+          let watch = await watchFor(reader, subdirRel);
           try {
             for (let i = 0; i < WARMUP; i++) {
-              await runOne(op, data, `${subdirRel}/warmup-${op}-${size}-${i}.bin`, watch);
+              watch = await runOne(op, data, `${subdirRel}/warmup-${op}-${size}-${i}.bin`, watch);
             }
             for (let i = 0; i < iters; i++) {
               const target = `${subdirRel}/iter-${op}-${size}-${i}.bin`;
-              await runOne(op, data, target, watch);
+              watch = await runOne(op, data, target, watch);
             }
           } finally {
             await watch.cleanup();
@@ -244,7 +235,7 @@ describe('perf bench: sync latency (Phase C MVP)', () => {
     data: Buffer,
     targetRel: string,
     watch: Awaited<ReturnType<typeof watchFor>>,
-  ): Promise<void> {
+  ): Promise<Awaited<ReturnType<typeof watchFor>>> {
     // Set up reader-side T4a + S.app capture for this single iteration.
     // Detached from the global notification handler so each iter gets
     // a deterministic single firing — even if the watcher emits extras.
@@ -260,7 +251,7 @@ describe('perf bench: sync latency (Phase C MVP)', () => {
         await writerAdapter.remove(targetRel).catch(() => undefined);
         // Drain any lingering "deleted" notifications.
         await watch.awaitNext((n) => n.path === targetRel && n.event === 'deleted', 1_000).catch(() => undefined);
-        break;
+        return watch;
       }
       case 'delete': {
         // Pre-create + settle. Don't await the pre-create's fs.changed —
@@ -275,7 +266,7 @@ describe('perf bench: sync latency (Phase C MVP)', () => {
         await writerAdapter.remove(targetRel);
         await e2eAwait;
         aggregator.record('S.e2e', TRANSPORT, activeSize, performance.now() - t0);
-        break;
+        return watch;
       }
       case 'rename': {
         await writerAdapter.writeBinary(targetRel, asArrayBuffer(data));
@@ -288,7 +279,27 @@ describe('perf bench: sync latency (Phase C MVP)', () => {
         aggregator.record('S.e2e', TRANSPORT, activeSize, performance.now() - t0);
         await writerAdapter.remove(newPath).catch(() => undefined);
         await watch.awaitNext((n) => n.path === newPath && n.event === 'deleted', 1_000).catch(() => undefined);
-        break;
+        return watch;
+      }
+      case 'modify': {
+        // Pre-create the file, settle, then re-subscribe the watcher
+        // so the modify's atomic-write rename fires against a fresh
+        // subscription with no stale events from the pre-create.
+        await writerAdapter.writeBinary(targetRel, asArrayBuffer(data));
+        await settle();
+        await watch.cleanup();
+        // eslint-disable-next-line no-param-reassign -- per-iter re-subscribe required to avoid fsnotify race (#108)
+        watch = await watchFor(reader, subdirRel);
+        const modifiedData = Buffer.alloc(data.length, 0x62 /* 'b' */);
+        const modAwait = oneShotApply(reader, readerAdapter, watch, op, targetRel);
+        const t0 = performance.now();
+        await writerAdapter.writeBinary(targetRel, asArrayBuffer(modifiedData));
+        await modAwait;
+        aggregator.record('S.e2e', TRANSPORT, activeSize, performance.now() - t0);
+        // Cleanup file for next iter.
+        await writerAdapter.remove(targetRel).catch(() => undefined);
+        await watch.awaitNext((n) => n.path === targetRel && n.event === 'deleted', 1_000).catch(() => undefined);
+        return watch;
       }
     }
   }
@@ -348,13 +359,14 @@ function oneShotApply(
   })();
 }
 
-function expectedEventFor(op: Op): 'created' | 'deleted' {
+function expectedEventFor(op: Op): 'created' | 'deleted' | 'modified' {
   switch (op) {
     case 'create': return 'created';
     case 'delete': return 'deleted';
     // rename's IN_MOVED_TO surfaces as `created` on the destination,
     // which is the path the bench moves to (`<targetRel>.renamed`).
     case 'rename': return 'created';
+    case 'modify': return 'modified';
   }
 }
 
