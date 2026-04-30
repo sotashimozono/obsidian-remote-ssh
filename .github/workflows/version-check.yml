@@ -79,6 +79,15 @@ jobs:
             exit 1
           fi
 
+      - name: Root versions.json mirror must match plugin/versions.json
+        run: |
+          if ! diff -q plugin/versions.json versions.json > /dev/null; then
+            echo "::error::versions.json content differs from plugin/versions.json."\
+              " Re-run 'cd plugin && npm version <same>' or copy manually."
+            diff plugin/versions.json versions.json || true
+            exit 1
+          fi
+
       - name: PR version must be strictly greater than base
         run: |
           # Pure-shell semver compare: strip pre-release suffix, split,
