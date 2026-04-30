@@ -132,9 +132,14 @@ export class SftpClient {
         profile.port,
         this.authResolver,
         {
-          hostKeyStore:        this.hostKeyStore,
-          connectTimeoutMs:    profile.connectTimeoutMs,
-          keepaliveIntervalMs: profile.keepaliveIntervalMs,
+          hostKeyStore:           this.hostKeyStore,
+          // Pass the same mismatch handler we use for the target
+          // host so a jump-host fingerprint change also surfaces the
+          // recovery modal instead of failing with a generic "Jump
+          // host connect failed" error (#132 follow-up).
+          hostKeyMismatchHandler: this.hostKeyMismatchHandler,
+          connectTimeoutMs:       profile.connectTimeoutMs,
+          keepaliveIntervalMs:    profile.keepaliveIntervalMs,
         },
       );
     }

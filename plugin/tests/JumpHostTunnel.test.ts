@@ -242,3 +242,114 @@ describe('createJumpTunnel: auth handling', () => {
     }
   });
 });
+
+describe('createJumpTunnel: host-key mismatch handler (#132 follow-up)', () => {
+  it('uses the async hostVerifier shape when a mismatch handler is wired', async () => {
+    const store = new HostKeyStore();
+    await createJumpTunnel(
+      baseJump, 'target.example.com', 22, authResolver,
+      {
+        clientFactory: () => fake,
+        hostKeyStore: store,
+        hostKeyMismatchHandler: vi.fn(async () => 'trust' as const),
+      },
+    );
+    const cfg = fake.connectConfig as {
+      hostVerifier?: (k: Buffer, verify: (v: boolean) => void) => void;
+    };
+    // The async overload takes 2 args (key + verify callback); the
+    // sync overload takes 1. Length distinguishes them.
+    expect(typeof cfg.hostVerifier).toBe('function');
+    expect(cfg.hostVerifier!.length).toBe(2);
+  });
+
+  it('falls back to the sync hostVerifier when no mismatch handler is wired', async () => {
+    const store = new HostKeyStore();
+    await createJumpTunnel(
+      baseJump, 'target.example.com', 22, authResolver,
+      { clientFactory: () => fake, hostKeyStore: store },
+    );
+    const cfg = fake.connectConfig as {
+      hostVerifier?: (k: Buffer | string) => boolean;
+    };
+    expect(typeof cfg.hostVerifier).toBe('function');
+    expect(cfg.hostVerifier!.length).toBe(1);
+  });
+
+  it('async hostVerifier proceeds (verify(true)) on a matching pinned key', async () => {
+    const store = new HostKeyStore();
+    const key = Buffer.from('pinned-key-bytes');
+    // Pin via the sync path so the next verifyAsync sees a match.
+    store.verify('bastion.example.com', 22, key);
+
+    const handler = vi.fn(async () => 'abort' as const);
+    await createJumpTunnel(
+      baseJump, 'target.example.com', 22, authResolver,
+      {
+        clientFactory: () => fake,
+        hostKeyStore: store,
+        hostKeyMismatchHandler: handler,
+      },
+    );
+    const cfg = fake.connectConfig as {
+      hostVerifier: (k: Buffer, verify: (v: boolean) => void) => void;
+    };
+    const verifyCb = vi.fn();
+    cfg.hostVerifier(key, verifyCb);
+    // Allow the verifyAsync microtask chain to settle.
+    await new Promise<void>((r) => setImmediate(() => r()));
+    expect(handler).not.toHaveBeenCalled();
+    expect(verifyCb).toHaveBeenCalledWith(true);
+  });
+
+  it('async hostVerifier consults the handler on a fingerprint mismatch and forwards the trust decision', async () => {
+    const store = new HostKeyStore();
+    const oldKey = Buffer.from('old');
+    store.verify('bastion.example.com', 22, oldKey);
+
+    const handler = vi.fn(async () => 'trust' as const);
+    await createJumpTunnel(
+      baseJump, 'target.example.com', 22, authResolver,
+      {
+        clientFactory: () => fake,
+        hostKeyStore: store,
+        hostKeyMismatchHandler: handler,
+      },
+    );
+    const cfg = fake.connectConfig as {
+      hostVerifier: (k: Buffer, verify: (v: boolean) => void) => void;
+    };
+    const verifyCb = vi.fn();
+    cfg.hostVerifier(Buffer.from('new'), verifyCb);
+    // Wait for the async chain inside verifyAsync to settle.
+    await new Promise<void>((r) => setImmediate(() => r()));
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      host: 'bastion.example.com',
+      port: 22,
+    }));
+    expect(verifyCb).toHaveBeenCalledWith(true);
+  });
+
+  it('async hostVerifier forwards an abort decision as verify(false)', async () => {
+    const store = new HostKeyStore();
+    store.verify('bastion.example.com', 22, Buffer.from('old'));
+
+    const handler = vi.fn(async () => 'abort' as const);
+    await createJumpTunnel(
+      baseJump, 'target.example.com', 22, authResolver,
+      {
+        clientFactory: () => fake,
+        hostKeyStore: store,
+        hostKeyMismatchHandler: handler,
+      },
+    );
+    const cfg = fake.connectConfig as {
+      hostVerifier: (k: Buffer, verify: (v: boolean) => void) => void;
+    };
+    const verifyCb = vi.fn();
+    cfg.hostVerifier(Buffer.from('new'), verifyCb);
+    await new Promise<void>((r) => setImmediate(() => r()));
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(verifyCb).toHaveBeenCalledWith(false);
+  });
+});
