@@ -1,0 +1,121 @@
+name: E2E smoke (Playwright + Obsidian)
+
+# Nightly smoke tests that launch a real Obsidian window and exercise
+# the plugin via Playwright over CDP. Heavier than unit/integration
+# tests (~3-5 min for Electron boot + scenarios), so this runs on a
+# cron schedule and on-demand, NOT per-PR.
+#
+# Prerequisites satisfied by the job itself:
+#   - Obsidian AppImage (downloaded + cached)
+#   - Docker test sshd (same container as integration.yml)
+#   - Plugin build (esbuild production)
+#   - Server build (Go cross-compile, linux/amd64)
+#
+# The Obsidian AppImage is freely downloadable; this workflow uses
+# it for automated testing of a community plugin. If upstream
+# objects, switch to a stub Electron shell that loads the plugin
+# without the full Obsidian chrome.
+
+on:
+  schedule:
+    # Nightly at 03:00 UTC (12:00 JST)
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Obsidian E2E smoke
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: plugin/package-lock.json
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: false
+
+      - run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
+      - name: Build plugin
+        run: node esbuild.config.mjs production
+
+      - name: Build server daemon
+        run: npm run build:server
+
+      - name: Bring up test sshd
+        run: npm run sshd:start
+
+      # Download and cache the Obsidian AppImage
+      - name: Cache Obsidian AppImage
+        id: obsidian-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/obsidian/Obsidian.AppImage
+          key: obsidian-appimage-1.8.9
+
+      - name: Download Obsidian AppImage
+        if: steps.obsidian-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/obsidian
+          curl -L -o ~/obsidian/Obsidian.AppImage \
+            "https://github.com/nicehash/Obsidian/releases/download/v1.8.9/Obsidian-1.8.9.AppImage" \
+            || curl -L -o ~/obsidian/Obsidian.AppImage \
+            "https://github.com/nicehash/Obsidian/releases/download/v1.7.7/Obsidian-1.7.7.AppImage"
+          chmod +x ~/obsidian/Obsidian.AppImage
+
+      - name: Extract AppImage (no FUSE in CI)
+        run: |
+          cd ~/obsidian
+          ./Obsidian.AppImage --appimage-extract || true
+          ls -la squashfs-root/ || true
+
+      # Xvfb for headless Electron
+      - name: Start Xvfb
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb
+          Xvfb :99 -screen 0 1280x1024x24 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+
+      - name: Run E2E smoke tests
+        continue-on-error: true
+        env:
+          OBSIDIAN_PATH: ~/obsidian/squashfs-root/obsidian
+          DISPLAY: ':99'
+        run: npm run test:e2e
+
+      - name: Tear down test sshd
+        if: always()
+        run: npm run sshd:stop
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-report-${{ github.run_id }}
+          path: plugin/e2e-results/
+          retention-days: 14
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-screenshots-${{ github.run_id }}
+          path: plugin/test-results/
+          retention-days: 14
