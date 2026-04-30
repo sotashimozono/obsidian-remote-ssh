@@ -102,10 +102,110 @@ export function scaffoldTestVault(): ScaffoldResult {
     'utf8',
   );
 
-  // Minimal app.json so Obsidian doesn't show the first-run wizard
+  // Core plugins — enable file-explorer + command-palette, disable
+  // everything else. Matches a minimal trusted vault.
+  fs.writeFileSync(
+    path.join(obsidianDir, 'core-plugins.json'),
+    JSON.stringify({
+      'file-explorer': true,
+      'global-search': true,
+      'switcher': false,
+      'graph': false,
+      'backlink': false,
+      'canvas': false,
+      'outgoing-link': false,
+      'tag-pane': false,
+      'properties': false,
+      'page-preview': false,
+      'daily-notes': false,
+      'templates': false,
+      'note-composer': false,
+      'command-palette': true,
+      'editor-status': true,
+      'bookmarks': false,
+      'file-recovery': false,
+      'publish': false,
+      'sync': false,
+    }, null, 2),
+    'utf8',
+  );
+
+  // Core plugins migration — tells Obsidian we've already seen the
+  // first-run migration so it won't prompt.
+  fs.writeFileSync(
+    path.join(obsidianDir, 'core-plugins-migration.json'),
+    JSON.stringify({
+      'file-explorer': true,
+      'global-search': true,
+      'switcher': true,
+      'graph': true,
+      'backlink': true,
+      'canvas': true,
+      'outgoing-link': true,
+      'tag-pane': true,
+      'properties': true,
+      'page-preview': true,
+      'daily-notes': true,
+      'templates': true,
+      'note-composer': true,
+      'command-palette': true,
+      'editor-status': true,
+      'bookmarks': true,
+      'file-recovery': true,
+      'publish': true,
+      'sync': true,
+    }, null, 2),
+    'utf8',
+  );
+
+  // app.json — suppress delete confirmation and other first-run prompts
   fs.writeFileSync(
     path.join(obsidianDir, 'app.json'),
-    JSON.stringify({}),
+    JSON.stringify({ promptDelete: false }, null, 2),
+    'utf8',
+  );
+
+  // appearance.json — dark theme for clean demo screenshots
+  fs.writeFileSync(
+    path.join(obsidianDir, 'appearance.json'),
+    JSON.stringify({ baseFontSize: 16 }, null, 2),
+    'utf8',
+  );
+
+  // Workspace with file-explorer pinned in the left sidebar
+  fs.writeFileSync(
+    path.join(obsidianDir, 'workspace.json'),
+    JSON.stringify({
+      main: {
+        id: 'main',
+        type: 'split',
+        children: [{
+          id: 'leaf-main',
+          type: 'leaf',
+          state: { type: 'empty', state: {} },
+        }],
+        direction: 'vertical',
+      },
+      left: {
+        id: 'left',
+        type: 'split',
+        children: [{
+          id: 'left-tabs',
+          type: 'tabs',
+          children: [{
+            id: 'leaf-explorer',
+            type: 'leaf',
+            state: { type: 'file-explorer', state: {} },
+          }],
+        }],
+        direction: 'horizontal',
+        width: 250,
+        collapsed: false,
+      },
+      right: { id: 'right', type: 'split', children: [], direction: 'horizontal', collapsed: true },
+      'left-ribbon': { hiddenItems: {} },
+      active: 'leaf-main',
+    }, null, 2),
     'utf8',
   );
 
