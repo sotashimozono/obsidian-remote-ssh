@@ -1,0 +1,26 @@
+# Tests from the previous release tag that no longer apply against
+# current main, listed here so the cross-version replay job
+# (`.github/workflows/replay.yml` / `npm run test:replay`) can
+# omit them while still asserting against the rest of the frozen
+# contract.
+#
+# Format (each non-comment line):
+#   <relative-path-under-plugin/tests/>  # <reason / PR ref>
+#
+# - Relative paths use forward slashes (e.g. `subdir/foo.test.ts`).
+# - The `# reason` comment is mandatory on the same line; the
+#   replay script rejects entries without one. Cite the PR that
+#   intentionally retired the invariant so reviewers can audit.
+# - Globs are NOT supported — list one test file per line. This is
+#   on purpose: each retirement is meant to be a deliberate per-file
+#   judgement, not a sweep.
+# - Comment-only lines and blank lines are ignored.
+#
+# Example (do not uncomment unless actually retiring the test):
+#   # AdapterPatcher.test.ts  # PR #175 changed snapshot semantics from data-prop to descriptor — old test no longer applies
+#
+# Keep this file as small as you can. Every entry here is a piece
+# of the previous version's contract that we have stopped enforcing.
+
+# (no entries — replay is expected to pass clean against the
+# current latest tag.)
