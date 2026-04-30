@@ -68,6 +68,147 @@ The plugin's `ServerDeployer` performs a sha256 round-trip
 verification on every deploy (`plugin/src/transport/ServerDeployer.ts`
 `verifyRemoteSha256`). A mismatch refuses to start the daemon.
 
+## Threat model + defences
+
+This plugin handles SSH credentials, deploys an auto-updating
+binary on the user's remote host, and proxies vault file I/O over
+that channel. The attack surface is non-trivial. This section
+documents what we worry about and what's in place.
+
+### Threats we explicitly defend against
+
+#### 1. Network attacker between user and remote host
+
+- **SSH itself.** All transport rides on the user's existing SSH
+  session, not a custom protocol. No part of the plugin opens a
+  cleartext socket.
+- **Host-key TOFU.** First connection to a host stores the key
+  fingerprint in `HostKeyStore` (per-host, persisted to
+  `data.json`). Subsequent connections verify against the stored
+  key and refuse to proceed on a mismatch. A future
+  `HostKeyMismatchModal` (#132) will surface the diff for the
+  user to make an explicit trust decision; today it errors out.
+- **No fallback to insecure auth.** `AuthResolver` honours the
+  user's `~/.ssh/config` `IdentityFile` directives and falls back
+  to ssh-agent. Password auth is opt-in per profile, never the
+  default.
+
+#### 2. Compromised / malicious daemon binary
+
+- **Pinned cosign signatures.** Every release ships
+  `obsidian-remote-server-<os>-<arch>` plus a
+  `obsidian-remote-server-<os>-<arch>.bundle` Sigstore (cosign)
+  keyless OIDC signature. The bundle is verifiable independently
+  via the cosign CLI (see "Verifying release artefacts" above).
+- **Pinned identity.** Signature certificates assert the GitHub
+  Actions identity
+  `https://github.com/sotashimozono/obsidian-remote-ssh/.github/workflows/release.yml@*`.
+  Anyone can verify the binary was produced by THIS repo's CI,
+  not a side-channel build.
+- **sha256 round-trip on every deploy.** `ServerDeployer.verifyRemoteSha256`
+  computes sha256 of the local binary, compares against
+  `sha256sum` on the remote after upload. Mismatch refuses to
+  start the daemon. Catches both transport corruption and a
+  malicious host swapping the binary between SFTP-upload and
+  `nohup` start.
+- **`daemon-manifest.json`** in each release lists every binary's
+  expected sha256 — a separate signed artefact for at-a-glance
+  pinning of "what should this version's binaries be."
+
+#### 3. Credential exfiltration
+
+- **OS keychain by default.** `SecretStore` (`plugin/src/ssh/SecretStore.ts`)
+  uses `keytar`-style platform keychains where available
+  (Windows Credential Manager, macOS Keychain, libsecret).
+- **Encrypted-at-rest fallback.** When the OS keychain isn't
+  available, secrets are AES-GCM encrypted with a per-vault key
+  derived from the vault's stable identifier. The encrypted blob
+  lands in `data.json`; the key never does.
+- **Secrets never reach the JSONL log.** The logger
+  (`plugin/src/util/logger.ts`) runs every emit through a
+  redactor that strips known credential field names + anything
+  matching common token shapes.
+- **Secrets never reach the wire as plaintext params.** RPC calls
+  carry only the auth token written by the daemon to its own
+  token file (read off the remote, never sent across by us).
+
+#### 4. Malicious remote (compromised SSH host)
+
+- **No code execution on the user's machine.** The daemon is
+  deployed *to* the remote, not pulled *from* it. The remote can
+  send malformed responses but cannot inject arbitrary code into
+  the plugin process.
+- **Vault-relative path validation.** Every fs RPC validates the
+  requested path is within the user-configured vault root
+  (`vaultfs.Resolve` on the daemon side). Path-traversal attempts
+  return `PathOutsideVault`.
+- **No symlink follow on writes.** The daemon's atomic writes
+  (`atomicWriteFile`) go to a tmp file then rename — a malicious
+  symlink swap can corrupt the tmp file but cannot redirect the
+  write to a path the operator didn't grant access to.
+
+#### 5. Multi-tenant remote host
+
+- **Per-user `.obsidian-remote/` directory.** Daemon binary,
+  socket, token, and log all live under `$HOME/.obsidian-remote/`
+  by default — same UID isolation the OS already provides for
+  every other home-directory file.
+- **No `/tmp/` or world-writable paths.** Avoids the cross-user
+  collision class of bugs.
+
+### Threats we surface but do NOT prevent
+
+These are operator decisions, not code defects:
+
+- **Running the daemon as root.** The daemon doesn't elevate; if
+  the user logs in as root, that's their authority to grant.
+  Documented in README.
+- **Exposing the SSH host on a public IP without auth hardening.**
+  We don't operate the host; we connect to whatever the user
+  configured.
+- **Trusting a host-key change.** When `HostKeyMismatchModal` lands
+  (#132), the user will see the diff and the security implication;
+  their choice to trust is theirs.
+
+### What's stored, where
+
+| Artifact | Location | Notes |
+| --- | --- | --- |
+| Plugin code (this repo) | `<vault>/.obsidian/plugins/remote-ssh/` | Standard Obsidian plugin layout |
+| JSONL log | `<vault>/.obsidian/plugins/remote-ssh/console.log` | Redacted; rotated at 5 MB × 3 generations |
+| `data.json` | same dir | Settings, host-key store, secret blob (encrypted), profile list |
+| Daemon binary on remote | `$HOME/.obsidian-remote/server` | Re-deployed on every connect (sha256 verified); `.obsidian-remote/server.sock` is the unix socket; `.obsidian-remote/token` the per-session auth token |
+| User vault files on remote | wherever the user pointed `remotePath` | Daemon does NOT write outside this root |
+
+### Network surface
+
+- **SSH/SFTP to the user's configured host(s).** Multi-hop via
+  `ProxyJump` if the profile uses a `JumpHost`.
+- **HTTPS to `raw.githubusercontent.com`** for fetching the
+  Obsidian community-plugins.json and per-plugin manifests when
+  the user opts into the Pending Plugins install flow. Goes
+  through Obsidian's own `requestUrl` (CORS-friendly, no custom
+  fetch).
+- **HTTPS to GitHub releases** when the user manually downloads
+  a daemon binary. Plugin itself never auto-fetches a binary
+  from the network — what it deploys to the remote is the
+  binary that came bundled in the plugin's installed `server-bin/`
+  directory.
+- **Local-loopback HTTP server** (`ResourceBridge`,
+  `127.0.0.1:<random-port>`) serves binary content (images,
+  PDFs) to the Obsidian webview. Requests gated by a per-session
+  bearer token; the port and token rotate every session.
+
+### Internal Obsidian API usage
+
+We use a small set of unsupported `app.plugins.*` methods
+(`installPlugin`, `enablePluginAndSave`) for the shadow-vault
+"install community plugins from source vault" flow
+(see `plugin/src/shadow/PluginMarketplaceInstaller.ts`). These
+methods power Obsidian's own community plugin browser and have
+been stable across recent releases. We don't pierce any other
+internal surface.
+
 ## Acknowledgements
 
 We appreciate every responsible disclosure. Reporters are credited
