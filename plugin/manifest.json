@@ -1,7 +1,7 @@
 {
   "id": "remote-ssh",
   "name": "Remote SSH",
-  "version": "0.4.92",
+  "version": "0.4.93",
   "minAppVersion": "1.4.0",
   "description": "Edit remote vaults over SSH/SFTP — VS Code Remote-SSH style.",
   "author": "souta shimozono",

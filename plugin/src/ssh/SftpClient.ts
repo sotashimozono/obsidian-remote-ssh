@@ -63,6 +63,43 @@ export interface RemoteEntryWithRel extends RemoteEntry {
  * are implemented via tmp+rename. The OpenSSH posix-rename extension is
  * preferred when the server advertises it.
  */
+/**
+ * Wire a keyboard-interactive handler onto an EventEmitter-shaped client.
+ * Extracted from `SftpClient.connect` so the normalisation, forwarding,
+ * and error-recovery logic can be unit-tested without a real ssh2 Client.
+ *
+ * @internal Exported for testing only.
+ */
+export function wireKeyboardInteractiveHandler(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ssh2 Client.on uses `any[]` in its listener signature; narrowing to `unknown[]` breaks assignability
+  client: { on(event: string, listener: (...args: any[]) => void): void },
+  handler: KbdInteractiveHandlerFn,
+): void {
+  client.on('keyboard-interactive', (
+    _name: string,
+    _instructions: string,
+    _lang: string,
+    prompts: Prompt[],
+    finish: KeyboardInteractiveCallback,
+  ) => {
+    const normalised = prompts.map(p => ({
+      prompt: p.prompt,
+      echo:   p.echo ?? false,
+    }));
+    handler(normalised).then(
+      (responses) => {
+        finish(responses ?? []);
+      },
+      (err: unknown) => {
+        logger.warn(
+          `SftpClient: keyboard-interactive handler threw: ${asError(err).message}; failing auth`,
+        );
+        finish([]);
+      },
+    );
+  });
+}
+
 export class SftpClient {
   private client: Client | null = null;
   private sftp: SFTPWrapper | null = null;
@@ -186,40 +223,7 @@ export class SftpClient {
       // handler means we leave the flag off entirely so the previous
       // pubkey/agent/password-only behaviour is preserved bit-for-bit.
       if (this.kbdInteractiveHandler) {
-        const handler = this.kbdInteractiveHandler;
-        client.on('keyboard-interactive', (
-          _name: string,
-          _instructions: string,
-          _lang: string,
-          prompts: Prompt[],
-          finish: KeyboardInteractiveCallback,
-        ) => {
-          // ssh2's Prompt.echo is optional (treated as false when
-          // missing — the typical TOTP / PAM PIN case). Coerce here
-          // so the handler contract stays simple (`echo: boolean`
-          // required) and the modal doesn't have to hand-roll the
-          // default.
-          const normalised = prompts.map(p => ({
-            prompt: p.prompt,
-            echo:   p.echo ?? false,
-          }));
-          // ssh2 expects `finish` to be called eventually; we drive
-          // it off the async callback. Errors / cancels become an
-          // empty response list, which ssh2 treats as auth failure —
-          // the `client.on('error', ...)` handler above then rejects
-          // the connect promise with the underlying SSH error.
-          handler(normalised).then(
-            (responses) => {
-              finish(responses ?? []);
-            },
-            (err: unknown) => {
-              logger.warn(
-                `SftpClient: keyboard-interactive handler threw: ${asError(err).message}; failing auth`,
-              );
-              finish([]);
-            },
-          );
-        });
+        wireKeyboardInteractiveHandler(client, this.kbdInteractiveHandler);
       }
 
       // hostVerifier shape switches based on whether a mismatch
