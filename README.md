@@ -48,9 +48,9 @@
 
 ## Install
 
-> ⚠️ The plugin is not yet in the Obsidian community plugin browser. Install
-> manually from a GitHub Release (BRAT support is on the roadmap; until
-> then, the steps below are the supported path).
+> ⚠️ The plugin is not yet in the Obsidian community plugin browser. You can
+> install via [BRAT](https://github.com/TfTHacker/obsidian42-brat) (add
+> `sotashimozono/obsidian-remote-ssh`) or manually from a GitHub Release.
 
 ### 1 — Download the latest release
 
