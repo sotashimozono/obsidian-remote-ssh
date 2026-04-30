@@ -366,7 +366,11 @@ function expectedEventFor(op: Op): 'created' | 'deleted' | 'modified' {
     // rename's IN_MOVED_TO surfaces as `created` on the destination,
     // which is the path the bench moves to (`<targetRel>.renamed`).
     case 'rename': return 'created';
-    case 'modify': return 'modified';
+    // Atomic write (tmp + rename) surfaces as `created` on the
+    // destination path, not `modified`. The daemon's atomicWriteFile
+    // writes to a .rsh-write-*.tmp then renames; fsnotify sees the
+    // rename target as a new file.
+    case 'modify': return 'created';
   }
 }
 
