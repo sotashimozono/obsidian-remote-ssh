@@ -32,9 +32,8 @@ Numbers in the table reflect a `~/work/VaultDev`-class remote
 | Plugin | Access pattern | Status | Notes |
 |---|---|---|---|
 | Dataview | reads every MD file via `app.vault.cachedRead` for the index, then queries against `app.metadataCache` | 🟡 expected (check on first build) | Initial index build does N reads on connect. ReadCache absorbs subsequent queries. Watch for noticeable startup delay on bigger vaults. |
-| Templater | reads templates from a configured folder, evaluates JS, writes through `app.vault.modify` / `create` | 🟡 expected | All access through standard vault API. JS user functions that import Node `fs` will break — that's a Templater config issue, not ours. |
-| Kanban | stores boards as MD files with YAML frontmatter; standard vault read/write on every drag | 🟡 expected | Each card move = 1 write. Network latency may show as a noticeable lag on big boards; otherwise fine. |
-| Excalidraw | drawings stored as `.excalidraw.md` (JSON) or embedded markdown; embedded images go through `getResourcePath` | 🟡 expected (RPC required) | The `RPC` transport is required for the ResourceBridge to serve images. On `SFTP` transport, embedded images fall back to a broken `data:` URL. First read of a large `.excalidraw.md` pulls the whole JSON; subsequent edits stream cleanly. |
+| Templater | reads templates from a configured folder, evaluates JS, writes through `app.vault.modify` / `create`. `tp.file.path(false)` and the `child_process.exec` cwd path read `adapter.basePath`. | 🟡 expected (smoke pending after #170) | `basePath` now resolves to the shadow-vault local root via #170, so `tp.file.path(false)` returns a path whose `fs.readFileSync` finds mirrored content. JS user functions that import Node `fs` and write under `basePath` land in the shadow dir, which propagates to the remote. |
+| Kanban | stores boards as MD files with YAML frontmatter; standard vault read/write on every drag. Clipboard image paste joins `(adapter as any).basePath` with the attachment path and calls `fs.copyFile`. | 🟡 expected (smoke pending after #170) | Each card move = 1 write. Network latency may show as a noticeable lag on big boards; otherwise fine. Clipboard paste is fixed by #170: `basePath` now resolves to the shadow-vault local root, so `fs.copyFile` lands in the shadow dir. |
 | Thino | reads/writes daily-note-style files; standard vault API | 🟡 expected | Pure vault API user. No special concerns. |
 | Commander | UI plugin: ribbon icons, hotkeys, command macros. Doesn't touch vault files for its own state (uses plugin data via `loadData`/`saveData`, which goes through the patched adapter) | 🟡 expected | If a custom command invokes a different plugin, the wrapped plugin's compatibility applies. |
 | Emoji Shortcodes | pure UI typing helper. No filesystem access | ✅ verified-by-architecture | Not affected by adapter patching at all. |
@@ -42,6 +41,11 @@ Numbers in the table reflect a `~/work/VaultDev`-class remote
 | Meta Bind | input bindings on YAML / inline frontmatter; reads / writes via vault API | 🟡 expected | Each input change writes the host note. Latency is noticeable but functional. |
 | Omnisearch | full-text indexer: reads every file in the vault on init + on changes | ⚠️ degraded (expected) | This is the most network-bound plugin in the list. Initial index build on a remote vault can take seconds-to-minutes depending on size. After the warm cache, queries are local. Recommendation: only enable Omnisearch when the connection is stable. |
 | QuickLatex | renders LaTeX inline. Pure UI, no FS access | ✅ verified-by-architecture | Not affected. |
+| Importer | converts external formats (Evernote `.enex`, etc.) to MD using `path.join(getBasePath(), folder.path)` as `outputDir` for the Yarle Evernote converter (Node `fs.writeFile`) | 🟡 expected (smoke pending after #170) | `getBasePath()` now returns the shadow-vault local root via #170, so the converter writes files into the shadow dir; the file-watcher propagates them to the remote. Initial conversion of a large `.enex` may produce many writes; watch for queue lag. |
+| Copilot | reads `getBasePath?.()` then falls back to `basePath` for local-context AI indexing (`src/miyo/miyoUtils.ts`) | 🟡 expected (smoke pending after #170) | Either form now resolves to the shadow-vault local root via #170, so Copilot's local-context indexing operates against the synced copy. The remote is the source of truth; the index reflects whatever has been mirrored to the shadow dir. |
+| Git (Vinzent03) | uses `simple-git` with `getBasePath()` as the working directory; spawns the local `git` binary | ❌ broken (un-fixable at this layer) | Patching `basePath` to the shadow-vault path lets `simple-git` run, but it operates on the *shadow* git repo, not the remote one — silently mis-routing commits. A "remote git over SSH" feature would be needed (tracked in #150). |
+| Excalidraw | drawings stored as `.excalidraw.md` (JSON) or embedded markdown; embedded images go through `getResourcePath`. `pathToFileURL(adapter.basePath)` is used as a vault-membership prefix check (`src/utils/fileUtils.ts:343`). | 🟡 expected (RPC required) | The `RPC` transport is required for the ResourceBridge to serve images. On `SFTP` transport, embedded images fall back to a broken `data:` URL. First read of a large `.excalidraw.md` pulls the whole JSON; subsequent edits stream cleanly. After #170 the prefix check stays internally consistent (both sides see the shadow path). |
+| Remotely Save | `getBasePath().split("?")[0]` as a vault-instance ID for cloud-sync conflict detection (`src/main.ts:1736`) | 🟡 expected | Shadow-vault path is fine: gives a stable per-machine ID after #170. Cloud-sync semantics aren't affected. |
 
 ## Updating this table
 
@@ -117,13 +121,19 @@ fights the adapter" failure modes.
 
 Things that aren't a specific plugin but trip plugins in general:
 
-- **`app.vault.adapter.basePath`** is still the local
-  `FileSystemAdapter`'s base path — pointing at your local dev vault,
-  not the remote. Plugins that join paths against `basePath` and feed
-  them to Node `fs` directly will read/write *local* files, missing the
-  remote vault entirely. See the **basePath compat survey** section
-  below (#133, 2026-04-29) for which top-20 plugins are affected and
-  how the shadow-vault path mitigates it.
+- **`app.vault.adapter.basePath` and `getBasePath()`** resolve to the
+  **shadow vault's** local root (e.g. `~/.obsidian-remote/vaults/<P-id>/`),
+  not the remote SSH path. Plugins that join paths against `basePath`
+  and feed them to Node `fs` directly read mirrored content and write
+  into the shadow dir; the file-watcher then propagates writes back to
+  the remote. This is the natural value of `FileSystemAdapter.basePath`
+  in the shadow window, and #170 patches both forms onto the
+  replacement adapter explicitly so the contract is stable across
+  Obsidian version upgrades. See the **basePath compat survey** section
+  below (#133, 2026-04-29) for the top-20 plugin survey, and #170 for
+  the implementation. **Exception:** plugins that shell out to a local
+  binary (notably obsidian-Git via `simple-git`) will operate on the
+  shadow git repo rather than the remote one — patching can't fix this.
 - **Worker threads** spawned by plugins are independent JS contexts —
   they don't see our patched `app.vault.adapter`. Plugins that pass file
   paths to a worker for parsing (some search-heavy plugins do this)
@@ -226,6 +236,20 @@ compare, child-process cwd, etc.).
   vault's local root, and add an `app://local/<path>` rewrite check
   for plugins that build asset URLs by hand from `basePath` (out of
   scope of this survey but worth keeping on the radar).
+
+### Implementation status (2026-04-30)
+
+- **#170 (this PR)** ships the survey's primary recommendation.
+  `PATCHED_METHODS` now includes `basePath` and `getBasePath`, both
+  routing to the shadow-vault local root captured at patch time from
+  the host `FileSystemAdapter.getBasePath()`. `AdapterPatcher` was
+  extended to handle property-getter members (the previous
+  function-only path didn't cover the `basePath` accessor).
+- **#174** tracks the separate `app://local/<path>` URL-rewrite
+  follow-up; out of scope for #170.
+- **Smoke verification** of Templater / Kanban / Importer / Copilot
+  in a real dev vault remains a manual step; the matrix above keeps
+  these at `🟡 expected (smoke pending after #170)` until run.
 
 ### Method
 

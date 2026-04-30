@@ -145,7 +145,46 @@ export class SftpDataAdapter {
      * reconnect throw — the legacy behaviour.
      */
     private offlineQueue: OfflineQueue | null = null,
+    /**
+     * Absolute filesystem path of the shadow vault's local root. When
+     * patched onto `app.vault.adapter`, the `basePath` getter and
+     * `getBasePath()` method return this value, so plugins that read
+     * `adapter.basePath` (Templater's `tp.file.path`, Kanban's clipboard
+     * paste, Importer, Copilot — see `docs/plugin-compatibility.md`)
+     * receive a path on the shadow vault. Reads against that path
+     * succeed against files mirrored locally by the file watcher;
+     * writes land in the shadow dir and propagate to the remote.
+     *
+     * Defaults to `''` for tests that never exercise these members. The
+     * production wiring in `main.ts` always passes the real shadow
+     * vault root via `(adapter as FileSystemAdapter).getBasePath()`
+     * captured before the patch is applied.
+     *
+     * Survey: PR #165 / docs/plugin-compatibility.md "basePath compat
+     * survey". Implementation: #170.
+     */
+    private shadowBasePath: string = '',
   ) {}
+
+  /**
+   * Mirror of `FileSystemAdapter.basePath`. Returns the absolute path
+   * of the shadow vault's local root. Plugins that join paths against
+   * this value and call Node `fs` directly read mirrored content and
+   * write into the shadow dir, where the file watcher propagates to
+   * the remote.
+   */
+  get basePath(): string {
+    return this.shadowBasePath;
+  }
+
+  /**
+   * Mirror of `FileSystemAdapter.getBasePath()`. Equivalent to the
+   * `basePath` getter; both are surveyed-as-used by community plugins
+   * (#133, see `docs/plugin-compatibility.md`).
+   */
+  getBasePath(): string {
+    return this.shadowBasePath;
+  }
 
   /**
    * Swap the underlying transport while the adapter stays patched

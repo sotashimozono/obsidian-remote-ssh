@@ -55,7 +55,7 @@ describe('AdapterPatcher', () => {
     expect(() => patcher.patch(['greet'])).toThrow(/already patched/);
   });
 
-  it('rolls back partial swaps if patch encounters a non-function replacement', () => {
+  it('rolls back partial swaps if patch encounters a missing replacement', () => {
     const target: Record<string, unknown> = {
       a: () => 'orig-a',
       b: () => 'orig-b',
@@ -65,7 +65,7 @@ describe('AdapterPatcher', () => {
       a: () => 'new-a',
     };
     const patcher = new AdapterPatcher(target, replacement);
-    expect(() => patcher.patch(['a', 'b'] as never)).toThrow(/is not a function/);
+    expect(() => patcher.patch(['a', 'b'] as never)).toThrow(/has no member "b"/);
     expect((target.a as () => string)()).toBe('orig-a');
     expect((target.b as () => string)()).toBe('orig-b');
     expect(patcher.isPatched()).toBe(false);
@@ -87,6 +87,74 @@ describe('AdapterPatcher', () => {
     const patcher = new AdapterPatcher(target, replacement);
     expect(() => patcher.restore()).not.toThrow();
     expect(target.greet()).toBe('orig');
+  });
+
+  it('patches a getter accessor on the target via Object.defineProperty', () => {
+    const target: { basePath: string } = { basePath: '/orig/path' };
+    const replacement = {
+      _shadow: '/shadow/path',
+      get basePath(this: { _shadow: string }) { return this._shadow; },
+    };
+    const patcher = new AdapterPatcher(target, replacement);
+    patcher.patch(['basePath']);
+    expect(target.basePath).toBe('/shadow/path');
+    // Mutating the replacement's backing field is reflected through
+    // the patched getter (proves the getter is bound to replacement,
+    // not snapshotted).
+    replacement._shadow = '/shadow/path-2';
+    expect(target.basePath).toBe('/shadow/path-2');
+  });
+
+  it('restore reverts a patched getter back to the original data property', () => {
+    const target: { basePath: string } = { basePath: '/orig/path' };
+    const replacement = {
+      get basePath() { return '/shadow/path'; },
+    };
+    const patcher = new AdapterPatcher(target, replacement);
+    patcher.patch(['basePath']);
+    expect(target.basePath).toBe('/shadow/path');
+    patcher.restore();
+    expect(target.basePath).toBe('/orig/path');
+  });
+
+  it('restore reverts a patched getter back to an original prototype getter', () => {
+    class Host {
+      private _v = '/orig';
+      get basePath() { return this._v; }
+    }
+    const target = new Host();
+    const replacement = {
+      get basePath() { return '/shadow'; },
+    };
+    const patcher = new AdapterPatcher(target, replacement);
+    patcher.patch(['basePath']);
+    expect(target.basePath).toBe('/shadow');
+    patcher.restore();
+    // After restore, the prototype's getter should be visible again,
+    // returning the instance's own `_v`.
+    expect(target.basePath).toBe('/orig');
+  });
+
+  it('patches a class-method (prototype member) on the replacement', () => {
+    class Replacement {
+      constructor(private value: string) {}
+      getBasePath(): string { return this.value; }
+    }
+    const target: { getBasePath(): string } = { getBasePath: () => '/orig' };
+    const replacement = new Replacement('/shadow');
+    const patcher = new AdapterPatcher(target, replacement);
+    patcher.patch(['getBasePath']);
+    expect(target.getBasePath()).toBe('/shadow');
+    patcher.restore();
+    expect(target.getBasePath()).toBe('/orig');
+  });
+
+  it('throws when replacement member is neither a function nor a getter', () => {
+    const target: Record<string, unknown> = { foo: () => 'orig' };
+    const replacement: Record<string, unknown> = { foo: 42 };
+    const patcher = new AdapterPatcher(target, replacement);
+    expect(() => patcher.patch(['foo'])).toThrow(/neither a function nor a getter/);
+    expect((target.foo as () => string)()).toBe('orig');
   });
 
   it('supports patching multiple methods at once', () => {

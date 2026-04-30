@@ -177,6 +177,29 @@ describe('SftpDataAdapter (read-side)', () => {
       expect(adapter.getName()).toBe('TestVault');
     });
 
+    it('exposes the shadow base path via the basePath getter and getBasePath()', () => {
+      // #170: when patched onto FileSystemAdapter, both the property
+      // and the method form must return the shadow vault's local
+      // root so plugins (Templater / Kanban / Importer / Copilot)
+      // join their fs.* calls against a real local mirror.
+      const fake = makeFakeClient();
+      const shadow = '/Users/me/.obsidian-remote/vaults/abc/';
+      const adapter = new SftpDataAdapter(
+        fake.client, '/srv/vault', readCache, dirCache, 'v',
+        null, null, null, null, null, null,
+        shadow,
+      );
+      expect(adapter.basePath).toBe(shadow);
+      expect(adapter.getBasePath()).toBe(shadow);
+    });
+
+    it('basePath / getBasePath default to "" when not provided (test-friendly fallback)', () => {
+      const fake = makeFakeClient();
+      const adapter = new SftpDataAdapter(fake.client, '/srv/vault', readCache, dirCache, 'v');
+      expect(adapter.basePath).toBe('');
+      expect(adapter.getBasePath()).toBe('');
+    });
+
     it('joins normalized path under the remote base', () => {
       const fake = makeFakeClient();
       const adapter = new SftpDataAdapter(fake.client, '/srv/vault', readCache, dirCache, 'v');
