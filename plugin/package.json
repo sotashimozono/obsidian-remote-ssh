@@ -13,6 +13,7 @@
     "cdp:tail": "node scripts/cdp-tail.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:replay": "node scripts/replay-prev-tests.mjs",
     "test:integration": "vitest run --config vitest.integration.config.ts --exclude **/perf.sync.bench.test.ts",
     "test:integration:bench": "vitest run --config vitest.integration.config.ts tests/integration/perf.sync.bench.test.ts",
     "sshd:start": "node scripts/start-test-sshd.mjs",

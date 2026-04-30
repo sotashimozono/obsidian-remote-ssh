@@ -1,0 +1,51 @@
+name: Cross-version test replay
+
+# Run the most recent published release tag's unit tests against the
+# PR's `plugin/src/`. Catches PRs that update tests in lockstep with
+# source so a previously-asserted invariant ships green even though
+# it's actually broken (see `plugin/scripts/replay-prev-tests.mjs`
+# for the rationale).
+#
+# **Trigger:** PRs into `main` only — push-to-main is redundant
+# (already checked at PR time) and would just burn CI cycles. The
+# matching push-to-main run can be added later if signal stays
+# clean over a few weeks of operation.
+#
+# **Status:** advisory (`continue-on-error: true` on the job's
+# `Run replay` step so a regression surfaces in the PR's checks
+# but doesn't block merge). Promote to required-check once the
+# signal-to-noise ratio has been proven over real PR traffic.
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: replay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  replay:
+    name: Replay previous tag's tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Need full history + tags so `git describe --tags
+          # --abbrev=0 origin/main` resolves the latest release.
+          # Default checkout depth = 1, which omits tag refs.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: plugin/package-lock.json
+      - run: npm ci
+      # Advisory for now — regressions show up as a failed step in
+      # the PR check list but don't block merge. Flip
+      # `continue-on-error` to `false` to make this required.
+      - name: Run replay
+        continue-on-error: true
+        run: npm run test:replay

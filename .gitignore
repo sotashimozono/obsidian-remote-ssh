@@ -11,6 +11,12 @@ plugin/server-bin/
 # baseline to an orphan branch instead of committing it here.
 plugin/perf-results/
 
+# Cross-version test replay scratch dir. Populated by
+# `npm run test:replay` (and the `replay.yml` CI workflow) with the
+# previous release tag's tests; cleaned up at script exit. Should
+# never appear in the working tree of a clean checkout.
+plugin/tests-replay/
+
 # Docker test environment artefacts: keypair generated on first run,
 # bind-mounted vault contents written by integration tests.
 docker/keys/id_test
