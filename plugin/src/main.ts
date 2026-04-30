@@ -14,6 +14,7 @@ import { ResourceBridge } from './adapter/ResourceBridge';
 import { WriteConflictModal } from './ui/WriteConflictModal';
 import { ThreeWayMergeModal } from './ui/ThreeWayMergeModal';
 import { KbdInteractiveModal } from './ui/KbdInteractiveModal';
+import { HostKeyMismatchModal } from './ui/HostKeyMismatchModal';
 import { AncestorTracker } from './conflict/AncestorTracker';
 import { OfflineQueue } from './offline/OfflineQueue';
 import { QueueReplayer } from './offline/QueueReplayer';
@@ -134,6 +135,12 @@ export default class RemoteSshPlugin extends Plugin {
       // which fails the auth round and surfaces as a normal connect
       // error in the connect promise rejection.
       (prompts) => new KbdInteractiveModal(this.app, prompts).prompt(),
+      // host-key mismatch recovery (#132). On fingerprint change,
+      // surface both fingerprints to the user; 'trust' re-pins the
+      // new key and proceeds, 'abort' fails the connect with a
+      // host-key category error. Without this handler the existing
+      // sync verify() path stays as-is for tests / non-UI callers.
+      (info) => new HostKeyMismatchModal(this.app, info).prompt(),
     );
     this.client.onClose(({ unexpected }) => {
       // Intentional disconnects are driven by `disconnect()` which

@@ -4,7 +4,7 @@ import type { Duplex } from 'stream';
 import type { RemoteEntry, RemoteStat, SshProfile } from '../types';
 import { TMP_SUFFIX } from '../constants';
 import { AuthResolver } from './AuthResolver';
-import { HostKeyStore } from './HostKeyStore';
+import { HostKeyStore, type HostKeyMismatchHandler } from './HostKeyStore';
 import { createJumpTunnel } from './JumpHostTunnel';
 import { logger } from '../util/logger';
 
@@ -82,6 +82,16 @@ export class SftpClient {
      * 2-arg constructions stay valid.
      */
     private kbdInteractiveHandler?: KbdInteractiveHandlerFn,
+    /**
+     * Optional. When supplied, `connect()` uses ssh2's async
+     * `HostVerifier` overload and forwards a fingerprint mismatch to
+     * this callback so the user can choose to trust the new key (=
+     * `'trust'` → forget old + re-pin via TOFU) or refuse the
+     * handshake (= `'abort'` → connect rejects). Omitted by tests
+     * and non-UI callers, in which case mismatch falls back to the
+     * existing fail-closed sync `verify()` path.
+     */
+    private hostKeyMismatchHandler?: HostKeyMismatchHandler,
   ) {}
 
   // ─── lifecycle ───────────────────────────────────────────────────────────
@@ -207,6 +217,35 @@ export class SftpClient {
         });
       }
 
+      // hostVerifier shape switches based on whether a mismatch
+      // handler was wired. ssh2's async overload `(key, verify) =>
+      // void` lets us await the user's modal choice inside the
+      // handshake; without a handler we keep the synchronous boolean
+      // overload so tests / non-UI callers retain the exact previous
+      // behaviour (fail-closed on mismatch, no async surface).
+      const hostVerifier = this.hostKeyMismatchHandler
+        ? (key: Buffer, verify: (valid: boolean) => void): void => {
+            const keyBuf = Buffer.isBuffer(key) ? key : Buffer.from(key, 'base64');
+            this.hostKeyStore.verifyAsync(
+              profile.host,
+              profile.port,
+              keyBuf,
+              this.hostKeyMismatchHandler,
+            ).then(verify, (e: unknown) => {
+              // verifyAsync already swallows handler errors; this
+              // is a defence-in-depth path for impossible failures.
+              logger.warn(
+                `SftpClient: hostVerifier rejected unexpectedly for ` +
+                `${profile.host}:${profile.port}: ${asError(e).message}`,
+              );
+              verify(false);
+            });
+          }
+        : (key: Buffer | string): boolean => {
+            const keyBuf = Buffer.isBuffer(key) ? key : Buffer.from(key, 'base64');
+            return this.hostKeyStore.verify(profile.host, profile.port, keyBuf);
+          };
+
       const config: ConnectConfig = {
         host: profile.host,
         port: profile.port,
@@ -214,10 +253,7 @@ export class SftpClient {
         keepaliveInterval: profile.keepaliveIntervalMs,
         keepaliveCountMax: profile.keepaliveCountMax,
         readyTimeout: profile.connectTimeoutMs,
-        hostVerifier: (key: Buffer | string) => {
-          const keyBuf = Buffer.isBuffer(key) ? key : Buffer.from(key, 'base64');
-          return this.hostKeyStore.verify(profile.host, profile.port, keyBuf);
-        },
+        hostVerifier,
         // Only flip tryKeyboard on when a handler exists. The flag's
         // presence makes ssh2 advertise keyboard-interactive in the
         // method list it offers the server — leaving it off when no

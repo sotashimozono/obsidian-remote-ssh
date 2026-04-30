@@ -112,7 +112,7 @@ export function classifyError(err: unknown): ClassifiedError {
     return {
       category: 'host-key',
       title: 'Remote host key changed',
-      hint: 'The remote\'s host key doesn\'t match what we have on file. If you trust the new key, remove the old fingerprint from the profile and reconnect; otherwise the host may have been swapped (or attacked).',
+      hint: 'The remote\'s host key doesn\'t match what we have on file. Reconnect to see the host-key change dialog and decide whether to trust the new key; if the change is unexpected, the host may have been swapped (or the connection intercepted).',
       original,
     };
   }
