@@ -147,7 +147,11 @@ Things that aren't a specific plugin but trip plugins in general:
   these manually instead of going through `getResourcePath`. The
   manually-built URL points at the local FS and won't render. The
   ResourceBridge fixes this only when `getResourcePath` is the
-  entry point.
+  entry point. The `app://local` URL survey (#174, 2026-05-01)
+  found **zero usage across all top-20 plugins**; only niche
+  image-processing plugins outside the top-20 use this pattern
+  (see survey section below). No webview-side URL rewriting is
+  needed at this time.
 
 ## Why we can't auto-test all of this
 
@@ -263,3 +267,87 @@ compare, child-process cwd, etc.).
 - One-to-two representative usage sites recorded per plugin —
   exhaustive coverage was not the goal; the categorization is what
   drives the recommendation.
+
+## `app://local` URL survey (#174, 2026-05-01)
+
+Investigation tracker for issue #174. We surveyed the same top-20
+plugin set for manual construction of `app://local/<path>` URLs —
+the Electron protocol that Obsidian uses to serve local vault assets.
+Plugins that build these by hand (instead of calling
+`getResourcePath`) bypass the ResourceBridge and render broken
+images on a remote vault.
+
+### Headline
+
+- **0 / 20** top plugins construct `app://local` URLs by hand.
+- Dataview mentions the protocol in its CHANGELOG / docs only (no
+  runtime code).
+- The pattern exists **only in niche image-processing plugins**
+  outside the top-20 (see below).
+
+### Top-20 results
+
+| Plugin | Installs | `app://local` in source? |
+| --- | --- | --- |
+| Excalidraw | 5.9M | no |
+| Templater | 4.2M | no |
+| Dataview | 4.1M | no (docs only) |
+| Tasks | 3.4M | no |
+| Advanced Tables | 2.8M | no |
+| Calendar | 2.6M | no |
+| Git (Vinzent03) | 2.5M | no |
+| Style Settings | 2.3M | no |
+| Kanban | 2.2M | no |
+| Iconize | 2.0M | no |
+| Remotely Save | 1.9M | no |
+| QuickAdd | 1.7M | no |
+| Minimal Theme Settings | 1.5M | no |
+| Omnisearch | 1.4M | no |
+| Editing Toolbar | 1.4M | no |
+| Copilot | 1.3M | no |
+| Importer | 1.2M | no |
+| Outliner | 1.2M | no |
+| Homepage | 1.1M | no |
+| Recent Files | 1.0M | no |
+
+### Outside top-20: plugins that DO use `app://local`
+
+These were found via broad GitHub code search (`"app://local"` in
+Obsidian-related TypeScript/JavaScript repos). All are niche
+image-handling or export plugins:
+
+| Plugin | File(s) | Pattern | Category |
+| --- | --- | --- | --- |
+| obsidian-image-toolkit | `src/util/markdowParse.ts` | URL pattern matching / parsing for image rendering | (a) URL parse — reads, not constructs |
+| oz-image-in-editor | `src/util/obsidianHelper.ts`, `src/cm5/`, `src/cm6/` | Builds `app://local/` + basePath for inline image preview in editor | (b) genuine bypass |
+| obsidian-marp-plugin | `src/convertImage.ts` | Resolves vault images to absolute path for Marp slide export | (b) genuine bypass |
+| obsidian-bookmaster | `src/BookVault.ts` | Local book file rendering | (b) genuine bypass |
+| obsidian-image-converter | `src/FolderAndFilenameManagement.ts` | Image path resolution during format conversion | (a) URL parse |
+
+### Recommendations
+
+- **No action needed for top-20 plugins.** The `app://local` footgun
+  exists in theory but does not affect any high-install plugin.
+- **A webview-side URL rewriter is not justified** at this time.
+  The implementation cost (intercept `<img>`/`<video>`/`<audio>`/
+  `<iframe>` requests matching `app://local/<shadow-vault-path>` and
+  rewrite to ResourceBridge URL) is moderate, and the affected plugin
+  set is tiny.
+- **If a user reports a broken image in a specific plugin**, the
+  per-plugin fix is to check whether the plugin calls
+  `getResourcePath` (works via ResourceBridge) or constructs
+  `app://local` by hand (broken). The latter can be patched
+  plugin-side or — if the plugin is popular enough — by adding the
+  webview rewriter at that point.
+- **Re-survey when the top-20 list shifts** or when `app://local`
+  usage increases (unlikely — Obsidian's own `getResourcePath` is
+  the documented API and most plugin authors use it).
+
+### Method
+
+- Same top-20 set as the basePath survey (2026-04-29).
+- GitHub code-search API: `"app://local" repo:<owner>/<name>`.
+- Broad search (no repo filter) also run to find outside-top-20 hits;
+  results filtered to Obsidian plugin repos by path and context.
+- Matches in `obsidian.d.ts` type stubs, bundled `main.js` of other
+  plugins committed to vault configs, and test fixtures were excluded.
