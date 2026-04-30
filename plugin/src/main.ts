@@ -1236,15 +1236,22 @@ export default class RemoteSshPlugin extends Plugin {
    * `Range:` request, which still works but allocates the whole file
    * into memory just to slice.
    */
-  private makeBinaryRangeFetcherIfSupported(): null | ((vaultPath: string, offset: number, length: number) => Promise<{ bytes: Uint8Array; mtime: number; totalSize: number }>) {
+  private makeBinaryRangeFetcherIfSupported(): null | ((vaultPath: string, offset: number, length: number, expectedMtime?: number) => Promise<{ bytes: Uint8Array; mtime: number; totalSize: number }>) {
     const conn = this.rpcConnection;
     if (!conn) return null;
     if (!conn.info.capabilities.includes('fs.readBinaryRange')) return null;
-    return async (vaultPath, offset, length) => {
+    return async (vaultPath, offset, length, expectedMtime) => {
+      // Daemon's ReadBinaryRangeParams treats `expectedMtime` as
+      // optional — only include it when the bridge actually has a
+      // cached generation to pin against. The daemon rejects with
+      // PreconditionFailed (-32020) when the remote mtime no longer
+      // matches; ResourceBridge catches that and re-issues with
+      // `expectedMtime: undefined`. #171.
       const result = await conn.rpc.call('fs.readBinaryRange', {
         path: vaultPath,
         offset,
         length,
+        ...(expectedMtime !== undefined ? { expectedMtime } : {}),
       });
       const buf = Buffer.from(result.contentBase64, 'base64');
       return {

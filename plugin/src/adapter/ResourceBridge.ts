@@ -2,6 +2,7 @@ import * as http from 'http';
 import type { AddressInfo } from 'net';
 import { randomBytes, timingSafeEqual } from 'crypto';
 import { logger } from '../util/logger';
+import { isPreconditionFailed } from '../proto/rpcError';
 
 /**
  * Async fetcher for vault binary content. The bridge calls this with a
@@ -20,14 +21,21 @@ export type FetchBinaryFn = (vaultPath: string) => Promise<Uint8Array>;
  * runs past EOF; the bridge uses `totalSize` to build the
  * `Content-Range: bytes start-end/<total>` header regardless of how
  * much was actually returned. `mtime` is the source file's mtime at
- * read time — informational for now; a future revision can thread it
- * back as `expectedMtime` on follow-up requests so a mid-scrub edit
- * invalidates cleanly.
+ * read time, threaded back as `expectedMtime` on follow-up requests
+ * so a mid-scrub edit invalidates cleanly (#171).
+ *
+ * `expectedMtime`, when set, asks the implementation to reject the
+ * read with `PreconditionFailed` (-32020) if the remote mtime no
+ * longer matches. The bridge passes the cached mtime here on
+ * follow-up requests for the same path; on rejection it drops the
+ * cache entry and re-issues with `expectedMtime: undefined` so the
+ * webview gets a fresh slice rather than a stale one.
  */
 export type FetchBinaryRangeFn = (
   vaultPath: string,
   offset: number,
   length: number,
+  expectedMtime?: number,
 ) => Promise<{ bytes: Uint8Array; mtime: number; totalSize: number }>;
 
 /**
@@ -65,6 +73,30 @@ export interface StartResult {
  * whole file). Phase 6-B can add streaming + Range when large PDFs
  * become a real pain point.
  */
+/**
+ * TTL in ms for entries in the per-path mtime cache. After this much
+ * time has elapsed since the last hit the entry is treated as stale
+ * and the next range request goes out without `expectedMtime`. 30 s
+ * is short enough that an idle scrubbing session doesn't pin
+ * arbitrarily-old generations and long enough to cover the typical
+ * "scrub a video for a minute" usage pattern. #171.
+ */
+const MTIME_CACHE_TTL_MS = 30_000;
+
+/**
+ * Maximum number of paths kept in the mtime cache. A small cap is
+ * enough because the cache is sized to "currently-being-scrubbed
+ * media files", which is one or two at a time in practice. When
+ * full, the least-recently-used entry is evicted. #171.
+ */
+const MTIME_CACHE_MAX_ENTRIES = 64;
+
+interface MtimeCacheEntry {
+  mtime: number;
+  /** Wall-clock ms (`Date.now()`) of the most recent read or write. */
+  lastUsed: number;
+}
+
 export class ResourceBridge {
   private server: http.Server | null = null;
   private token: string | null = null;
@@ -72,6 +104,23 @@ export class ResourceBridge {
   private fetchBinary: FetchBinaryFn | null = null;
   private fetchThumbnail: FetchThumbnailFn | null = null;
   private fetchBinaryRange: FetchBinaryRangeFn | null = null;
+
+  /**
+   * Per-path mtime cache for the range fast path (#171). The first
+   * range request for a path goes out without `expectedMtime` and
+   * caches the daemon's reported mtime; subsequent requests pin to
+   * that mtime so the daemon rejects (with `PreconditionFailed`)
+   * any slice from a newer file generation rather than silently
+   * returning a mismatched mid-stream chunk. On rejection the
+   * bridge drops the entry and re-issues without `expectedMtime`,
+   * caching the new mtime — so a mid-scrub edit takes one extra
+   * round-trip but never produces a corrupt response.
+   *
+   * Bounded by {@link MTIME_CACHE_MAX_ENTRIES}; entries older than
+   * {@link MTIME_CACHE_TTL_MS} since their last hit are treated as
+   * stale on read. Cleared on `stop()`.
+   */
+  private mtimeCache = new Map<string, MtimeCacheEntry>();
 
   /**
    * Start the HTTP server and return the chosen port + token. Calling
@@ -138,6 +187,7 @@ export class ResourceBridge {
     this.fetchBinary = null;
     this.fetchThumbnail = null;
     this.fetchBinaryRange = null;
+    this.mtimeCache.clear();
 
     return new Promise<void>(resolve => {
       // Force-close any in-flight responses so we don't hang on a slow
@@ -269,7 +319,35 @@ export class ResourceBridge {
       const explicit = parseExplicitByteRange(rangeHeaderForFastPath);
       if (explicit !== null) {
         try {
-          const result = await fetchBinaryRange(rawPath, explicit.start, explicit.length);
+          // Pin follow-up requests to the cached generation. First
+          // request for `rawPath` (or any request after a stale-cache
+          // eviction) flows through with `expectedMtime: undefined`
+          // and caches the daemon's mtime; subsequent requests within
+          // the TTL pass that mtime so the daemon rejects mid-stream
+          // edits with PreconditionFailed instead of silently splicing
+          // bytes from two file generations. #171.
+          const expectedMtime = this.lookupMtime(rawPath);
+          let result;
+          try {
+            result = await fetchBinaryRange(rawPath, explicit.start, explicit.length, expectedMtime);
+          } catch (e) {
+            if (expectedMtime !== undefined && isPreconditionFailed(e)) {
+              // Mid-scrub edit — the daemon's view of the file moved.
+              // Drop the cached generation, re-issue without the
+              // precondition, and serve the fresh slice. The new
+              // mtime is cached below so subsequent requests pin to
+              // it instead.
+              logger.info(
+                `ResourceBridge: mtime mismatch for "${rawPath}" ${rangeHeaderForFastPath}; ` +
+                `dropping cache and re-issuing without expectedMtime`,
+              );
+              this.mtimeCache.delete(rawPath);
+              result = await fetchBinaryRange(rawPath, explicit.start, explicit.length, undefined);
+            } else {
+              throw e;
+            }
+          }
+          this.storeMtime(rawPath, result.mtime);
           const totalSize = result.totalSize;
           if (explicit.start >= totalSize) {
             // RFC 7233: a range starting past EOF is unsatisfiable.
@@ -372,6 +450,47 @@ export class ResourceBridge {
     } else {
       const slice = bytes.subarray(start, end + 1);
       res.end(Buffer.from(slice.buffer, slice.byteOffset, slice.byteLength));
+    }
+  }
+
+  /**
+   * Read a non-stale entry from {@link mtimeCache}. A hit refreshes
+   * `lastUsed` so a continuously-scrubbed file doesn't TTL-expire.
+   * Returns `undefined` for misses and for entries older than
+   * {@link MTIME_CACHE_TTL_MS}; the stale entry is dropped on the
+   * spot so the next caller goes through the cache-miss path.
+   */
+  private lookupMtime(vaultPath: string): number | undefined {
+    const entry = this.mtimeCache.get(vaultPath);
+    if (!entry) return undefined;
+    const now = Date.now();
+    if (now - entry.lastUsed > MTIME_CACHE_TTL_MS) {
+      this.mtimeCache.delete(vaultPath);
+      return undefined;
+    }
+    entry.lastUsed = now;
+    return entry.mtime;
+  }
+
+  /**
+   * Insert (or refresh) a path's mtime, then evict the
+   * least-recently-used entry if the map exceeds
+   * {@link MTIME_CACHE_MAX_ENTRIES}. The cache only sees range
+   * requests, so churn is naturally bounded; the eviction here is
+   * defensive against pathological access patterns.
+   */
+  private storeMtime(vaultPath: string, mtime: number): void {
+    const now = Date.now();
+    // Map preserves insertion order; deleting + re-setting puts the
+    // entry at the back so the eviction sweep below picks the true
+    // LRU. Without the delete, an in-place update would leave the
+    // entry in its original slot and we'd evict a more-recently-used
+    // path next time the cap is hit.
+    this.mtimeCache.delete(vaultPath);
+    this.mtimeCache.set(vaultPath, { mtime, lastUsed: now });
+    if (this.mtimeCache.size > MTIME_CACHE_MAX_ENTRIES) {
+      const oldest = this.mtimeCache.keys().next();
+      if (!oldest.done) this.mtimeCache.delete(oldest.value);
     }
   }
 }
