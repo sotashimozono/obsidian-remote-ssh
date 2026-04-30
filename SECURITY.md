@@ -85,9 +85,12 @@ documents what we worry about and what's in place.
 - **Host-key TOFU.** First connection to a host stores the key
   fingerprint in `HostKeyStore` (per-host, persisted to
   `data.json`). Subsequent connections verify against the stored
-  key and refuse to proceed on a mismatch. A future
-  `HostKeyMismatchModal` (#132) will surface the diff for the
-  user to make an explicit trust decision; today it errors out.
+  key. On mismatch, `HostKeyMismatchModal` (#132) surfaces both
+  fingerprints side-by-side and asks the user to trust the new key
+  (re-pin and proceed) or abort (refuse the handshake; the connect
+  rejects with a `host-key` taxonomy error). The pinned key is
+  preserved on abort so a single rogue prompt cannot displace a
+  trusted fingerprint.
 - **No fallback to insecure auth.** `AuthResolver` honours the
   user's `~/.ssh/config` `IdentityFile` directives and falls back
   to ssh-agent. Password auth is opt-in per profile, never the
@@ -166,9 +169,10 @@ These are operator decisions, not code defects:
 - **Exposing the SSH host on a public IP without auth hardening.**
   We don't operate the host; we connect to whatever the user
   configured.
-- **Trusting a host-key change.** When `HostKeyMismatchModal` lands
-  (#132), the user will see the diff and the security implication;
-  their choice to trust is theirs.
+- **Trusting a host-key change.** `HostKeyMismatchModal` (#132)
+  shows the diff and the security implication; the user's choice
+  to trust is theirs. We surface the prompt; we do not decide for
+  them.
 
 ### What's stored, where
 
