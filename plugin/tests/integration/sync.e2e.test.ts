@@ -281,6 +281,66 @@ describe('Phase C E2E — sync reflect matrix', () => {
     expect(snap).toContain(dir2);
     expect(snap).toContain(target);
   });
+  // ── M9b cases (previously deferred) ──────────────────────────────
+
+  it('modify — writer overwrite reflects as a `modify` event on reader', async () => {
+    const target = `${subdirRel}/note-modify.bin`;
+    await assertSyncReflect({
+      label: 'modify (pre-create)',
+      op: () => writerAdapter.writeBinary(target, asArrayBuffer(Buffer.from('v1'))),
+      reader: { fakeFE },
+      expect: { path: target, event: 'create' },
+      budgetMs: PER_CASE_BUDGET_MS,
+    });
+
+    const r = await assertSyncReflect({
+      label: 'modify',
+      op: () => writerAdapter.writeBinary(target, asArrayBuffer(Buffer.from('v2'))),
+      reader: { fakeFE },
+      expect: { path: target, event: 'modify' },
+      budgetMs: PER_CASE_BUDGET_MS,
+    });
+
+    expect(r.e2eMs).toBeGreaterThan(0);
+    expect(fakeFE.snapshot().paths).toContain(target);
+  });
+
+  it('large file (1 MB) — bandwidth path exercises daemon + reader stat', async () => {
+    const target = `${subdirRel}/note-large.bin`;
+    const data = Buffer.alloc(1024 * 1024, 0x42);
+
+    const r = await assertSyncReflect({
+      label: 'large-file',
+      op: () => writerAdapter.writeBinary(target, asArrayBuffer(data)),
+      reader: { fakeFE },
+      expect: { path: target, event: 'create' },
+      budgetMs: PER_CASE_BUDGET_MS * 5,
+    });
+
+    expect(r.e2eMs).toBeGreaterThan(0);
+    expect(fakeFE.snapshot().paths).toContain(target);
+  });
+
+  it('binary content-hash round-trip — SHA-256 matches after write → read', async () => {
+    const crypto = await import('node:crypto');
+    const target = `${subdirRel}/note-binary.bin`;
+    // Non-ASCII binary blob with a mix of byte values
+    const data = Buffer.from(Array.from({ length: 4096 }, (_, i) => i % 256));
+    const expectedHash = crypto.createHash('sha256').update(data).digest('hex');
+
+    await assertSyncReflect({
+      label: 'binary-hash (create)',
+      op: () => writerAdapter.writeBinary(target, asArrayBuffer(data)),
+      reader: { fakeFE },
+      expect: { path: target, event: 'create' },
+      budgetMs: PER_CASE_BUDGET_MS,
+    });
+
+    // Read back through the reader adapter and compare SHA-256
+    const readBack = await readerAdapter.readBinary(target);
+    const actualHash = crypto.createHash('sha256').update(Buffer.from(readBack)).digest('hex');
+    expect(actualHash).toBe(expectedHash);
+  });
 });
 
 // ── reader pipeline (mimics main.ts handleFsChanged + applyFsChange) ───
