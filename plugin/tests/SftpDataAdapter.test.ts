@@ -4,6 +4,7 @@ import { ReadCache } from '../src/cache/ReadCache';
 import { DirCache } from '../src/cache/DirCache';
 import { PathMapper } from '../src/path/PathMapper';
 import { AncestorTracker } from '../src/conflict/AncestorTracker';
+import { ConflictResolver } from '../src/conflict/ConflictResolver';
 import { OfflineQueue } from '../src/offline/OfflineQueue';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -186,7 +187,7 @@ describe('SftpDataAdapter (read-side)', () => {
       const shadow = '/Users/me/.obsidian-remote/vaults/abc/';
       const adapter = new SftpDataAdapter(
         fake.client, '/srv/vault', readCache, dirCache, 'v',
-        null, null, null, null, null, null,
+        null, null, null, null, null,
         shadow,
       );
       expect(adapter.basePath).toBe(shadow);
@@ -796,7 +797,7 @@ describe('SftpDataAdapter (read-side)', () => {
       const onConflict = vi.fn(async () => true);
       const adapter = new SftpDataAdapter(
         fake.client, '/v', readCache, dirCache, 'v',
-        null, null, onConflict,
+        null, null, new ConflictResolver(fake.client, readCache, null, null, onConflict),
       );
       await adapter.read('note.md'); // primes mtime
       await adapter.write('note.md', 'force');
@@ -811,7 +812,7 @@ describe('SftpDataAdapter (read-side)', () => {
       const onConflict = vi.fn(async () => false);
       const adapter = new SftpDataAdapter(
         fake.client, '/v', readCache, dirCache, 'v',
-        null, null, onConflict,
+        null, null, new ConflictResolver(fake.client, readCache, null, null, onConflict),
       );
       await adapter.read('note.md');
       await expect(adapter.write('note.md', 'no')).rejects.toMatchObject({ code: -32020 });
@@ -835,7 +836,7 @@ describe('SftpDataAdapter (read-side)', () => {
       const onConflict = vi.fn(async () => true);
       const adapter = new SftpDataAdapter(
         fake.client, '/v', readCache, dirCache, 'v',
-        null, null, onConflict,
+        null, null, new ConflictResolver(fake.client, readCache, null, null, onConflict),
       );
       await adapter.read('note.md');
       await expect(adapter.write('note.md', 'no')).rejects.toThrow(/disk full/);
@@ -931,9 +932,10 @@ describe('SftpDataAdapter (read-side)', () => {
       // Reset the file to the ANCESTOR state for the priming read,
       // then swap it to THEIRS afterwards so the precondition fires.
       fake.files['/v/note.md'] = { data: Buffer.from(opts.ancestorContent), mtime: 100 };
+      const resolver = new ConflictResolver(fake.client, readCache, tracker, onText, onLegacy);
       const adapter = new SftpDataAdapter(
         fake.client, '/v', readCache, dirCache, 'v',
-        null, null, onLegacy, tracker, onText,
+        null, null, resolver, tracker,
       );
       await adapter.read('note.md'); // ancestor primed: "ancestorContent" @ mtime 100
       // Now flip the file under the adapter's nose to simulate
@@ -1019,9 +1021,10 @@ describe('SftpDataAdapter (read-side)', () => {
       const onLegacy = vi.fn(async () => true /* overwrite */);
       const onText = vi.fn();
       const { fake, writeCalls } = makeConflictingClient();
+      const resolver = new ConflictResolver(fake.client, readCache, tracker, onText, onLegacy);
       const adapter = new SftpDataAdapter(
         fake.client, '/v', readCache, dirCache, 'v',
-        null, null, onLegacy, tracker, onText,
+        null, null, resolver, tracker,
       );
       // Prime the readCache (so the write sends expectedMtime) but do
       // NOT populate the ancestor tracker — `readBinary` is the path
@@ -1041,9 +1044,10 @@ describe('SftpDataAdapter (read-side)', () => {
       // Prime the ancestor so a TEXT write would route through 3-way;
       // assert that the BINARY write does NOT.
       fake.files['/v/note.md'] = { data: Buffer.from('initial'), mtime: 100 };
+      const resolver = new ConflictResolver(fake.client, readCache, tracker, onText, onLegacy);
       const adapter = new SftpDataAdapter(
         fake.client, '/v', readCache, dirCache, 'v',
-        null, null, onLegacy, tracker, onText,
+        null, null, resolver, tracker,
       );
       await adapter.read('note.md');
       await adapter.writeBinary('note.md', new Uint8Array([1, 2, 3]).buffer);
@@ -1074,7 +1078,7 @@ describe('SftpDataAdapter (offline queue while reconnecting)', () => {
     const tracker = opts.tracker ?? new AncestorTracker();
     return new SftpDataAdapter(
       opts.client, '/v', readCache, dirCache, 'v',
-      null, null, null, tracker, null,
+      null, null, null, tracker,
       queue,
     );
   }
