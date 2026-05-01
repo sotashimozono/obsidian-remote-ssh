@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import { logger } from '../util/logger';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * User decision returned from the on-mismatch prompt threaded into
@@ -111,7 +112,7 @@ export class HostKeyStore {
       // failure mode the user can recover from.
       logger.warn(
         `Host-key mismatch handler threw for ${key}; treating as abort: ` +
-        `${(e as Error).message}`,
+        `${errorMessage(e)}`,
       );
       return false;
     }

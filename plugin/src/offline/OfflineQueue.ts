@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { logger } from '../util/logger';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * Discriminated union of every adapter operation the queue can hold.
@@ -198,7 +199,7 @@ export class OfflineQueue {
         parsed = JSON.parse(line);
       } catch (e) {
         logger.warn(
-          `OfflineQueue.replay: ${this.logFile}:${lineNo} malformed JSON; skipping (${(e as Error).message})`,
+          `OfflineQueue.replay: ${this.logFile}:${lineNo} malformed JSON; skipping (${errorMessage(e)})`,
         );
         continue;
       }

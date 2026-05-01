@@ -2,6 +2,7 @@ import * as path from 'path';
 import type { PluginManifest } from 'obsidian';
 import { logger } from './logger';
 import { installErrorHook, uninstallErrorHook } from './errorHook';
+import { errorMessage } from "./errorMessage";
 
 /**
  * Owns the install / uninstall sequence for the plugin's observability
@@ -42,7 +43,7 @@ export class ObservabilityInstaller {
         logger.warn('vault.adapter is not FileSystemAdapter; file sink disabled');
       }
     } catch (e) {
-      logger.warn(`installFileSink failed: ${(e as Error).message}`);
+      logger.warn(`installFileSink failed: ${errorMessage(e)}`);
     }
     logger.wrapConsole();
     installErrorHook();

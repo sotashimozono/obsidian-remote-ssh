@@ -1,5 +1,6 @@
 import type { OfflineQueue, QueuedOp } from './OfflineQueue';
 import { logger } from '../util/logger';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * Slim adapter surface the replayer drives. Matches
@@ -62,7 +63,7 @@ export class QueueReplayer {
         // a discriminated outcome — but if a fake's behaviour
         // diverges, surface it as an error rather than crashing the
         // whole drain.
-        const message = (e as Error).message;
+        const message = errorMessage(e);
         report.errors.push({ id: entry.id, message });
         logger.error(`QueueReplayer: target threw on entry #${entry.id} (${entry.op.kind}): ${message}`);
         break;

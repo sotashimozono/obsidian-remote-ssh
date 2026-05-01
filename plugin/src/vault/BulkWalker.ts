@@ -2,6 +2,7 @@ import type { ListedFiles } from 'obsidian';
 import { logger } from '../util/logger';
 import type { RemoteEntry } from './VaultModelBuilder';
 import type { WalkParams, WalkResult, ServerInfo } from '../proto/types';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * The narrow slice of `app.vault.adapter` BulkWalker needs for its
@@ -106,7 +107,7 @@ export class BulkWalker {
           fastPathError: 'truncated',
         };
       } catch (e) {
-        const message = (e as Error).message;
+        const message = errorMessage(e);
         logger.warn(`BulkWalker: fs.walk failed (${message}); falling back to per-folder list`);
         const fallback = await this.fallbackPath(rootPath);
         return {
@@ -170,7 +171,7 @@ export class BulkWalker {
       try {
         listing = await this.deps.adapter.list(folder);
       } catch (e) {
-        logger.warn(`BulkWalker.fallbackPath: list("${folder}") failed: ${(e as Error).message}`);
+        logger.warn(`BulkWalker.fallbackPath: list("${folder}") failed: ${errorMessage(e)}`);
         continue;
       }
       for (const sub of listing.folders) {

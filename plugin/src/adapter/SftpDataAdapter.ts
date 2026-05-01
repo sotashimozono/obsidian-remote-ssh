@@ -32,6 +32,7 @@ import type { OfflineQueue, QueuedOp } from '../offline/OfflineQueue';
 import { logger } from '../util/logger';
 import { perfTracer } from '../util/PerfTracer';
 import { isPreconditionFailed } from '../proto/rpcError';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * Inputs to a 3-way conflict prompt. The adapter assembles these
@@ -492,15 +493,13 @@ export class SftpDataAdapter {
       if (this.reconnecting) {
         await this.queueOrThrowMutation({ kind: 'remove', path: normalizedPath });
         const remote = this.toRemote(normalizedPath);
-        this.readCache.invalidate(remote);
-        this.dirCache.invalidate(parentDirRemote(remote));
+        this.invalidatePath(remote);
         this.ancestorTracker?.invalidate(normalizedPath);
         return;
       }
       const remote = this.toRemote(normalizedPath);
       await this.client.remove(remote);
-      this.readCache.invalidate(remote);
-      this.dirCache.invalidate(parentDirRemote(remote));
+      this.invalidatePath(remote);
       this.ancestorTracker?.invalidate(normalizedPath);
     } finally {
       perfTracer.end(__t1, { op: 'remove', path: normalizedPath });
@@ -511,16 +510,12 @@ export class SftpDataAdapter {
     if (this.reconnecting) {
       await this.queueOrThrowMutation({ kind: 'rmdir', path: normalizedPath, recursive });
       const remote = this.toRemote(normalizedPath);
-      this.readCache.invalidatePrefix(remote);
-      this.dirCache.invalidatePrefix(remote);
-      this.dirCache.invalidate(parentDirRemote(remote));
+      this.invalidateTree(remote);
       return;
     }
     const remote = this.toRemote(normalizedPath);
     await this.client.rmdir(remote, recursive);
-    this.readCache.invalidatePrefix(remote);
-    this.dirCache.invalidatePrefix(remote);
-    this.dirCache.invalidate(parentDirRemote(remote));
+    this.invalidateTree(remote);
     // AncestorTracker doesn't have prefix invalidation today; in
     // practice rmdir kills folders that the user wasn't editing as
     // text, so the stale entries (if any) just live until LRU pushes
@@ -534,11 +529,8 @@ export class SftpDataAdapter {
         await this.queueOrThrowMutation({ kind: 'rename', oldPath, newPath });
         const oldRemote = this.toRemote(oldPath);
         const newRemote = this.toRemote(newPath);
-        this.readCache.invalidatePrefix(oldRemote);
-        this.readCache.invalidate(newRemote);
-        this.dirCache.invalidatePrefix(oldRemote);
-        this.dirCache.invalidate(parentDirRemote(oldRemote));
-        this.dirCache.invalidate(parentDirRemote(newRemote));
+        this.invalidateTree(oldRemote);
+        this.invalidatePath(newRemote);
         this.ancestorTracker?.invalidate(oldPath);
         return;
       }
@@ -546,11 +538,8 @@ export class SftpDataAdapter {
       const newRemote = this.toRemote(newPath);
       await this.client.mkdirp(parentDirRemote(newRemote));
       await this.client.rename(oldRemote, newRemote);
-      this.readCache.invalidatePrefix(oldRemote);
-      this.readCache.invalidate(newRemote);
-      this.dirCache.invalidatePrefix(oldRemote);
-      this.dirCache.invalidate(parentDirRemote(oldRemote));
-      this.dirCache.invalidate(parentDirRemote(newRemote));
+      this.invalidateTree(oldRemote);
+      this.invalidatePath(newRemote);
       // Keep the ancestor for `newPath` if one happens to exist (e.g.
       // rename onto an open file) — the user's edit cycle is against
       // whatever they last read at that path, regardless of how the
@@ -565,16 +554,14 @@ export class SftpDataAdapter {
     if (this.reconnecting) {
       await this.queueOrThrowMutation({ kind: 'copy', srcPath: oldPath, dstPath: newPath });
       const newRemote = this.toRemote(newPath);
-      this.readCache.invalidate(newRemote);
-      this.dirCache.invalidate(parentDirRemote(newRemote));
+      this.invalidatePath(newRemote);
       return;
     }
     const oldRemote = this.toRemote(oldPath);
     const newRemote = this.toRemote(newPath);
     await this.client.mkdirp(parentDirRemote(newRemote));
     await this.client.copy(oldRemote, newRemote);
-    this.readCache.invalidate(newRemote);
-    this.dirCache.invalidate(parentDirRemote(newRemote));
+    this.invalidatePath(newRemote);
   }
 
   /**
@@ -669,7 +656,7 @@ export class SftpDataAdapter {
           return { result: 'ok' };
       }
     } catch (e) {
-      const msg = (e as Error).message;
+      const msg = errorMessage(e);
       // The 3-way merge path's `cancel` and `keep-theirs` branches
       // rethrow the original PreconditionFailed; treat that as a
       // user-driven decision rather than an error so the queue can
@@ -780,7 +767,7 @@ export class SftpDataAdapter {
       const s = await this.client.stat(remote);
       mtime = s.mtime;
     } catch (e) {
-      logger.warn(`stat-after-read failed for "${remote}": ${(e as Error).message}`);
+      logger.warn(`stat-after-read failed for "${remote}": ${errorMessage(e)}`);
     }
     this.readCache.put(remote, data, mtime);
     return data;
@@ -844,7 +831,7 @@ export class SftpDataAdapter {
       const s = await this.client.stat(remote);
       mtime = s.mtime;
     } catch (e) {
-      logger.warn(`stat-after-write failed for "${remote}": ${(e as Error).message}`);
+      logger.warn(`stat-after-write failed for "${remote}": ${errorMessage(e)}`);
     }
     this.readCache.put(remote, writtenData, mtime);
     this.dirCache.invalidate(parent);
@@ -877,7 +864,7 @@ export class SftpDataAdapter {
           theirsBuf = await this.client.readBinary(remote);
         } catch (re) {
           logger.warn(
-            `resolveWriteConflict: re-read of "${remote}" failed (${(re as Error).message}); ` +
+            `resolveWriteConflict: re-read of "${remote}" failed (${errorMessage(re)}); ` +
             'falling back to the two-choice modal',
           );
           return await this.fallbackTwoChoice(normalizedPath, mine, originalError);
@@ -949,10 +936,7 @@ export class SftpDataAdapter {
    * key it actually stored under.
    */
   invalidateRemotePath(remoteVaultPath: string): void {
-    const abs = this.joinRemote(remoteVaultPath);
-    this.readCache.invalidate(abs);
-    const parent = parentDirRemote(abs);
-    if (parent) this.dirCache.invalidate(parent);
+    this.invalidatePath(this.joinRemote(remoteVaultPath));
   }
 
   /**
@@ -970,6 +954,19 @@ export class SftpDataAdapter {
       ? this.pathMapper.toRemote(normalizedPath)
       : normalizedPath;
     return this.joinRemote(mapped);
+  }
+
+  /** Invalidate read + dir caches for a single remote path. */
+  private invalidatePath(remote: string): void {
+    this.readCache.invalidate(remote);
+    this.dirCache.invalidate(parentDirRemote(remote));
+  }
+
+  /** Prefix-invalidate read + dir caches for a remote subtree. */
+  private invalidateTree(remote: string): void {
+    this.readCache.invalidatePrefix(remote);
+    this.dirCache.invalidatePrefix(remote);
+    this.dirCache.invalidate(parentDirRemote(remote));
   }
 
   private joinRemote(vaultRelative: string): string {

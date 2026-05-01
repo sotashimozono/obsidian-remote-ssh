@@ -3,6 +3,7 @@ import type { AddressInfo } from 'net';
 import { randomBytes, timingSafeEqual } from 'crypto';
 import { logger } from '../util/logger';
 import { isPreconditionFailed } from '../proto/rpcError';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * Async fetcher for vault binary content. The bridge calls this with a
@@ -244,8 +245,7 @@ export class ResourceBridge {
       res.writeHead(404).end();
       return;
     }
-    const tokenInUrl = m[1];
-    if (!this.token || !constantTimeEqualHex(tokenInUrl, this.token)) {
+    if (!this.token || !constantTimeEqualHex(m[1], this.token)) {
       res.writeHead(401).end();
       return;
     }
@@ -258,158 +258,133 @@ export class ResourceBridge {
       res.writeHead(400).end('bad path');
       return;
     }
-
-    const fetchBinary = this.fetchBinary;
-    if (!fetchBinary) {
+    if (!this.fetchBinary) {
       res.writeHead(503).end();
       return;
     }
 
-    // Thumbnail short-circuit: when the URL was minted with `?thumb=N`
-    // and a thumbnail fetcher is wired (= RPC daemon advertises
-    // `fs.thumbnail`), serve the daemon-resized bytes directly. Range
-    // doesn't apply (thumbnails are tiny + we send Cache-Control:
-    // no-store; the webview re-requests if it needs another size).
-    // Failure falls through to the full-binary path so the webview
-    // still gets *something* even if resize broke server-side.
     const thumbStr = url.searchParams.get('thumb');
     if (thumbStr !== null && this.fetchThumbnail) {
-      const maxDim = parseInt(thumbStr, 10);
-      if (!Number.isFinite(maxDim) || maxDim <= 0) {
-        res.writeHead(400).end('bad thumb');
-        return;
-      }
+      if (await this.serveThumbnail(req, res, rawPath, thumbStr)) return;
+    }
+
+    if (this.fetchBinaryRange && req.headers.range) {
+      if (await this.serveRangeFastPath(req, res, rawPath, req.headers.range)) return;
+    }
+
+    await this.serveFullBinary(req, res, rawPath);
+  }
+
+  /** Serve a daemon-resized thumbnail. Returns true if served. */
+  private async serveThumbnail(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    rawPath: string,
+    thumbStr: string,
+  ): Promise<boolean> {
+    const maxDim = parseInt(thumbStr, 10);
+    if (!Number.isFinite(maxDim) || maxDim <= 0) {
+      res.writeHead(400).end('bad thumb');
+      return true;
+    }
+    try {
+      const { bytes, format } = await this.fetchThumbnail!(rawPath, maxDim);
+      const contentType = format === 'png' ? 'image/png' : 'image/jpeg';
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Content-Length': bytes.byteLength,
+        'Cache-Control': 'no-store',
+      });
+      sendBody(req, res, bytes);
+      return true;
+    } catch (e) {
+      logger.warn(
+        `ResourceBridge: thumbnail failed for "${rawPath}" maxDim=${maxDim}: ` +
+        `${errorMessage(e)}; falling back to full binary`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Serve an explicit `bytes=N-M` range via `fs.readBinaryRange` without
+   * loading the full file. Returns true if served; false falls through
+   * to the full-binary path.
+   */
+  private async serveRangeFastPath(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    rawPath: string,
+    rangeHeader: string,
+  ): Promise<boolean> {
+    const explicit = parseExplicitByteRange(rangeHeader);
+    if (explicit === null) return false;
+    const fetchRange = this.fetchBinaryRange!;
+    try {
+      // Pin follow-up requests to the cached generation so the daemon
+      // rejects mid-stream edits with PreconditionFailed (#171).
+      const expectedMtime = this.lookupMtime(rawPath);
+      let result;
       try {
-        const { bytes, format } = await this.fetchThumbnail(rawPath, maxDim);
-        const contentType = format === 'png' ? 'image/png' : 'image/jpeg';
-        res.writeHead(200, {
-          'Content-Type': contentType,
-          'Content-Length': bytes.byteLength,
-          'Cache-Control': 'no-store',
-        });
-        if (req.method === 'HEAD') {
-          res.end();
-        } else {
-          res.end(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
-        }
-        return;
+        result = await fetchRange(rawPath, explicit.start, explicit.length, expectedMtime);
       } catch (e) {
-        logger.warn(
-          `ResourceBridge: thumbnail failed for "${rawPath}" maxDim=${maxDim}: ` +
-          `${(e as Error).message}; falling back to full binary`,
-        );
-        // fall through to fetchBinary
-      }
-    }
-
-    // Range fast path: when an explicit `bytes=N-M` request arrives
-    // and we have a true partial-read fetcher wired (= RPC daemon
-    // supports `fs.readBinaryRange`, #134), skip the full-file load
-    // entirely. The daemon ReadAt's the slice off disk, returning
-    // both the bytes and the total file size so we can build a
-    // well-formed `Content-Range` header without an extra stat.
-    //
-    // `bytes=N-` (open-ended) and `bytes=-N` (suffix) need the total
-    // size to parse, so they fall through to the legacy full-file
-    // path below — not the common case for video scrubbing or PDF
-    // chunk requests, which use the explicit `bytes=N-M` form.
-    const fetchBinaryRange = this.fetchBinaryRange;
-    const rangeHeaderForFastPath = req.headers.range;
-    if (fetchBinaryRange && rangeHeaderForFastPath) {
-      const explicit = parseExplicitByteRange(rangeHeaderForFastPath);
-      if (explicit !== null) {
-        try {
-          // Pin follow-up requests to the cached generation. First
-          // request for `rawPath` (or any request after a stale-cache
-          // eviction) flows through with `expectedMtime: undefined`
-          // and caches the daemon's mtime; subsequent requests within
-          // the TTL pass that mtime so the daemon rejects mid-stream
-          // edits with PreconditionFailed instead of silently splicing
-          // bytes from two file generations. #171.
-          const expectedMtime = this.lookupMtime(rawPath);
-          let result;
-          try {
-            result = await fetchBinaryRange(rawPath, explicit.start, explicit.length, expectedMtime);
-          } catch (e) {
-            if (expectedMtime !== undefined && isPreconditionFailed(e)) {
-              // Mid-scrub edit — the daemon's view of the file moved.
-              // Drop the cached generation, re-issue without the
-              // precondition, and serve the fresh slice. The new
-              // mtime is cached below so subsequent requests pin to
-              // it instead.
-              logger.info(
-                `ResourceBridge: mtime mismatch for "${rawPath}" ${rangeHeaderForFastPath}; ` +
-                `dropping cache and re-issuing without expectedMtime`,
-              );
-              this.mtimeCache.delete(rawPath);
-              result = await fetchBinaryRange(rawPath, explicit.start, explicit.length, undefined);
-            } else {
-              throw e;
-            }
-          }
-          this.storeMtime(rawPath, result.mtime);
-          const totalSize = result.totalSize;
-          if (explicit.start >= totalSize) {
-            // RFC 7233: a range starting past EOF is unsatisfiable.
-            res.writeHead(416, {
-              'Content-Range': `bytes */${totalSize}`,
-              'Cache-Control': 'no-store',
-            }).end();
-            return;
-          }
-          const sliceLen = result.bytes.byteLength;
-          const end = explicit.start + sliceLen - 1;
-          const contentType = guessMimeType(rawPath);
-          res.writeHead(206, {
-            'Content-Type': contentType,
-            'Content-Length': sliceLen,
-            'Content-Range': `bytes ${explicit.start}-${end}/${totalSize}`,
-            'Cache-Control': 'no-store',
-            'Accept-Ranges': 'bytes',
-          });
-          if (req.method === 'HEAD') {
-            res.end();
-          } else {
-            res.end(Buffer.from(result.bytes.buffer, result.bytes.byteOffset, sliceLen));
-          }
-          return;
-        } catch (e) {
-          // Fall through to the legacy full-file path so the webview
-          // still gets *something* even if the partial read broke
-          // server-side (e.g. daemon mid-deploy without the new
-          // method registered yet).
-          logger.warn(
-            `ResourceBridge: fs.readBinaryRange failed for "${rawPath}" ` +
-            `${rangeHeaderForFastPath}: ${(e as Error).message}; ` +
-            `falling back to full binary`,
+        if (expectedMtime !== undefined && isPreconditionFailed(e)) {
+          logger.info(
+            `ResourceBridge: mtime mismatch for "${rawPath}" ${rangeHeader}; ` +
+            `dropping cache and re-issuing without expectedMtime`,
           );
+          this.mtimeCache.delete(rawPath);
+          result = await fetchRange(rawPath, explicit.start, explicit.length, undefined);
+        } else {
+          throw e;
         }
       }
+      this.storeMtime(rawPath, result.mtime);
+      const totalSize = result.totalSize;
+      if (explicit.start >= totalSize) {
+        res.writeHead(416, {
+          'Content-Range': `bytes */${totalSize}`,
+          'Cache-Control': 'no-store',
+        }).end();
+        return true;
+      }
+      const sliceLen = result.bytes.byteLength;
+      const end = explicit.start + sliceLen - 1;
+      res.writeHead(206, {
+        'Content-Type': guessMimeType(rawPath),
+        'Content-Length': sliceLen,
+        'Content-Range': `bytes ${explicit.start}-${end}/${totalSize}`,
+        'Cache-Control': 'no-store',
+        'Accept-Ranges': 'bytes',
+      });
+      sendBody(req, res, result.bytes);
+      return true;
+    } catch (e) {
+      logger.warn(
+        `ResourceBridge: fs.readBinaryRange failed for "${rawPath}" ` +
+        `${rangeHeader}: ${errorMessage(e)}; falling back to full binary`,
+      );
+      return false;
     }
+  }
 
+  /** Fetch the full file and serve it, with legacy Range support. */
+  private async serveFullBinary(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    rawPath: string,
+  ): Promise<void> {
     let bytes: Uint8Array;
     try {
-      bytes = await fetchBinary(rawPath);
+      bytes = await this.fetchBinary!(rawPath);
     } catch (e) {
-      logger.warn(`ResourceBridge: read failed for "${rawPath}": ${(e as Error).message}`);
+      logger.warn(`ResourceBridge: read failed for "${rawPath}": ${errorMessage(e)}`);
       res.writeHead(404).end();
       return;
     }
 
     const contentType = guessMimeType(rawPath);
     const total = bytes.byteLength;
-
-    // Range support. We always advertise byte ranges in 200 responses;
-    // when the client asks for a range we respond with 206 and a
-    // sliced body. The bytes were loaded through `fetchBinary` above,
-    // so for an explicit `bytes=N-M` request we already have a fast
-    // path higher up in `handleRequest` that uses `fetchBinaryRange`
-    // to avoid the full-file load (#134); we only reach this point
-    // for ranges that need total-size knowledge to parse (`bytes=N-`
-    // and suffix `bytes=-N`), or when no range fetcher was wired (=
-    // SFTP transport, or a daemon without `fs.readBinaryRange`).
-    // ReadCache means repeated range requests for the same file
-    // don't re-read across the SSH link as long as it fits.
     const rangeHeader = req.headers.range;
     const parsed = rangeHeader ? parseRangeHeader(rangeHeader, total) : 'none';
 
@@ -428,11 +403,7 @@ export class ResourceBridge {
         'Cache-Control': 'no-store',
         'Accept-Ranges': 'bytes',
       });
-      if (req.method === 'HEAD') {
-        res.end();
-      } else {
-        res.end(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
-      }
+      sendBody(req, res, bytes);
       return;
     }
 
@@ -445,12 +416,7 @@ export class ResourceBridge {
       'Cache-Control': 'no-store',
       'Accept-Ranges': 'bytes',
     });
-    if (req.method === 'HEAD') {
-      res.end();
-    } else {
-      const slice = bytes.subarray(start, end + 1);
-      res.end(Buffer.from(slice.buffer, slice.byteOffset, slice.byteLength));
-    }
+    sendBody(req, res, bytes.subarray(start, end + 1));
   }
 
   /**
@@ -642,6 +608,19 @@ const MIME_TYPES: Record<string, string> = {
   js:   'application/javascript; charset=utf-8',
   xml:  'application/xml; charset=utf-8',
 };
+
+/** Write body or end empty for HEAD requests. */
+function sendBody(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  bytes: Uint8Array,
+): void {
+  if (req.method === 'HEAD') {
+    res.end();
+  } else {
+    res.end(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+  }
+}
 
 function guessMimeType(path: string): string {
   const dot = path.lastIndexOf('.');

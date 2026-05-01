@@ -1,4 +1,5 @@
 import { logger } from '../util/logger';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * One row from Obsidian's community-plugins master list at
@@ -142,7 +143,7 @@ export class PluginMarketplaceInstaller {
       const list = await this.fetchMasterList();
       masterMap = new Map(list.map(e => [e.id, e]));
     } catch (e) {
-      const reason = `master list fetch failed: ${(e as Error).message}`;
+      const reason = `master list fetch failed: ${errorMessage(e)}`;
       logger.warn(`PluginMarketplaceInstaller: ${reason}`);
       return {
         installed: [],
@@ -176,7 +177,7 @@ export class PluginMarketplaceInstaller {
         await this.deps.pluginApi.enablePluginAndSave(id);
         installed.push(id);
       } catch (e) {
-        failed.push({ id, reason: (e as Error).message });
+        failed.push({ id, reason: errorMessage(e) });
       }
     }
 
@@ -191,7 +192,7 @@ export class PluginMarketplaceInstaller {
     try {
       parsed = JSON.parse(body);
     } catch (e) {
-      throw new Error(`master list JSON parse: ${(e as Error).message}`);
+      throw new Error(`master list JSON parse: ${errorMessage(e)}`);
     }
     if (!Array.isArray(parsed)) {
       throw new Error('master list is not a JSON array');
@@ -210,7 +211,7 @@ export class PluginMarketplaceInstaller {
     try {
       parsed = JSON.parse(body);
     } catch (e) {
-      throw new Error(`manifest JSON parse for ${repo}: ${(e as Error).message}`);
+      throw new Error(`manifest JSON parse for ${repo}: ${errorMessage(e)}`);
     }
     if (!parsed || typeof parsed !== 'object') {
       throw new Error(`manifest for ${repo} is not an object`);

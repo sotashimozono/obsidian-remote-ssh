@@ -5,6 +5,7 @@ import type { PluginSettings, PendingPluginSuggestion } from '../types';
 import { logger } from '../util/logger';
 import { PendingPluginsModal } from '../ui/PendingPluginsModal';
 import { PluginMarketplaceInstaller, type PluginsApi } from './PluginMarketplaceInstaller';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * Owns the plugin-install half of shadow-vault startup:
@@ -144,7 +145,7 @@ export class ShadowStartupCoordinator {
       if (!Array.isArray(parsed)) return;
       wantedIds = (parsed as unknown[]).filter((s): s is string => typeof s === 'string');
     } catch (e) {
-      logger.warn(`installMissingShadowPlugins: failed to parse ${cpPath}: ${(e as Error).message}`);
+      logger.warn(`installMissingShadowPlugins: failed to parse ${cpPath}: ${errorMessage(e)}`);
       return;
     }
 
@@ -211,7 +212,7 @@ export class ShadowStartupCoordinator {
         fs.writeFileSync(dataPath, JSON.stringify(s.sourceData, null, 2) + '\n', 'utf-8');
         written++;
       } catch (e) {
-        logger.warn(`copyPluginConfigsForInstalled: failed for ${s.id}: ${(e as Error).message}`);
+        logger.warn(`copyPluginConfigsForInstalled: failed for ${s.id}: ${errorMessage(e)}`);
       }
     }
     logger.info(`copyPluginConfigsForInstalled: wrote ${written} data.json file(s)`);
