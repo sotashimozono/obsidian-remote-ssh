@@ -3,6 +3,7 @@ import * as path from 'path';
 import { logger } from '../util/logger';
 import type { SshProfile, PendingPluginSuggestion } from '../types';
 import type { ObsidianRegistry } from './ObsidianRegistry';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * Where the shadow vault for a given profile lives on disk.
@@ -185,7 +186,7 @@ export class ShadowVaultBootstrap {
       } catch (e) {
         logger.warn(
           `ShadowVaultBootstrap: failed to parse shadow community-plugins.json ` +
-          `(${(e as Error).message}); rewriting as [remote-ssh]`,
+          `(${errorMessage(e)}); rewriting as [remote-ssh]`,
         );
       }
     }
@@ -217,7 +218,7 @@ export class ShadowVaultBootstrap {
     } catch (e) {
       logger.warn(
         `ShadowVaultBootstrap: failed to parse source community-plugins.json ` +
-        `(${(e as Error).message}); no suggestions will be offered`,
+        `(${errorMessage(e)}); no suggestions will be offered`,
       );
       return [];
     }
@@ -232,7 +233,7 @@ export class ShadowVaultBootstrap {
         } catch (e) {
           logger.warn(
             `ShadowVaultBootstrap: failed to parse source data.json for ${id} ` +
-            `(${(e as Error).message}); will offer install without config inheritance`,
+            `(${errorMessage(e)}); will offer install without config inheritance`,
           );
         }
       }
@@ -277,7 +278,7 @@ export class ShadowVaultBootstrap {
         }
       } catch (e) {
         logger.warn(
-          `ShadowVaultBootstrap: failed to parse ${candidate} (${(e as Error).message}); ` +
+          `ShadowVaultBootstrap: failed to parse ${candidate} (${errorMessage(e)}); ` +
           'continuing without it',
         );
       }
@@ -333,7 +334,7 @@ export class ShadowVaultBootstrap {
       if (useSymlink) {
         try { fs.symlinkSync(src, dst, 'file'); continue; }
         catch (e) {
-          logger.warn(`ShadowVaultBootstrap: file symlink failed (${(e as Error).message}); falling back to copy`);
+          logger.warn(`ShadowVaultBootstrap: file symlink failed (${errorMessage(e)}); falling back to copy`);
           useSymlink = false;
         }
       }
@@ -357,7 +358,7 @@ export class ShadowVaultBootstrap {
           fs.symlinkSync(src, dst, linkType);
           continue;
         } catch (e) {
-          logger.warn(`ShadowVaultBootstrap: dir symlink failed (${(e as Error).message}); falling back to copy`);
+          logger.warn(`ShadowVaultBootstrap: dir symlink failed (${errorMessage(e)}); falling back to copy`);
           useSymlink = false;
         }
       }

@@ -2,6 +2,7 @@ import type { Duplex } from 'stream';
 import type { RpcConnection } from './RpcConnection';
 import { establishRpcConnection } from './RpcConnection';
 import { logger } from '../util/logger';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * Narrow slice of SftpClient the probe needs. Same shape used by
@@ -56,7 +57,7 @@ export async function tryReuseExistingDaemon(
   const socketCheck = await ssh.exec(
     `test -S ${shellQuote(socketPath)} && echo OK || echo NO`,
   ).catch((e) => {
-    logger.info(`tryReuseExistingDaemon: socket check exec failed (${(e as Error).message})`);
+    logger.info(`tryReuseExistingDaemon: socket check exec failed (${errorMessage(e)})`);
     return null;
   });
   if (!socketCheck || socketCheck.stdout.trim() !== 'OK') {
@@ -71,7 +72,7 @@ export async function tryReuseExistingDaemon(
     token = buf.toString('utf8').trim();
     if (!token) return null;
   } catch (e) {
-    logger.info(`tryReuseExistingDaemon: token read failed (${(e as Error).message})`);
+    logger.info(`tryReuseExistingDaemon: token read failed (${errorMessage(e)})`);
     return null;
   }
 
@@ -81,7 +82,7 @@ export async function tryReuseExistingDaemon(
     stream = await ssh.openUnixStream(socketPath);
   } catch (e) {
     logger.info(
-      `tryReuseExistingDaemon: openUnixStream failed (${(e as Error).message}) — falling through to deploy`,
+      `tryReuseExistingDaemon: openUnixStream failed (${errorMessage(e)}) — falling through to deploy`,
     );
     return null;
   }
@@ -98,7 +99,7 @@ export async function tryReuseExistingDaemon(
     return conn;
   } catch (e) {
     logger.info(
-      `tryReuseExistingDaemon: handshake failed (${(e as Error).message}) — falling through to deploy`,
+      `tryReuseExistingDaemon: handshake failed (${errorMessage(e)}) — falling through to deploy`,
     );
     // establishRpcConnection closes the rpc on its own failure path,
     // but if the stream was created successfully and the failure

@@ -3,6 +3,7 @@ import type { AddressInfo } from 'net';
 import { randomBytes, timingSafeEqual } from 'crypto';
 import { logger } from '../util/logger';
 import { isPreconditionFailed } from '../proto/rpcError';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * Async fetcher for vault binary content. The bridge calls this with a
@@ -296,7 +297,7 @@ export class ResourceBridge {
       } catch (e) {
         logger.warn(
           `ResourceBridge: thumbnail failed for "${rawPath}" maxDim=${maxDim}: ` +
-          `${(e as Error).message}; falling back to full binary`,
+          `${errorMessage(e)}; falling back to full binary`,
         );
         // fall through to fetchBinary
       }
@@ -380,7 +381,7 @@ export class ResourceBridge {
           // method registered yet).
           logger.warn(
             `ResourceBridge: fs.readBinaryRange failed for "${rawPath}" ` +
-            `${rangeHeaderForFastPath}: ${(e as Error).message}; ` +
+            `${rangeHeaderForFastPath}: ${errorMessage(e)}; ` +
             `falling back to full binary`,
           );
         }
@@ -391,7 +392,7 @@ export class ResourceBridge {
     try {
       bytes = await fetchBinary(rawPath);
     } catch (e) {
-      logger.warn(`ResourceBridge: read failed for "${rawPath}": ${(e as Error).message}`);
+      logger.warn(`ResourceBridge: read failed for "${rawPath}": ${errorMessage(e)}`);
       res.writeHead(404).end();
       return;
     }

@@ -1,6 +1,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import { logger } from '../util/logger';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * The thin slice of SftpClient the deployer relies on. A separate
@@ -258,7 +259,7 @@ export class ServerDeployer {
     }
     throw new Error(
       `ServerDeployer: daemon did not write ${remoteTokenPath} within ${timeoutMs}ms` +
-      (lastErr ? ` (last error: ${(lastErr as Error).message})` : ''),
+      (lastErr ? ` (last error: ${errorMessage(lastErr)})` : ''),
     );
   }
 }

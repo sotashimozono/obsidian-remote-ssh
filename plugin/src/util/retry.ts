@@ -1,5 +1,6 @@
 import { RETRY_BASE_MS, RETRY_MAX_MS, MAX_RETRY } from '../constants';
 import { logger } from './logger';
+import { errorMessage } from "./errorMessage";
 
 // Sleep via `activeWindow.setTimeout` so we honour Obsidian's
 // popout-window scoping rule (`obsidianmd/prefer-active-window-timers`).
@@ -17,7 +18,7 @@ export async function withRetry<T>(
       if (attempt === maxAttempts) throw err;
       const jitter = Math.random() * 500;
       const delay = Math.min(RETRY_BASE_MS * 2 ** (attempt - 1) + jitter, RETRY_MAX_MS);
-      logger.warn(`${label}: attempt ${attempt} failed (${(err as Error).message}), retry in ${Math.round(delay)}ms`);
+      logger.warn(`${label}: attempt ${attempt} failed (${errorMessage(err)}), retry in ${Math.round(delay)}ms`);
       await sleep(delay);
     }
   }

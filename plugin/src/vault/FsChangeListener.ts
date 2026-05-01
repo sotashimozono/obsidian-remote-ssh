@@ -7,6 +7,7 @@ import { interpretWatchEvent } from '../path/WatchEventFilter';
 import { VaultModelBuilder } from './VaultModelBuilder';
 import { logger } from '../util/logger';
 import { perfTracer } from '../util/PerfTracer';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * Owns the daemon-side `fs.watch` subscription and its notification
@@ -77,7 +78,7 @@ export class FsChangeListener {
       this.subscriptionId = result.subscriptionId;
       logger.info(`fs.watch subscribed: ${this.subscriptionId}`);
     } catch (e) {
-      logger.error(`fs.watch failed: ${(e as Error).message}`);
+      logger.error(`fs.watch failed: ${errorMessage(e)}`);
       this.handlerDisposer?.();
       this.handlerDisposer = null;
     }
@@ -129,7 +130,7 @@ export class FsChangeListener {
       // (process restart, connection drop) the call will reject and
       // we just log it.
       rpcConnection.rpc.call('fs.unwatch', { subscriptionId: id })
-        .catch(e => logger.warn(`fs.unwatch failed: ${(e as Error).message}`));
+        .catch(e => logger.warn(`fs.unwatch failed: ${errorMessage(e)}`));
     }
     if (this.handlerDisposer) {
       this.handlerDisposer();
@@ -258,7 +259,7 @@ export class FsChangeListener {
         }
       }
     } catch (e) {
-      logger.warn(`applyChange(${event}) failed for ${oldVaultPath}: ${(e as Error).message}`);
+      logger.warn(`applyChange(${event}) failed for ${oldVaultPath}: ${errorMessage(e)}`);
     } finally {
       perfTracer.end(__t4b, { event, path: oldVaultPath, newPath: newVaultPath });
     }

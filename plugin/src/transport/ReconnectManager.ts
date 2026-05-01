@@ -1,6 +1,7 @@
 import type { BackoffConfig } from './Backoff';
 import { DEFAULT_BACKOFF, nextDelay } from './Backoff';
 import { logger } from '../util/logger';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * Externally-visible status of the reconnect loop. The host (main.ts)
@@ -110,7 +111,7 @@ export class ReconnectManager {
         this.transition({ kind: 'recovered' });
         return this.current;
       } catch (e) {
-        logger.warn(`reconnect attempt ${attempt}/${this.cfg.maxRetries} failed: ${(e as Error).message}`);
+        logger.warn(`reconnect attempt ${attempt}/${this.cfg.maxRetries} failed: ${errorMessage(e)}`);
       }
     }
     this.transition({
@@ -150,7 +151,7 @@ export class ReconnectManager {
     try {
       this.opts.onState(s);
     } catch (e) {
-      logger.warn(`ReconnectManager.onState threw: ${(e as Error).message}`);
+      logger.warn(`ReconnectManager.onState threw: ${errorMessage(e)}`);
     }
   }
 

@@ -3,6 +3,7 @@ import type { WriteStream } from 'fs';
 import * as path from 'path';
 import type { LogLine } from '../types';
 import { redactFields, redactString } from './redact';
+import { errorMessage } from "./errorMessage";
 
 type Level = LogLine['level'];
 export type LogFields = Record<string, unknown>;
@@ -88,7 +89,7 @@ export class Logger {
     try {
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
     } catch (e) {
-      this.fallbackError(`installFileSink mkdir failed: ${(e as Error).message}`);
+      this.fallbackError(`installFileSink mkdir failed: ${errorMessage(e)}`);
       return;
     }
     this.maybeRotateOnOpen();
@@ -203,7 +204,7 @@ export class Logger {
       // the line still lands in the log instead of vanishing.
       text = JSON.stringify({
         ts: obj.ts, level: obj.level, msg: obj.msg,
-        fields: { _serialiseError: (e as Error).message },
+        fields: { _serialiseError: errorMessage(e) },
       }) + '\n';
     }
     try {
@@ -211,7 +212,7 @@ export class Logger {
       this.bytesWritten += Buffer.byteLength(text);
       if (this.bytesWritten >= MAX_LOG_SIZE_BYTES) this.rotateNow();
     } catch (e) {
-      this.fallbackError(`logger writeToFile failed: ${(e as Error).message}`);
+      this.fallbackError(`logger writeToFile failed: ${errorMessage(e)}`);
     }
   }
 
@@ -260,7 +261,7 @@ export class Logger {
         this.fallbackError(`fileSink stream error: ${err.message}`);
       });
     } catch (e) {
-      this.fallbackError(`openSinkStream failed: ${(e as Error).message}`);
+      this.fallbackError(`openSinkStream failed: ${errorMessage(e)}`);
       this.fileSink = null;
     }
   }

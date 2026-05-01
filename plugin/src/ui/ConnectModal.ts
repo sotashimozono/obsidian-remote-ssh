@@ -1,6 +1,7 @@
 import { Modal, App, Notice, Setting } from 'obsidian';
 import type { SshProfile } from '../types';
 import type { AuthResolver } from '../ssh/AuthResolver';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * Step 1 (multi-profile): choose which profile to connect.
@@ -126,7 +127,7 @@ export class ConnectModal extends Modal {
       } catch (e) {
         btn.disabled = false;
         btn.setText('Connect');
-        new Notice(`Connection failed: ${(e as Error).message}`);
+        new Notice(`Connection failed: ${errorMessage(e)}`);
       }
     };
 

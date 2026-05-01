@@ -7,6 +7,7 @@ import { AuthResolver } from './AuthResolver';
 import { HostKeyStore, type HostKeyMismatchHandler } from './HostKeyStore';
 import { createJumpTunnel } from './JumpHostTunnel';
 import { logger } from '../util/logger';
+import { asError, errorMessage } from '../util/errorMessage';
 
 export type CloseListener = (info: { unexpected: boolean }) => void;
 
@@ -40,17 +41,6 @@ type SftpEncoding =
   | 'ucs2' | 'ucs-2' | 'base64' | 'base64url' | 'latin1'
   | 'binary' | 'hex';
 
-/**
- * Coerce an unknown error-shaped value into an `Error` so we never
- * reject a Promise with a non-Error reason. The
- * `obsidianmd/rule-custom-message` (`prefer-promise-reject-errors`)
- * lint rule requires every `reject(...)` to receive an `Error`; ssh2
- * callbacks already pass `Error | undefined`, but the lint rule can't
- * see through the callback type, so we centralise the coercion.
- */
-function asError(e: unknown): Error {
-  return e instanceof Error ? e : new Error(String(e));
-}
 
 export interface RemoteEntryWithRel extends RemoteEntry {
   /** Path relative to the listRecursive root (no leading slash). */
@@ -92,7 +82,7 @@ export function wireKeyboardInteractiveHandler(
       },
       (err: unknown) => {
         logger.warn(
-          `SftpClient: keyboard-interactive handler threw: ${asError(err).message}; failing auth`,
+          `SftpClient: keyboard-interactive handler threw: ${errorMessage(err)}; failing auth`,
         );
         finish([]);
       },
@@ -212,7 +202,7 @@ export class SftpClient {
           logger.warn(`SftpClient: connection closed (${profile.host})`);
           const unexpected = !this.intentionalDisconnect;
           for (const cb of [...this.closeListeners]) {
-            try { cb({ unexpected }); } catch (e) { logger.warn(`onClose listener threw: ${(e as Error).message}`); }
+            try { cb({ unexpected }); } catch (e) { logger.warn(`onClose listener threw: ${errorMessage(e)}`); }
           }
         }
       });
@@ -245,7 +235,7 @@ export class SftpClient {
               // is a defence-in-depth path for impossible failures.
               logger.warn(
                 `SftpClient: hostVerifier rejected unexpectedly for ` +
-                `${profile.host}:${profile.port}: ${asError(e).message}`,
+                `${profile.host}:${profile.port}: ${errorMessage(e)}`,
               );
               verify(false);
             });
@@ -361,7 +351,7 @@ export class SftpClient {
     this.profile = null;
     this.remoteHome = null;
     if (client) {
-      try { client.end(); } catch (e) { logger.warn(`SftpClient.disconnect: ${(e as Error).message}`); }
+      try { client.end(); } catch (e) { logger.warn(`SftpClient.disconnect: ${errorMessage(e)}`); }
     }
     return Promise.resolve();
   }
@@ -447,7 +437,7 @@ export class SftpClient {
       try {
         entries = await this.list(dir);
       } catch (e) {
-        logger.warn(`listRecursive: cannot readdir "${dir}": ${(e as Error).message}`);
+        logger.warn(`listRecursive: cannot readdir "${dir}": ${errorMessage(e)}`);
         continue;
       }
       for (const entry of entries) {
@@ -547,7 +537,7 @@ export class SftpClient {
       throw new Error(`mkdir: "${remotePath}" exists and is not a directory`);
     } catch (e) {
       // Treat any stat failure as "path is not there yet" and try to create it.
-      if ((e as Error).message?.startsWith('mkdir: ')) throw e;
+      if (errorMessage(e)?.startsWith('mkdir: ')) throw e;
     }
     return new Promise((resolve, reject) => {
       sftp.mkdir(remotePath, err => {

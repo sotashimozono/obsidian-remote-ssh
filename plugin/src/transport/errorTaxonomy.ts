@@ -1,3 +1,5 @@
+import { asError } from '../util/errorMessage';
+
 // Phase D-γ — error taxonomy (F18).
 //
 // Classifies arbitrary thrown errors (RpcError from the daemon,
@@ -67,7 +69,7 @@ export interface ClassifiedError {
  * user *something*.
  */
 export function classifyError(err: unknown): ClassifiedError {
-  const original = toError(err);
+  const original = asError(err);
 
   if (err instanceof RpcError) {
     return classifyRpcError(err);
@@ -279,10 +281,6 @@ function mapSyscallCode(code: string): { category: ErrorCategory; title: string;
   return null;
 }
 
-function toError(err: unknown): Error {
-  if (err instanceof Error) return err;
-  return new Error(String(err));
-}
 
 function readMaybeString(o: unknown, key: string): string | undefined {
   if (!o || typeof o !== 'object') return undefined;

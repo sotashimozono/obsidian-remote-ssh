@@ -4,6 +4,7 @@ import type { SshProfile } from '../types';
 import type { SecretStore } from './SecretStore';
 import { logger } from '../util/logger';
 import { expandHome } from '../util/pathUtils';
+import { errorMessage } from "../util/errorMessage";
 
 export class AuthResolver {
   // In-session secrets (e.g. password typed in ConnectModal but not yet persisted)
@@ -55,7 +56,7 @@ export class AuthResolver {
         try {
           privateKey = fs.readFileSync(keyPath);
         } catch (e) {
-          throw new Error(`Cannot read private key at "${keyPath}": ${(e as Error).message}`);
+          throw new Error(`Cannot read private key at "${keyPath}": ${errorMessage(e)}`);
         }
         const passphrase = profile.passphraseRef
           ? this.getSecret(profile.passphraseRef)

@@ -1,6 +1,7 @@
 import type { TAbstractFile, TFile, TFolder, Vault } from 'obsidian';
 import { logger } from '../util/logger';
 import { perfTracer } from '../util/PerfTracer';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * One entry the builder needs in order to materialise a TFile or
@@ -128,7 +129,7 @@ export class VaultModelBuilder {
           result.filesAdded++;
         }
       } catch (e) {
-        result.errors.push({ path: entry.path, message: (e as Error).message });
+        result.errors.push({ path: entry.path, message: errorMessage(e) });
       }
     }
 

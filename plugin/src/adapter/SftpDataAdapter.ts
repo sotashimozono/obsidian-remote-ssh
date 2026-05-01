@@ -32,6 +32,7 @@ import type { OfflineQueue, QueuedOp } from '../offline/OfflineQueue';
 import { logger } from '../util/logger';
 import { perfTracer } from '../util/PerfTracer';
 import { isPreconditionFailed } from '../proto/rpcError';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * Inputs to a 3-way conflict prompt. The adapter assembles these
@@ -669,7 +670,7 @@ export class SftpDataAdapter {
           return { result: 'ok' };
       }
     } catch (e) {
-      const msg = (e as Error).message;
+      const msg = errorMessage(e);
       // The 3-way merge path's `cancel` and `keep-theirs` branches
       // rethrow the original PreconditionFailed; treat that as a
       // user-driven decision rather than an error so the queue can
@@ -780,7 +781,7 @@ export class SftpDataAdapter {
       const s = await this.client.stat(remote);
       mtime = s.mtime;
     } catch (e) {
-      logger.warn(`stat-after-read failed for "${remote}": ${(e as Error).message}`);
+      logger.warn(`stat-after-read failed for "${remote}": ${errorMessage(e)}`);
     }
     this.readCache.put(remote, data, mtime);
     return data;
@@ -844,7 +845,7 @@ export class SftpDataAdapter {
       const s = await this.client.stat(remote);
       mtime = s.mtime;
     } catch (e) {
-      logger.warn(`stat-after-write failed for "${remote}": ${(e as Error).message}`);
+      logger.warn(`stat-after-write failed for "${remote}": ${errorMessage(e)}`);
     }
     this.readCache.put(remote, writtenData, mtime);
     this.dirCache.invalidate(parent);
@@ -877,7 +878,7 @@ export class SftpDataAdapter {
           theirsBuf = await this.client.readBinary(remote);
         } catch (re) {
           logger.warn(
-            `resolveWriteConflict: re-read of "${remote}" failed (${(re as Error).message}); ` +
+            `resolveWriteConflict: re-read of "${remote}" failed (${errorMessage(re)}); ` +
             'falling back to the two-choice modal',
           );
           return await this.fallbackTwoChoice(normalizedPath, mine, originalError);

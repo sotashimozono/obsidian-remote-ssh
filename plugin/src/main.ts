@@ -47,6 +47,7 @@ import * as os from 'os';
 import { ObservabilityInstaller } from './util/ObservabilityInstaller';
 import { normalizeRemotePath } from './util/pathUtils';
 import * as path from 'path';
+import { errorMessage } from "./util/errorMessage";
 
 const PATCHED_METHODS = [
   // read-side
@@ -445,7 +446,7 @@ export default class RemoteSshPlugin extends Plugin {
     try {
       summary = await this.populateVaultFromRemote(`shadow-${tag}`);
     } catch (e) {
-      const msg = (e as Error).message;
+      const msg = errorMessage(e);
       logger.error(`runAutoConnect(${tag}): populate failed: ${msg}`);
       new Notice(`Remote SSH: connected but failed to populate vault — ${msg}`);
       return;
@@ -743,12 +744,12 @@ export default class RemoteSshPlugin extends Plugin {
     // sees a clean disconnect rather than a half-open socket.
     if (this.rpcConnection) {
       try { this.rpcConnection.close(); }
-      catch (e) { logger.warn(`rpcConnection.close: ${(e as Error).message}`); }
+      catch (e) { logger.warn(`rpcConnection.close: ${errorMessage(e)}`); }
       this.rpcConnection = null;
     }
     if (this.daemonDeployer && this.client?.isAlive()) {
       try { await this.daemonDeployer.stop(); }
-      catch (e) { logger.warn(`daemon stop: ${(e as Error).message}`); }
+      catch (e) { logger.warn(`daemon stop: ${errorMessage(e)}`); }
     }
     this.daemonDeployer = null;
 
@@ -756,7 +757,7 @@ export default class RemoteSshPlugin extends Plugin {
       try {
         await this.client.disconnect();
       } catch (e) {
-        logger.warn(`disconnect: ${(e as Error).message}`);
+        logger.warn(`disconnect: ${errorMessage(e)}`);
       }
     }
     this.setState(SyncState.IDLE);
@@ -844,7 +845,7 @@ export default class RemoteSshPlugin extends Plugin {
         logger.info('ResourceBridge: range fast path enabled (daemon supports fs.readBinaryRange)');
       }
     } catch (e) {
-      logger.warn(`ResourceBridge: start failed: ${(e as Error).message}`);
+      logger.warn(`ResourceBridge: start failed: ${errorMessage(e)}`);
       this.resourceBridge = null;
     }
 
@@ -881,7 +882,7 @@ export default class RemoteSshPlugin extends Plugin {
         const queue = this.offlineQueue;
         this.pendingEditsBar?.startPolling(() => queue.pending().length);
       } catch (e) {
-        logger.warn(`OfflineQueue: open failed (${(e as Error).message}); offline writes will throw`);
+        logger.warn(`OfflineQueue: open failed (${errorMessage(e)}); offline writes will throw`);
         this.offlineQueue = null;
       }
     }
@@ -910,7 +911,7 @@ export default class RemoteSshPlugin extends Plugin {
       this.patcher.patch(PATCHED_METHODS);
       logger.info(`Adapter patched via ${transportLabel}: [${PATCHED_METHODS.join(', ')}]`);
     } catch (e) {
-      logger.error(`Adapter patch failed: ${(e as Error).message}`);
+      logger.error(`Adapter patch failed: ${errorMessage(e)}`);
       this.patcher = null;
       this.dataAdapter = null;
       this.readCache = null;
@@ -1048,7 +1049,7 @@ export default class RemoteSshPlugin extends Plugin {
         `registry id=${result.registryId} (${reg}), plugin=${how}`,
       );
     } catch (e) {
-      const msg = (e as Error).message;
+      const msg = errorMessage(e);
       logger.error(`openShadowVaultFor: ${msg}`);
       new Notice(`Remote SSH: shadow vault failed — ${msg}`);
     }
@@ -1097,7 +1098,7 @@ export default class RemoteSshPlugin extends Plugin {
         this.patcher!.restore();
         logger.info('Adapter restored');
       } catch (e) {
-        logger.error(`Adapter restore failed: ${(e as Error).message}`);
+        logger.error(`Adapter restore failed: ${errorMessage(e)}`);
       }
     }
     this.patcher = null;
@@ -1148,7 +1149,7 @@ export default class RemoteSshPlugin extends Plugin {
         await this.offlineQueue.clear();
         new Notice(`Remote SSH: discarded ${dropped} pending edit${dropped === 1 ? '' : 's'}`);
       } catch (e) {
-        logger.warn(`PendingEditsModal: queue.clear() failed: ${(e as Error).message}`);
+        logger.warn(`PendingEditsModal: queue.clear() failed: ${errorMessage(e)}`);
         new Notice('Remote SSH: failed to clear the offline queue (see console.log)');
       }
     }
@@ -1188,7 +1189,7 @@ export default class RemoteSshPlugin extends Plugin {
         );
       }
     } catch (e) {
-      logger.warn(`replayOfflineQueue(${label}) crashed: ${(e as Error).message}`);
+      logger.warn(`replayOfflineQueue(${label}) crashed: ${errorMessage(e)}`);
     }
   }
 
@@ -1270,7 +1271,7 @@ export default class RemoteSshPlugin extends Plugin {
     try {
       await bridge.stop();
     } catch (e) {
-      logger.warn(`ResourceBridge: stop failed: ${(e as Error).message}`);
+      logger.warn(`ResourceBridge: stop failed: ${errorMessage(e)}`);
     }
   }
 
@@ -1283,8 +1284,8 @@ export default class RemoteSshPlugin extends Plugin {
       logger.info(`  folders (first 5): ${out.folders.slice(0, 5).join(', ')}`);
       new Notice(`List via ${via}: ${out.files.length} files, ${out.folders.length} folders (see console.log)`);
     } catch (e) {
-      logger.error(`debugListRoot failed: ${(e as Error).message}`);
-      new Notice(`debugListRoot failed: ${(e as Error).message}`);
+      logger.error(`debugListRoot failed: ${errorMessage(e)}`);
+      new Notice(`debugListRoot failed: ${errorMessage(e)}`);
     }
   }
 
@@ -1359,7 +1360,7 @@ export default class RemoteSshPlugin extends Plugin {
         `(see console.log)`,
       );
     } catch (e) {
-      const msg = (e as Error).message;
+      const msg = errorMessage(e);
       logger.error(`debugTestRpcTunnel failed: ${msg}`);
       new Notice(`RPC test failed: ${msg}`);
     } finally {

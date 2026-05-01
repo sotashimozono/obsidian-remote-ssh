@@ -7,6 +7,7 @@ import type { AuthResolver } from './AuthResolver';
 import type { HostKeyMismatchHandler, HostKeyStore } from './HostKeyStore';
 import { expandHome } from '../util/pathUtils';
 import { logger } from '../util/logger';
+import { errorMessage } from "../util/errorMessage";
 
 /**
  * Optional knobs for `createJumpTunnel`. Most callers leave them at
@@ -85,7 +86,7 @@ export async function createJumpTunnel(
           // defence-in-depth path for impossible failures.
           logger.warn(
             `Jump host hostVerifier rejected unexpectedly for ` +
-            `${jump.host}:${jump.port}: ${(e as Error).message}`,
+            `${jump.host}:${jump.port}: ${errorMessage(e)}`,
           );
           verify(false);
         });
@@ -170,7 +171,7 @@ function buildJumpAuthConfig(
         privateKey = fs.readFileSync(keyPath);
       } catch (e) {
         throw new Error(
-          `Cannot read jump host private key at "${keyPath}": ${(e as Error).message}`,
+          `Cannot read jump host private key at "${keyPath}": ${errorMessage(e)}`,
         );
       }
       logger.info(`Jump host auth: using private key ${keyPath}`);
