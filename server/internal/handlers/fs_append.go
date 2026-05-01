@@ -38,7 +38,7 @@ func FsAppend(vaultRoot string) rpc.Handler {
 
 // appendToFile is shared by fs.append and fs.appendBinary.
 func appendToFile(abs, relativePath string, data []byte) (int64, *rpc.Error) {
-	f, err := os.OpenFile(abs, os.O_WRONLY|os.O_APPEND|os.O_CREATE, writeFilePerm)
+	f, err := os.OpenFile(abs, os.O_WRONLY|os.O_APPEND|os.O_CREATE, writeFilePerm) // #nosec G304 — abs validated by resolveOrErr → vaultfs.Resolve
 	if err != nil {
 		// ENOENT on the parent dir surfaces here; let the caller decide
 		// whether to create it (we don't, to keep append cheap — the

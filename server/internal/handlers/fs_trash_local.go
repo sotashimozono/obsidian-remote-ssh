@@ -42,7 +42,7 @@ func FsTrashLocal(vaultRoot string) rpc.Handler {
 			return nil, rpc.ErrPathOutsideVault(trashRel)
 		}
 
-		if err := os.MkdirAll(filepath.Dir(dstAbs), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dstAbs), 0o755); err != nil { // #nosec G301 — vault .trash dir; path validated by vaultfs.Resolve
 			return nil, mapFsError(err, trashRel)
 		}
 		if err := os.Rename(srcAbs, dstAbs); err != nil {

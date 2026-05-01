@@ -174,7 +174,7 @@ func atomicWriteFile(abs, relativePath string, data []byte, expectedMtime int64)
 	}
 
 	parent := filepath.Dir(abs)
-	if err := os.MkdirAll(parent, 0o755); err != nil {
+	if err := os.MkdirAll(parent, 0o755); err != nil { // #nosec G301 — vault dir; 0755 intentional for Obsidian compat
 		return 0, false, mapFsError(err, relativePath)
 	}
 
