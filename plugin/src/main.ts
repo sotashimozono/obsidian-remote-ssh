@@ -293,6 +293,11 @@ export default class RemoteSshPlugin extends Plugin {
     }
   }
 
+  /** Expose auth deps for the ProfileForm's Browse button. */
+  getProfileFormDeps() {
+    return { authResolver: this.authResolver, hostKeyStore: this.hostKeyStore };
+  }
+
   async saveSettings() {
     await this.saveData({
       ...this.settings,

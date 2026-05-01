@@ -1,8 +1,16 @@
 import { Modal, App, Setting, Notice } from 'obsidian';
 import type { SshProfile, AuthMethod, RemoteTransport } from '../types';
+import type { AuthResolver } from '../ssh/AuthResolver';
+import type { HostKeyStore } from '../ssh/HostKeyStore';
 import { DEFAULT_PROFILE } from '../constants';
 import { readSshConfig, type SshConfigEntry } from '../ssh/SshConfigReader';
+import { RemotePathBrowserModal } from '../ui/RemotePathBrowserModal';
 import * as crypto from 'crypto';
+
+export interface ProfileFormDeps {
+  authResolver: AuthResolver;
+  hostKeyStore: HostKeyStore;
+}
 
 export class ProfileForm extends Modal {
   private profile: SshProfile;
@@ -12,6 +20,7 @@ export class ProfileForm extends Modal {
     app: App,
     profile: SshProfile | null,
     private onSave: (profile: SshProfile) => void,
+    private deps?: ProfileFormDeps,
   ) {
     super(app);
     this.isNew = profile === null;
@@ -96,11 +105,33 @@ export class ProfileForm extends Modal {
 
     contentEl.createEl('h3', { text: 'Remote vault' });
 
-    new Setting(contentEl)
+    const pathSetting = new Setting(contentEl)
       .setName('Remote vault path')
       .setDesc('Absolute path on the SSH server, e.g. `/home/user/vault`, or home-relative `work/vault`.')
       .addText(t => t.setPlaceholder('/home/user/vault').setValue(this.profile.remotePath)
         .onChange(v => { this.profile.remotePath = v; }));
+
+    if (this.deps) {
+      const deps = this.deps;
+      pathSetting.addButton(btn => btn
+        .setButtonText('Browse…')
+        .onClick(() => {
+          if (!this.profile.host || !this.profile.username) {
+            new Notice('Fill in host and username first');
+            return;
+          }
+          new RemotePathBrowserModal(
+            this.app,
+            this.profile,
+            deps.authResolver,
+            deps.hostKeyStore,
+            (selectedPath) => {
+              this.profile.remotePath = selectedPath;
+              this.renderBody();
+            },
+          ).open();
+        }));
+    }
 
     contentEl.createEl('h3', { text: 'Transport' });
     contentEl.createEl('p', {
