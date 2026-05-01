@@ -64,7 +64,7 @@ func Key(path string, mtime int64, maxDim int) string {
 	h := sha256.New()
 	h.Write([]byte(path))
 	_ = binary.Write(h, binary.BigEndian, mtime)
-	_ = binary.Write(h, binary.BigEndian, int32(maxDim))
+	_ = binary.Write(h, binary.BigEndian, int32(maxDim)) // #nosec G115 — maxDim bounded by protocol validation (image pixel dims)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -111,7 +111,7 @@ func New(dir string, maxBytes int64) (*DiskCache, error) {
 func (c *DiskCache) Get(key string) ([]byte, Format, error) {
 	for _, f := range []Format{FormatJPEG, FormatPNG} {
 		path := filepath.Join(c.dir, key+extFor(f))
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) // #nosec G304 — path built from SHA-256 hash key, no user control
 		if err == nil {
 			// Touch mtime so this entry slides to the back of the LRU
 			// queue. Failure here is non-fatal — a stale mtime just

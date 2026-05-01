@@ -37,7 +37,7 @@ func FsReadBinary(vaultRoot string) rpc.Handler {
 			return nil, rpc.ErrIsADirectory(p.Path)
 		}
 
-		data, err := os.ReadFile(abs)
+		data, err := os.ReadFile(abs) // #nosec G304 — abs validated by resolveOrErr → vaultfs.Resolve
 		if err != nil {
 			return nil, mapFsError(err, p.Path)
 		}
@@ -113,7 +113,7 @@ func FsReadBinaryRange(vaultRoot string) rpc.Handler {
 
 		buf := make([]byte, readLen)
 		if readLen > 0 {
-			f, err := os.Open(abs)
+			f, err := os.Open(abs) // #nosec G304 — abs validated by resolveOrErr → vaultfs.Resolve
 			if err != nil {
 				return nil, mapFsError(err, p.Path)
 			}

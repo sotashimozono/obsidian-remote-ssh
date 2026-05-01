@@ -42,7 +42,7 @@ func FsReadText(vaultRoot string) rpc.Handler {
 			return nil, rpc.ErrIsADirectory(p.Path)
 		}
 
-		data, err := os.ReadFile(abs)
+		data, err := os.ReadFile(abs) // #nosec G304 — abs validated by resolveOrErr → vaultfs.Resolve
 		if err != nil {
 			return nil, mapFsError(err, p.Path)
 		}

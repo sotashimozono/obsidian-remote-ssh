@@ -43,7 +43,7 @@ func FsCopy(vaultRoot string, onModify func(relPath string)) rpc.Handler {
 		if info.IsDir() {
 			return nil, rpc.ErrIsADirectory(p.SrcPath)
 		}
-		data, err := os.ReadFile(srcAbs)
+		data, err := os.ReadFile(srcAbs) // #nosec G304 — srcAbs validated by resolveOrErr → vaultfs.Resolve
 		if err != nil {
 			return nil, mapFsError(err, p.SrcPath)
 		}

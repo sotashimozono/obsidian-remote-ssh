@@ -77,7 +77,7 @@ func WriteFile(path string, t Token) error {
 
 // ReadFile loads a token previously written by WriteFile.
 func ReadFile(path string) (Token, error) {
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G304 — daemon-controlled path, not user input
 	if err != nil {
 		return "", fmt.Errorf("auth: read %q: %w", path, err)
 	}

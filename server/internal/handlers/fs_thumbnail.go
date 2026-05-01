@@ -98,7 +98,7 @@ func FsThumbnail(vaultRoot string, cache *thumbnails.DiskCache) rpc.Handler {
 			}
 		}
 
-		f, err := os.Open(abs)
+		f, err := os.Open(abs) // #nosec G304 — abs validated by resolveOrErr → vaultfs.Resolve
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil, rpc.ErrFileNotFound(p.Path)

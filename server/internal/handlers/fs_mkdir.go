@@ -29,11 +29,11 @@ func FsMkdir(vaultRoot string) rpc.Handler {
 			return nil, e
 		}
 		if p.Recursive {
-			if err := os.MkdirAll(abs, 0o755); err != nil {
+			if err := os.MkdirAll(abs, 0o755); err != nil { // #nosec G301 — vault dir; 0755 matches Obsidian defaults
 				return nil, mapFsError(err, p.Path)
 			}
 		} else {
-			if err := os.Mkdir(abs, 0o755); err != nil {
+			if err := os.Mkdir(abs, 0o755); err != nil { // #nosec G301 — vault dir; 0755 matches Obsidian defaults
 				// An existing directory is fine; a regular file at the
 				// same path is a conflict (Exists).
 				if errors.Is(err, fs.ErrExist) {

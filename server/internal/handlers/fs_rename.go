@@ -34,7 +34,7 @@ func FsRename(vaultRoot string, cor *correlator.Correlator) rpc.Handler {
 		if e != nil {
 			return nil, e
 		}
-		if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil { // #nosec G301 — vault dir; 0755 matches Obsidian defaults
 			return nil, mapFsError(err, p.NewPath)
 		}
 		registerCidIfPresent(ctx, cor, p.OldPath, p.NewPath)
