@@ -148,3 +148,17 @@ const envEnabled =
   process.env.REMOTE_SSH_PERF === '1';
 
 export const perfTracer = new PerfTracer(envEnabled);
+
+/** Wrap an async operation with a perf trace span. */
+export async function withPerfTrace<T>(
+  label: string,
+  meta: Record<string, unknown>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const ctx = perfTracer.begin(label);
+  try {
+    return await fn();
+  } finally {
+    perfTracer.end(ctx, meta);
+  }
+}
