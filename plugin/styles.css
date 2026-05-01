@@ -182,3 +182,48 @@
   background-color: rgba(239, 68, 68, 0.18);
   text-decoration: line-through;
 }
+
+/* ─── Daemon log panel (settings tab) ───────────────────────────────── */
+
+.remote-ssh-log-pre {
+  max-height: 300px;
+  overflow: auto;
+  font-family: var(--font-monospace);
+  font-size: 0.75em;
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding: 0.5em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+}
+
+/* ─── Remote path browser modal ─────────────────────────────────────── */
+
+.remote-ssh-breadcrumb {
+  margin-bottom: 0.5em;
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+}
+
+.remote-ssh-breadcrumb-segment {
+  cursor: pointer;
+  color: var(--text-accent);
+}
+.remote-ssh-breadcrumb-segment:hover {
+  text-decoration: underline;
+}
+
+.remote-ssh-dir-list {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-bottom: 1em;
+}
+
+.remote-ssh-dir-item {
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.remote-ssh-dir-item:hover {
+  background: var(--background-modifier-hover);
+}

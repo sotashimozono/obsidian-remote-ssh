@@ -298,6 +298,44 @@ export default class RemoteSshPlugin extends Plugin {
     return { authResolver: this.authResolver, hostKeyStore: this.hostKeyStore };
   }
 
+  /** Daemon status for the settings panel. */
+  getDaemonStatus(): { status: 'running' | 'down' | 'none'; version?: string; capabilities?: number } {
+    if (!this.conn.rpcConnection) return { status: 'none' };
+    try {
+      const info = this.conn.rpcConnection.info;
+      return { status: 'running', version: info.version, capabilities: info.capabilities.length };
+    } catch {
+      return { status: 'down' };
+    }
+  }
+
+  /** Read the last N lines of the daemon log from the remote. */
+  async readDaemonLog(lines = 50): Promise<string> {
+    if (!this.conn.isAlive()) throw new Error('Not connected');
+    const r = await this.conn.client.exec(`tail -n ${lines} ~/.obsidian-remote/server.log 2>/dev/null || echo '(no log file)'`);
+    return r.stdout;
+  }
+
+  /** Restart the daemon: stop existing + redeploy. */
+  async restartDaemon(): Promise<void> {
+    const profile = this.conn.activeProfile;
+    const basePath = this.conn.activeRemoteBasePath;
+    if (!profile || !basePath) throw new Error('No active profile');
+    if (this.conn.daemonDeployer && this.conn.isAlive()) {
+      try { await this.conn.daemonDeployer.stop(); } catch { /* best effort */ }
+    }
+    if (this.conn.rpcConnection) {
+      try { this.conn.rpcConnection.close(); } catch { /* already dead */ }
+      this.conn.rpcConnection = null;
+    }
+    this.conn.daemonDeployer = null;
+    await this.conn.startRpcSession(profile, basePath);
+    // Rebind adapter to the fresh RPC client
+    if (this.dataAdapter) {
+      this.dataAdapter.swapClient(this.conn.buildFsClient());
+    }
+  }
+
   async saveSettings() {
     await this.saveData({
       ...this.settings,

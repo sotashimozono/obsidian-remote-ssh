@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting } from 'obsidian';
+import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
 import type RemoteSshPlugin from '../main';
 import { ProfileForm } from './ProfileForm';
 import type { SshProfile } from '../types';
@@ -77,6 +77,8 @@ export class SettingsTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
+    this.renderDaemonPanel(containerEl);
+
     new Setting(containerEl).setName("Advanced").setHeading();
 
     new Setting(containerEl)
@@ -102,6 +104,55 @@ export class SettingsTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }
         }));
+  }
+
+  private renderDaemonPanel(containerEl: HTMLElement) {
+    const status = this.plugin.getDaemonStatus();
+    if (status.status === 'none') return;
+
+    new Setting(containerEl).setName('Daemon').setHeading();
+
+    const badge = status.status === 'running' ? '🟢 Running' : '🔴 Down';
+    const desc = status.status === 'running'
+      ? `v${status.version}, ${status.capabilities} capabilities`
+      : 'RPC connection lost';
+
+    new Setting(containerEl)
+      .setName(badge)
+      .setDesc(desc)
+      .addButton(btn => btn
+        .setButtonText('Restart')
+        .setWarning()
+        .onClick(async () => {
+          btn.setDisabled(true);
+          btn.setButtonText('Restarting…');
+          try {
+            await this.plugin.restartDaemon();
+            new Notice('Remote SSH: daemon restarted');
+          } catch (e) {
+            new Notice(`Restart failed: ${(e as Error).message}`);
+          }
+          this.display();
+        }))
+      .addButton(btn => btn
+        .setButtonText('View log')
+        .onClick(async () => {
+          try {
+            const log = await this.plugin.readDaemonLog();
+            this.renderLogTail(containerEl, log);
+          } catch (e) {
+            new Notice(`Failed to read log: ${(e as Error).message}`);
+          }
+        }));
+  }
+
+  private renderLogTail(containerEl: HTMLElement, log: string) {
+    containerEl.querySelector('.remote-ssh-daemon-log')?.remove();
+
+    const panel = containerEl.createDiv({ cls: 'remote-ssh-daemon-log' });
+    new Setting(panel).setName('Daemon log (last 50 lines)').setHeading();
+    const pre = panel.createEl('pre', { cls: 'remote-ssh-log-pre' });
+    pre.textContent = log;
   }
 
   private renderProfileRow(containerEl: HTMLElement, profile: SshProfile) {
