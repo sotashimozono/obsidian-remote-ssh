@@ -64,7 +64,7 @@ jobs:
       # Download and cache the Obsidian AppImage
       - name: Cache Obsidian AppImage
         id: obsidian-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/obsidian/Obsidian.AppImage
           key: obsidian-appimage-1.8.9
