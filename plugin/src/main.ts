@@ -16,6 +16,7 @@ import { ThreeWayMergeModal } from './ui/ThreeWayMergeModal';
 import { KbdInteractiveModal } from './ui/KbdInteractiveModal';
 import { HostKeyMismatchModal } from './ui/HostKeyMismatchModal';
 import { AncestorTracker } from './conflict/AncestorTracker';
+import { ConflictResolver } from './conflict/ConflictResolver';
 import { OfflineQueue } from './offline/OfflineQueue';
 import { QueueReplayer } from './offline/QueueReplayer';
 import { PendingEditsBar } from './ui/PendingEditsBar';
@@ -886,6 +887,13 @@ export default class RemoteSshPlugin extends Plugin {
         this.offlineQueue = null;
       }
     }
+    const conflictResolver = new ConflictResolver(
+      fsClient,
+      this.readCache,
+      this.ancestorTracker,
+      (vaultPath, panes) => new ThreeWayMergeModal(this.app, { path: vaultPath, ...panes }).prompt(),
+      (vaultPath) => new WriteConflictModal(this.app, vaultPath).prompt(),
+    );
     this.dataAdapter = new SftpDataAdapter(
       fsClient,
       adapterRemoteBase,
@@ -894,15 +902,8 @@ export default class RemoteSshPlugin extends Plugin {
       this.app.vault.getName(),
       mapper,
       this.resourceBridge,
-      // Binary fallback: a precondition-failed binary write (or a text
-      // write without an ancestor) surfaces the 2-choice modal —
-      // overwrite the remote or cancel.
-      (vaultPath) => new WriteConflictModal(this.app, vaultPath).prompt(),
+      conflictResolver,
       this.ancestorTracker,
-      // Text 3-way: when an ancestor exists for the conflicting text
-      // path, route here so the modal can show all three panes
-      // (ancestor / mine / theirs) and let the user pick or hand-merge.
-      (vaultPath, panes) => new ThreeWayMergeModal(this.app, { path: vaultPath, ...panes }).prompt(),
       this.offlineQueue,
       shadowBasePath,
     );

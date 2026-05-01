@@ -28,35 +28,14 @@ import type { PathMapper } from '../path/PathMapper';
 import type { ResourceBridge } from './ResourceBridge';
 import type { RemoteEntry } from '../types';
 import type { AncestorTracker } from '../conflict/AncestorTracker';
+import type { ConflictResolver } from '../conflict/ConflictResolver';
 import type { OfflineQueue, QueuedOp } from '../offline/OfflineQueue';
 import { logger } from '../util/logger';
 import { perfTracer } from '../util/PerfTracer';
 import { isPreconditionFailed } from '../proto/rpcError';
 import { errorMessage } from "../util/errorMessage";
 
-/**
- * Inputs to a 3-way conflict prompt. The adapter assembles these
- * before calling `onTextConflict`: ancestor is what the user had
- * loaded (from `AncestorTracker`), mine is what they're trying to
- * write, theirs is what the remote currently holds (re-read after
- * the precondition failure).
- */
-export interface ThreeWayPanes {
-  ancestor: string;
-  mine: string;
-  theirs: string;
-}
-
-/**
- * Outcome of a `onTextConflict` prompt. Mirrors the modal's
- * `ThreeWayDecision` shape; keeping this as a separate type so the
- * adapter doesn't depend on the obsidian-tied UI module.
- */
-export type TextConflictDecision =
-  | { decision: 'keep-mine' }
-  | { decision: 'keep-theirs' }
-  | { decision: 'merged'; content: string }
-  | { decision: 'cancel' };
+export type { ThreeWayPanes, TextConflictDecision } from '../conflict/ConflictResolver';
 
 /**
  * Implementation of Obsidian's `DataAdapter` over a `RemoteFsClient`.
@@ -109,19 +88,12 @@ export class SftpDataAdapter {
      */
     private resourceBridge: ResourceBridge | null = null,
     /**
-     * Optional callback invoked when a write fails with
-     * `PreconditionFailed`. Returning `true` makes the adapter retry
-     * without `expectedMtime` (the user chose to overwrite the
-     * remote); `false` re-throws the original error so the caller
-     * sees a normal failure.
-     *
-     * When omitted (e.g. unit tests), conflicts are surfaced as the
-     * underlying `RpcError` and the editor decides what to do.
-     *
-     * Used as the binary-write fallback when the 3-way merge path
-     * isn't available (no ancestor / no `onTextConflict` callback).
+     * Optional conflict resolver. When a write fails with
+     * `PreconditionFailed` and a resolver is wired, it runs the
+     * 3-way merge or two-choice modal flow. When omitted (e.g.
+     * unit tests), conflicts surface as the underlying `RpcError`.
      */
-    private onWriteConflict: ((vaultPath: string) => Promise<boolean>) | null = null,
+    private conflictResolver: ConflictResolver | null = null,
     /**
      * Optional snapshot store: every text read remembers its
      * (content, mtime) here, and a subsequent `PreconditionFailed`
@@ -129,15 +101,6 @@ export class SftpDataAdapter {
      * three panes to show. Per-session, never persisted.
      */
     private ancestorTracker: AncestorTracker | null = null,
-    /**
-     * Optional callback for text-write conflicts. When supplied AND
-     * an ancestor snapshot exists for the conflicting path, the
-     * adapter routes through here instead of `onWriteConflict` —
-     * giving the caller (the modal) all three panes to render.
-     */
-    private onTextConflict:
-      | ((vaultPath: string, panes: ThreeWayPanes) => Promise<TextConflictDecision>)
-      | null = null,
     /**
      * Optional persistent queue. When supplied, write-side calls that
      * land while `setReconnecting(true)` succeed synthetically (the
@@ -201,6 +164,7 @@ export class SftpDataAdapter {
    */
   swapClient(newClient: RemoteFsClient): void {
     this.client = newClient;
+    this.conflictResolver?.swapClient(newClient);
   }
 
   /** True between the start of a reconnect loop and its terminal state. */
@@ -818,10 +782,10 @@ export class SftpDataAdapter {
     try {
       await this.client.writeBinary(remote, writtenData, expectedMtime);
     } catch (e) {
-      if (expectedMtime === undefined || !isPreconditionFailed(e)) {
+      if (expectedMtime === undefined || !isPreconditionFailed(e) || !this.conflictResolver) {
         throw e;
       }
-      writtenData = await this.resolveWriteConflict(
+      writtenData = await this.conflictResolver.resolve(
         normalizedPath, remote, writtenData, isText, e,
       );
     }
@@ -837,96 +801,6 @@ export class SftpDataAdapter {
     this.dirCache.invalidate(parent);
   }
 
-  /**
-   * Run the conflict-resolution stack (text 3-way → legacy two-choice
-   * → rethrow). Returns the data that was actually written, which may
-   * differ from the original write when the user chose `merged`. On
-   * cancel / keep-theirs / no-callback, throws the original error so
-   * the caller's outer try/catch in `writeBuffer` re-surfaces it.
-   *
-   * On `keep-theirs`, the read cache is refreshed with the remote's
-   * current bytes so subsequent reads return the right content even
-   * though the editor's in-memory buffer is stale (the editor will
-   * reconcile on its next read).
-   */
-  private async resolveWriteConflict(
-    normalizedPath: string,
-    remote: string,
-    mine: Buffer,
-    isText: boolean,
-    originalError: unknown,
-  ): Promise<Buffer> {
-    if (isText && this.ancestorTracker && this.onTextConflict) {
-      const ancestor = this.ancestorTracker.get(normalizedPath);
-      if (ancestor !== null) {
-        let theirsBuf: Buffer;
-        try {
-          theirsBuf = await this.client.readBinary(remote);
-        } catch (re) {
-          logger.warn(
-            `resolveWriteConflict: re-read of "${remote}" failed (${errorMessage(re)}); ` +
-            'falling back to the two-choice modal',
-          );
-          return await this.fallbackTwoChoice(normalizedPath, mine, originalError);
-        }
-        const decision = await this.onTextConflict(normalizedPath, {
-          ancestor: ancestor.content,
-          mine:     mine.toString('utf8'),
-          theirs:   theirsBuf.toString('utf8'),
-        }).catch(() => ({ decision: 'cancel' as const }));
-
-        switch (decision.decision) {
-          case 'keep-mine':
-            await this.client.writeBinary(remote, mine);
-            return mine;
-          case 'merged': {
-            const merged = Buffer.from(decision.content, 'utf8');
-            await this.client.writeBinary(remote, merged);
-            return merged;
-          }
-          case 'keep-theirs': {
-            // Refresh the cache so the editor's next read picks up
-            // theirs without another round-trip; the user-visible
-            // outcome is "the write was discarded, we're now showing
-            // the remote".
-            let mtime = 0;
-            try {
-              const s = await this.client.stat(remote);
-              mtime = s.mtime;
-            } catch { /* best effort */ }
-            this.readCache.put(remote, theirsBuf, mtime);
-            // Refresh ancestor too so the user's NEXT edit cycle is
-            // measured against what they're now looking at.
-            if (this.ancestorTracker) {
-              this.ancestorTracker.remember(normalizedPath, theirsBuf.toString('utf8'), mtime);
-            }
-            throw originalError;
-          }
-          case 'cancel':
-            throw originalError;
-        }
-      }
-    }
-    return await this.fallbackTwoChoice(normalizedPath, mine, originalError);
-  }
-
-  /**
-   * Two-choice (overwrite / cancel) conflict path — the binary
-   * fallback and the no-ancestor fallback for text. Throws on
-   * cancel; returns `mine` on overwrite (so the caller's cache
-   * update reflects what landed).
-   */
-  private async fallbackTwoChoice(
-    normalizedPath: string,
-    mine: Buffer,
-    originalError: unknown,
-  ): Promise<Buffer> {
-    if (!this.onWriteConflict) throw originalError;
-    const overwrite = await this.onWriteConflict(normalizedPath).catch(() => false);
-    if (!overwrite) throw originalError;
-    await this.client.writeBinary(this.toRemote(normalizedPath), mine);
-    return mine;
-  }
 
   /**
    * Drop cache entries for a path the daemon just reported as
