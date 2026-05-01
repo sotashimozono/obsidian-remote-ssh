@@ -77,7 +77,7 @@ export class RemotePathBrowserModal extends Modal {
     const parts = displayPath === '~' ? [] : displayPath.replace(/^~\//, '').split('/').filter(Boolean);
     const isHomeBased = displayPath.startsWith('~');
 
-    const homeLink = breadcrumb.createEl('span', {
+    const homeLink = breadcrumb.createSpan({
       text: isHomeBased ? '~' : '/',
       cls: 'remote-ssh-breadcrumb-segment',
     });
@@ -88,10 +88,10 @@ export class RemotePathBrowserModal extends Modal {
 
     let accumulated = isHomeBased ? this.homePath : '';
     for (const part of parts) {
-      breadcrumb.createEl('span', { text: ' / ' });
+      breadcrumb.createSpan({ text: ' / ' });
       accumulated += (accumulated.endsWith('/') ? '' : '/') + part;
       const targetPath = accumulated;
-      const seg = breadcrumb.createEl('span', { text: part, cls: 'remote-ssh-breadcrumb-segment' });
+      const seg = breadcrumb.createSpan({ text: part, cls: 'remote-ssh-breadcrumb-segment' });
       seg.onclick = () => {
         this.currentPath = targetPath;
         void this.renderDirectory();
@@ -116,7 +116,7 @@ export class RemotePathBrowserModal extends Modal {
     // Parent directory
     if (this.currentPath !== '/' && this.currentPath !== '') {
       const parentItem = listContainer.createDiv({ cls: 'remote-ssh-dir-item' });
-      parentItem.createEl('span', { text: '📁 ..' });
+      parentItem.createSpan({ text: '📁 ..' });
       parentItem.onclick = () => {
         const lastSlash = this.currentPath.lastIndexOf('/');
         this.currentPath = lastSlash <= 0 ? '/' : this.currentPath.slice(0, lastSlash);
@@ -125,12 +125,12 @@ export class RemotePathBrowserModal extends Modal {
     }
 
     if (folders.length === 0) {
-      listContainer.createEl('p', { text: '(no subdirectories)', cls: 'setting-item-description' });
+      listContainer.createEl('p', { text: '(No subdirectories)', cls: 'setting-item-description' });
     }
 
     for (const folder of folders) {
       const item = listContainer.createDiv({ cls: 'remote-ssh-dir-item' });
-      item.createEl('span', { text: `📁 ${folder.name}` });
+      item.createSpan({ text: `📁 ${folder.name}` });
       item.onclick = () => {
         this.currentPath = this.currentPath === '/'
           ? `/${folder.name}`
@@ -161,20 +161,32 @@ export class RemotePathBrowserModal extends Modal {
     this.loading = false;
   }
 
-  private async promptNewFolder() {
+  private promptNewFolder() {
     if (!this.client) return;
-    const name = prompt('New folder name:');
-    if (!name?.trim()) return;
-    const newPath = this.currentPath === '/'
-      ? `/${name.trim()}`
-      : `${this.currentPath}/${name.trim()}`;
-    try {
-      await this.client.mkdirp(newPath);
-      this.currentPath = newPath;
-      await this.renderDirectory();
-    } catch (e) {
-      new Notice(`Failed to create folder: ${errorMessage(e)}`);
-    }
+    const { contentEl } = this;
+    // Append an inline input below the action buttons
+    const row = contentEl.createDiv({ cls: 'remote-ssh-new-folder-row' });
+    const input = row.createEl('input', { type: 'text', placeholder: 'New folder name' });
+    const go = row.createEl('button', { text: 'Create' });
+    input.focus();
+
+    const doCreate = async () => {
+      const name = input.value.trim();
+      if (!name || !this.client) return;
+      const newPath = this.currentPath === '/'
+        ? `/${name}`
+        : `${this.currentPath}/${name}`;
+      try {
+        await this.client.mkdirp(newPath);
+        this.currentPath = newPath;
+        await this.renderDirectory();
+      } catch (e) {
+        new Notice(`Failed to create folder: ${errorMessage(e)}`);
+      }
+    };
+
+    go.onclick = () => void doCreate();
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') void doCreate(); });
   }
 
   /** Convert absolute path to `~/relative` when under $HOME. */

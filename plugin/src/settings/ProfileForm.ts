@@ -117,7 +117,7 @@ export class ProfileForm extends Modal {
         .setButtonText('Browse…')
         .onClick(() => {
           if (!this.profile.host || !this.profile.username) {
-            new Notice('Fill in Host and Username first');
+            new Notice('Fill in host and username first');
             return;
           }
           new RemotePathBrowserModal(
