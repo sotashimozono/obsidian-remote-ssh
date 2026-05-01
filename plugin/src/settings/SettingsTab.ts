@@ -34,7 +34,7 @@ export class SettingsTab extends PluginSettingTab {
           new ProfileForm(this.app, null, (p) => {
             this.plugin.settings.profiles.push(p);
             void this.plugin.saveSettings().then(() => this.display());
-          }).open();
+          }, this.plugin.getProfileFormDeps()).open();
         }));
 
     for (const profile of this.plugin.settings.profiles) {
@@ -135,7 +135,7 @@ export class SettingsTab extends PluginSettingTab {
           const idx = this.plugin.settings.profiles.findIndex(p => p.id === updated.id);
           if (idx >= 0) this.plugin.settings.profiles[idx] = updated;
           void this.plugin.saveSettings().then(() => this.display());
-        }).open();
+        }, this.plugin.getProfileFormDeps()).open();
       }))
       .addButton(btn => btn.setButtonText('Delete').setWarning().onClick(async () => {
         if (isActive) await this.plugin.disconnect();
