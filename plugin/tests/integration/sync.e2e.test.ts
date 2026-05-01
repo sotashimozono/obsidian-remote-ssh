@@ -341,6 +341,29 @@ describe('Phase C E2E — sync reflect matrix', () => {
     const actualHash = crypto.createHash('sha256').update(Buffer.from(readBack)).digest('hex');
     expect(actualHash).toBe(expectedHash);
   });
+  it('3-way conflict — stale expectedMtime triggers PreconditionFailed from daemon', async () => {
+    const target = `${subdirRel}/note-conflict.md`;
+
+    // Writer A creates the file; its readCache learns the mtime.
+    await writerAdapter.write(target, 'version-1');
+
+    // Writer B (readerAdapter) reads → primes its own cache with mtime M1.
+    const v1 = await readerAdapter.read(target);
+    expect(v1).toBe('version-1');
+
+    // Writer A overwrites → the remote mtime advances to M2.
+    await writerAdapter.write(target, 'version-2');
+
+    // Writer B tries to write with its stale cached mtime M1.
+    // The daemon sees actual mtime M2 ≠ M1 → PreconditionFailed (-32020).
+    // readerAdapter has no ConflictResolver, so it rethrows.
+    await expect(readerAdapter.write(target, 'version-3'))
+      .rejects.toMatchObject({ code: -32020 });
+
+    // The remote still holds writer A's content.
+    const final = await writerAdapter.read(target);
+    expect(final).toBe('version-2');
+  });
 });
 
 // ── reader pipeline (mimics main.ts handleFsChanged + applyFsChange) ───
