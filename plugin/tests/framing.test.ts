@@ -142,4 +142,54 @@ describe('FramedDuplex', () => {
     client.close();
     expect(() => client.writeMessage(Buffer.from('x'))).toThrow(/closed/);
   });
+
+  it('emits close when stream ends mid-message (partial frame)', async () => {
+    const pair = duplexPair();
+    const server = new FramedDuplex(pair.a);
+    const messages: Buffer[] = [];
+    let closed = false;
+    const errors: Error[] = [];
+    server.on('message', (m: Buffer) => messages.push(m));
+    server.on('close', () => { closed = true; });
+    server.on('error', (e: Error) => errors.push(e));
+
+    (pair.b as unknown as { write(b: Buffer): void; end(): void }).write(
+      Buffer.from('Content-Length: 100\r\n\r\nABC', 'ascii'),
+    );
+    (pair.b as unknown as { end(): void }).end();
+    await new Promise(r => setImmediate(r));
+    await new Promise(r => setImmediate(r));
+
+    expect(messages).toHaveLength(0);
+    expect(closed).toBe(true);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('handles a zero-length body correctly', async () => {
+    const pair = duplexPair();
+    const server = new FramedDuplex(pair.a);
+    const received: Buffer[] = [];
+    server.on('message', (m: Buffer) => received.push(m));
+
+    (pair.b as unknown as { write(b: Buffer): void }).write(
+      Buffer.from('Content-Length: 0\r\n\r\n', 'ascii'),
+    );
+    await new Promise(r => setImmediate(r));
+
+    expect(received).toHaveLength(1);
+    expect(received[0].length).toBe(0);
+  });
+
+  it('does not emit close twice when stream fires both end and close', async () => {
+    const pair = duplexPair();
+    const server = new FramedDuplex(pair.a);
+    let closeCount = 0;
+    server.on('close', () => { closeCount++; });
+
+    (pair.b as unknown as { end(): void }).end();
+    await new Promise(r => setImmediate(r));
+    await new Promise(r => setImmediate(r));
+
+    expect(closeCount).toBe(1);
+  });
 });
