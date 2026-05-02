@@ -454,15 +454,12 @@ export class SftpDataAdapter {
   async remove(normalizedPath: string): Promise<void> {
     const __t1 = perfTracer.begin('S.adp');
     try {
+      const remote = this.toRemote(normalizedPath);
       if (this.reconnecting) {
         await this.queueOrThrowMutation({ kind: 'remove', path: normalizedPath });
-        const remote = this.toRemote(normalizedPath);
-        this.invalidatePath(remote);
-        this.ancestorTracker?.invalidate(normalizedPath);
-        return;
+      } else {
+        await this.client.remove(remote);
       }
-      const remote = this.toRemote(normalizedPath);
-      await this.client.remove(remote);
       this.invalidatePath(remote);
       this.ancestorTracker?.invalidate(normalizedPath);
     } finally {
@@ -471,37 +468,30 @@ export class SftpDataAdapter {
   }
 
   async rmdir(normalizedPath: string, recursive: boolean): Promise<void> {
+    const remote = this.toRemote(normalizedPath);
     if (this.reconnecting) {
       await this.queueOrThrowMutation({ kind: 'rmdir', path: normalizedPath, recursive });
-      const remote = this.toRemote(normalizedPath);
-      this.invalidateTree(remote);
-      return;
+    } else {
+      await this.client.rmdir(remote, recursive);
+      // AncestorTracker doesn't have prefix invalidation today; in
+      // practice rmdir kills folders that the user wasn't editing as
+      // text, so the stale entries (if any) just live until LRU pushes
+      // them out. Cheap to add later if it ever matters.
     }
-    const remote = this.toRemote(normalizedPath);
-    await this.client.rmdir(remote, recursive);
     this.invalidateTree(remote);
-    // AncestorTracker doesn't have prefix invalidation today; in
-    // practice rmdir kills folders that the user wasn't editing as
-    // text, so the stale entries (if any) just live until LRU pushes
-    // them out. Cheap to add later if it ever matters.
   }
 
   async rename(oldPath: string, newPath: string): Promise<void> {
     const __t1 = perfTracer.begin('S.adp');
     try {
-      if (this.reconnecting) {
-        await this.queueOrThrowMutation({ kind: 'rename', oldPath, newPath });
-        const oldRemote = this.toRemote(oldPath);
-        const newRemote = this.toRemote(newPath);
-        this.invalidateTree(oldRemote);
-        this.invalidatePath(newRemote);
-        this.ancestorTracker?.invalidate(oldPath);
-        return;
-      }
       const oldRemote = this.toRemote(oldPath);
       const newRemote = this.toRemote(newPath);
-      await this.client.mkdirp(parentDirRemote(newRemote));
-      await this.client.rename(oldRemote, newRemote);
+      if (this.reconnecting) {
+        await this.queueOrThrowMutation({ kind: 'rename', oldPath, newPath });
+      } else {
+        await this.client.mkdirp(parentDirRemote(newRemote));
+        await this.client.rename(oldRemote, newRemote);
+      }
       this.invalidateTree(oldRemote);
       this.invalidatePath(newRemote);
       // Keep the ancestor for `newPath` if one happens to exist (e.g.
@@ -515,16 +505,14 @@ export class SftpDataAdapter {
   }
 
   async copy(oldPath: string, newPath: string): Promise<void> {
+    const newRemote = this.toRemote(newPath);
     if (this.reconnecting) {
       await this.queueOrThrowMutation({ kind: 'copy', srcPath: oldPath, dstPath: newPath });
-      const newRemote = this.toRemote(newPath);
-      this.invalidatePath(newRemote);
-      return;
+    } else {
+      const oldRemote = this.toRemote(oldPath);
+      await this.client.mkdirp(parentDirRemote(newRemote));
+      await this.client.copy(oldRemote, newRemote);
     }
-    const oldRemote = this.toRemote(oldPath);
-    const newRemote = this.toRemote(newPath);
-    await this.client.mkdirp(parentDirRemote(newRemote));
-    await this.client.copy(oldRemote, newRemote);
     this.invalidatePath(newRemote);
   }
 
