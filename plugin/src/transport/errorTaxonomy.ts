@@ -71,6 +71,31 @@ export interface ClassifiedError {
 export function classifyError(err: unknown): ClassifiedError {
   const original = asError(err);
 
+  if (err instanceof AuthFailedError) {
+    return {
+      category: 'auth',
+      title: 'SSH authentication failed',
+      hint: `Check the profile's key path / passphrase / agent socket. The remote may also have rejected the user; try \`ssh -v <user>@<host>\` to confirm.`,
+      original,
+    };
+  }
+  if (err instanceof HostKeyMismatchError) {
+    return {
+      category: 'host-key',
+      title: 'Remote host key changed',
+      hint: `The remote's host key doesn't match what we have on file for ${err.host}:${err.port}. Reconnect to see the host-key change dialog.`,
+      original,
+    };
+  }
+  if (err instanceof NetworkTimeoutError) {
+    return {
+      category: 'timeout',
+      title: 'Connection timed out',
+      hint: `The remote didn't respond in time. Check whether the host is reachable (ping / \`ssh -v\`) and whether a corporate firewall is throttling SSH.`,
+      original,
+    };
+  }
+
   if (err instanceof RpcError) {
     return classifyRpcError(err);
   }

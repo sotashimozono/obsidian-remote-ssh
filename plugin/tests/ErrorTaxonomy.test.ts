@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { classifyError, classifyToNotice, type ErrorCategory } from '../src/transport/errorTaxonomy';
+import {
+  classifyError, classifyToNotice, type ErrorCategory,
+  AuthFailedError, HostKeyMismatchError, NetworkTimeoutError,
+} from '../src/transport/errorTaxonomy';
 import { RpcError } from '../src/transport/RpcError';
 import { ErrorCode } from '../src/proto/types';
 
@@ -145,5 +148,28 @@ describe('classifyToNotice', () => {
     expect(notice).toMatch(/^Remote SSH: Write conflict — file changed remotely/);
     expect(notice).toContain('—');
     expect(classified.category).toBe('precondition');
+  });
+});
+
+// ── Named error class instanceof branches ─────────────────────────────
+
+describe('classifyError — named error classes', () => {
+  it('AuthFailedError classifies as "auth"', () => {
+    const c = classifyError(new AuthFailedError('bad passphrase', 'publickey'));
+    expect(c.category).toBe('auth');
+    assertWellFormed(c);
+  });
+
+  it('HostKeyMismatchError classifies as "host-key" and surfaces host:port in hint', () => {
+    const c = classifyError(new HostKeyMismatchError('myserver.example', 22, 'aabbcc', 'ddeeff'));
+    expect(c.category).toBe('host-key');
+    expect(c.hint).toContain('myserver.example:22');
+    assertWellFormed(c);
+  });
+
+  it('NetworkTimeoutError classifies as "timeout"', () => {
+    const c = classifyError(new NetworkTimeoutError('connect timed out', 30_000));
+    expect(c.category).toBe('timeout');
+    assertWellFormed(c);
   });
 });

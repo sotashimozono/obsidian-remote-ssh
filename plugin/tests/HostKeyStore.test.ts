@@ -145,6 +145,44 @@ describe('HostKeyStore — verifyAsync (#132 mismatch-prompt path)', () => {
     expect(store.serialize()['throw.example:22']).toBe(fp(oldKey));
   });
 
+  it('calls onFirstTime on first connection when handler is provided', async () => {
+    const store = new HostKeyStore();
+    const key = Buffer.from('first-key');
+    const onFirstTime = vi.fn(async () => 'trust' as const);
+    expect(await store.verifyAsync('new.example', 22, key, undefined, onFirstTime)).toBe(true);
+    expect(onFirstTime).toHaveBeenCalledTimes(1);
+    expect(onFirstTime).toHaveBeenCalledWith(expect.objectContaining({
+      host: 'new.example', port: 22, fingerprint: fp(key),
+    }));
+    expect(store.serialize()['new.example:22']).toBe(fp(key));
+  });
+
+  it('trust-once: accepts session-only, does not persist', async () => {
+    const store = new HostKeyStore();
+    const key = Buffer.from('session-key');
+    const onFirstTime = vi.fn(async () => 'trust-once' as const);
+    expect(await store.verifyAsync('once.example', 22, key, undefined, onFirstTime)).toBe(true);
+    expect(store.serialize()['once.example:22']).toBeUndefined();
+    // Session trust still accepted by sync verify
+    expect(store.verify('once.example', 22, key)).toBe(true);
+  });
+
+  it('reject: returns false and does not pin', async () => {
+    const store = new HostKeyStore();
+    const key = Buffer.from('rejected-key');
+    const onFirstTime = vi.fn(async () => 'reject' as const);
+    expect(await store.verifyAsync('reject.example', 22, key, undefined, onFirstTime)).toBe(false);
+    expect(store.serialize()).toEqual({});
+  });
+
+  it('treats a thrown onFirstTime handler as reject', async () => {
+    const store = new HostKeyStore();
+    const key = Buffer.from('throw-key');
+    const onFirstTime = vi.fn(async () => { throw new Error('modal closed'); });
+    expect(await store.verifyAsync('throw2.example', 22, key, undefined, onFirstTime)).toBe(false);
+    expect(store.serialize()).toEqual({});
+  });
+
   it('after trust, a subsequent verifyAsync with the same new key matches without prompting', async () => {
     const store = new HostKeyStore();
     store.verify('flow.example', 22, Buffer.from('v1'));
