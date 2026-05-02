@@ -23,8 +23,25 @@ export type HostKeyMismatchHandler = (info: {
   newFp: string;
 }) => Promise<HostKeyMismatchDecision>;
 
+/**
+ * Async callback invoked by {@link HostKeyStore.verifyAsync} on the
+ * *first* connection to a host (no fingerprint pinned yet — TOFU).
+ *
+ *  - `'trust'`       — pin permanently and proceed.
+ *  - `'trust-once'`  — accept for this session only; do not persist.
+ *  - `'reject'`      — refuse the handshake.
+ */
+export type HostKeyFirstTimeHandler = (info: {
+  host: string;
+  port: number;
+  fingerprint: string;
+  keyType?: string;
+}) => Promise<'trust' | 'trust-once' | 'reject'>;
+
 export class HostKeyStore {
   private store: Map<string, string> = new Map();
+  /** Session-only trust: fingerprints accepted with `trust-once`. Not persisted. */
+  private sessionTrust: Map<string, string> = new Map();
 
   load(savedFingerprints: Record<string, string>) {
     this.store = new Map(Object.entries(savedFingerprints));
@@ -40,6 +57,8 @@ export class HostKeyStore {
 
     const known = this.store.get(key);
     if (!known) {
+      // Check session-only trust before falling back to auto-TOFU
+      if (this.sessionTrust.get(key) === fingerprint) return true;
       logger.info(`TOFU: Trusting new host key for ${key}: SHA256:${fingerprint.slice(0, 16)}...`);
       this.store.set(key, fingerprint);
       return true;
@@ -56,9 +75,12 @@ export class HostKeyStore {
    * user-facing prompt instead of immediately failing (#132).
    *
    * Behaviour table:
-   *   - **First-time-trust (no pinned fingerprint)** — pin the new
-   *     fingerprint and resolve `true`. Same TOFU semantics as the
-   *     sync path; no callback consulted.
+   *   - **First-time-trust (no pinned fingerprint)**
+   *     - _No handler wired_ — auto-TOFU: pin the fingerprint and
+   *       resolve `true` (same behaviour as the sync path).
+   *     - _`onFirstTime` wired_ — awaits the handler's decision:
+   *       `'trust'` pins permanently, `'trust-once'` pins for the
+   *       session only, `'reject'` refuses the handshake.
    *   - **Match** — resolve `true`.
    *   - **Mismatch + no callback wired** — resolve `false`. Lets
    *     non-UI callers (integration tests, programmatic callers)
@@ -79,15 +101,44 @@ export class HostKeyStore {
     port: number,
     keyBuffer: Buffer,
     onMismatch?: HostKeyMismatchHandler,
+    onFirstTime?: HostKeyFirstTimeHandler,
+    keyType?: string,
   ): Promise<boolean> {
     const key = `${host}:${port}`;
     const fingerprint = crypto.createHash('sha256').update(keyBuffer).digest('hex');
 
     const known = this.store.get(key);
     if (!known) {
-      logger.info(`TOFU: Trusting new host key for ${key}: SHA256:${fingerprint.slice(0, 16)}...`);
-      this.store.set(key, fingerprint);
-      return true;
+      // Check session-only trust first
+      if (this.sessionTrust.get(key) === fingerprint) return true;
+
+      if (!onFirstTime) {
+        // No handler: fall back to legacy auto-TOFU behaviour
+        logger.info(`TOFU: Trusting new host key for ${key}: SHA256:${fingerprint.slice(0, 16)}...`);
+        this.store.set(key, fingerprint);
+        return true;
+      }
+
+      let firstDecision: 'trust' | 'trust-once' | 'reject';
+      try {
+        firstDecision = await onFirstTime({ host, port, fingerprint, keyType });
+      } catch (e) {
+        logger.warn(`First-time host-key handler threw for ${key}; treating as reject: ${errorMessage(e)}`);
+        return false;
+      }
+
+      if (firstDecision === 'trust') {
+        logger.info(`User pinned host key for ${key}: SHA256:${fingerprint.slice(0, 16)}...`);
+        this.store.set(key, fingerprint);
+        return true;
+      }
+      if (firstDecision === 'trust-once') {
+        logger.info(`User accepted host key for ${key} (session only): SHA256:${fingerprint.slice(0, 16)}...`);
+        this.sessionTrust.set(key, fingerprint);
+        return true;
+      }
+      logger.info(`User rejected host key for ${key}`);
+      return false;
     }
     if (known === fingerprint) {
       return true;
@@ -130,6 +181,8 @@ export class HostKeyStore {
   }
 
   forget(host: string, port: number) {
-    this.store.delete(`${host}:${port}`);
+    const key = `${host}:${port}`;
+    this.store.delete(key);
+    this.sessionTrust.delete(key);
   }
 }
