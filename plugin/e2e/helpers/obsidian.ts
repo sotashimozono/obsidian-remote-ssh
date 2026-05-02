@@ -75,14 +75,14 @@ export async function launchObsidian(
   const cdpUrl = `http://127.0.0.1:${CDP_PORT}`;
   await waitForCDP(cdpUrl, 30_000);
 
-  const browser = await chromium.connectOverCDP(cdpUrl);
+  const browser = await connectOverCDPWithRetry(cdpUrl);
   const contexts = browser.contexts();
   const page = contexts[0]?.pages()[0]
     ?? await contexts[0]?.newPage()
     ?? (() => { throw new Error('No Obsidian window found'); })();
 
   await page.waitForLoadState('domcontentloaded');
-  await page.waitForTimeout(5_000);
+  await waitForObsidianReady(page, 30_000);
 
   const cleanup = async () => {
     try { await browser.close(); } catch { /* best effort */ }
@@ -150,7 +150,7 @@ function registerVault(vaultPath: string): () => void {
   // Add scaffold vault as open
   const vaultId = crypto.randomBytes(8).toString('hex');
   config.vaults[vaultId] = {
-    path: vaultPath.replace(/\//g, '\\'),
+    path: process.platform === 'win32' ? vaultPath.replace(/\//g, '\\') : vaultPath,
     ts: Date.now(),
     open: true,
   };
@@ -167,6 +167,44 @@ function registerVault(vaultPath: string): () => void {
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
     }
   };
+}
+
+/**
+ * Connect to Obsidian's CDP endpoint with retries.
+ * Obsidian may take a moment to expose the endpoint after it starts.
+ */
+async function connectOverCDPWithRetry(
+  cdpUrl: string,
+  maxRetries = 10,
+  intervalMs = 500,
+): Promise<Browser> {
+  let lastError: unknown;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await chromium.connectOverCDP(cdpUrl);
+    } catch (e) {
+      lastError = e;
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Poll for the Obsidian `.workspace` element instead of a fixed sleep.
+ */
+async function waitForObsidianReady(page: Page, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const visible = await page.locator('.workspace').isVisible();
+      if (visible) return;
+    } catch {
+      // page may not be ready yet
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  // Non-fatal: tests can still run even if workspace isn't visible
 }
 
 async function waitForCDP(url: string, timeoutMs: number): Promise<void> {
