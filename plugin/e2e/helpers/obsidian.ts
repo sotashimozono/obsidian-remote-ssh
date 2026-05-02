@@ -150,7 +150,7 @@ function registerVault(vaultPath: string): () => void {
   // Add scaffold vault as open
   const vaultId = crypto.randomBytes(8).toString('hex');
   config.vaults[vaultId] = {
-    path: vaultPath.replace(/\//g, '\\'),
+    path: process.platform === 'win32' ? vaultPath.replace(/\//g, '\\') : vaultPath,
     ts: Date.now(),
     open: true,
   };
