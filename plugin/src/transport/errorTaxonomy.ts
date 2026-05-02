@@ -300,3 +300,37 @@ export function classifyToNotice(err: unknown): { notice: string; classified: Cl
   const notice = `Remote SSH: ${classified.title} — ${classified.hint}`;
   return { notice, classified };
 }
+
+// ── Named error classes ──────────────────────────────────────────────────────
+// Throwable subclasses for common failure modes. Use these at call sites that
+// want to `throw new AuthFailedError(...)` and have the taxonomy pick them up
+// via instanceof checks or the 'auth' / 'host-key' / 'timeout' category.
+
+export class AuthFailedError extends Error {
+  readonly category: ErrorCategory = 'auth';
+  constructor(message: string, public readonly method?: string) {
+    super(message);
+    this.name = 'AuthFailedError';
+  }
+}
+
+export class HostKeyMismatchError extends Error {
+  readonly category: ErrorCategory = 'host-key';
+  constructor(
+    public readonly host: string,
+    public readonly port: number,
+    public readonly expectedFp: string,
+    public readonly actualFp: string,
+  ) {
+    super(`Host key mismatch for ${host}:${port}`);
+    this.name = 'HostKeyMismatchError';
+  }
+}
+
+export class NetworkTimeoutError extends Error {
+  readonly category: ErrorCategory = 'timeout';
+  constructor(message: string, public readonly timeoutMs?: number) {
+    super(message);
+    this.name = 'NetworkTimeoutError';
+  }
+}

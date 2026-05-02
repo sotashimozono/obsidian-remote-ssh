@@ -1,4 +1,5 @@
 import { App, Modal } from 'obsidian';
+import { formatFingerprint } from '../util/fingerprint';
 
 /**
  * Inputs to {@link HostKeyMismatchModal}. Fingerprints are sha256
@@ -102,17 +103,5 @@ export class HostKeyMismatchModal extends Modal {
   }
 }
 
-/**
- * Format a sha256 hex fingerprint into colon-separated byte pairs
- * (`aa:bb:cc:...`) for readability. Matches the convention OpenSSH
- * uses when printing fingerprints in non-base64 form, so the user
- * can paste it directly into a comparison against `ssh-keygen -lf`.
- */
-export function formatFingerprint(hex: string): string {
-  const clean = hex.toLowerCase().replace(/[^0-9a-f]/g, '');
-  const pairs: string[] = [];
-  for (let i = 0; i < clean.length; i += 2) {
-    pairs.push(clean.slice(i, i + 2));
-  }
-  return pairs.join(':');
-}
+/** @deprecated Import from `../util/fingerprint` directly. Re-exported for backwards-compat. */
+export { formatFingerprint } from '../util/fingerprint';
