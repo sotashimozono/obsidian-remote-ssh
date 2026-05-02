@@ -48,8 +48,8 @@ export function makeStatResult(overrides: Partial<{
     isDirectory: false,
     isSymbolicLink: false,
     size: 0,
-    mtimeMs: Date.now(),
-    ctimeMs: Date.now(),
+    mtimeMs: 1_000_000_000_000,
+    ctimeMs: 1_000_000_000_000,
     mode: 0o100644,
     ...overrides,
   };

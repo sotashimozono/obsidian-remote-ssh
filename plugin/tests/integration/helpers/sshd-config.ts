@@ -24,7 +24,7 @@ export function sshdConnectConfig(overrides: Record<string, unknown> = {}): Reco
     port: SSHD_PORT,
     username: SSHD_USER,
     password: SSHD_PASSWORD,
-    hostVerifier: () => true,
+    hostVerifier: () => true, // Test container — accept any host key
     readyTimeout: 5000,
     ...overrides,
   };

@@ -183,7 +183,7 @@ describe('ReconnectManager', () => {
     const m = new ReconnectManager({
       attempt: async () => { throw new Error('always'); },
       onState: (s) => {
-        if (s.kind === 'waiting') delays.push((s as { kind: 'waiting'; delayMs: number }).delayMs);
+        if (s.kind === 'waiting') delays.push(s.delayMs);
       },
       backoff: { initialMs: 10, multiplier: 3, maxMs: 100, jitterPct: 0, maxRetries: 4 },
       ...makeImmediateScheduler(),
