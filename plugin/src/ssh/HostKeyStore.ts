@@ -75,9 +75,12 @@ export class HostKeyStore {
    * user-facing prompt instead of immediately failing (#132).
    *
    * Behaviour table:
-   *   - **First-time-trust (no pinned fingerprint)** — pin the new
-   *     fingerprint and resolve `true`. Same TOFU semantics as the
-   *     sync path; no callback consulted.
+   *   - **First-time-trust (no pinned fingerprint)**
+   *     - _No handler wired_ — auto-TOFU: pin the fingerprint and
+   *       resolve `true` (same behaviour as the sync path).
+   *     - _`onFirstTime` wired_ — awaits the handler's decision:
+   *       `'trust'` pins permanently, `'trust-once'` pins for the
+   *       session only, `'reject'` refuses the handshake.
    *   - **Match** — resolve `true`.
    *   - **Mismatch + no callback wired** — resolve `false`. Lets
    *     non-UI callers (integration tests, programmatic callers)
@@ -178,6 +181,8 @@ export class HostKeyStore {
   }
 
   forget(host: string, port: number) {
-    this.store.delete(`${host}:${port}`);
+    const key = `${host}:${port}`;
+    this.store.delete(key);
+    this.sessionTrust.delete(key);
   }
 }

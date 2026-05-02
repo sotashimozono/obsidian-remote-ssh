@@ -175,6 +175,24 @@ describe('HostKeyStore — verifyAsync (#132 mismatch-prompt path)', () => {
     expect(store.serialize()).toEqual({});
   });
 
+  it('forget() also clears a trust-once session pin', async () => {
+    const store = new HostKeyStore();
+    const key = Buffer.from('session-key');
+    // Trust-once: session pin only, not persisted to store.
+    await store.verifyAsync('once.example', 22, key, undefined, vi.fn(async () => 'trust-once' as const));
+    expect(store.serialize()).toEqual({}); // not persisted
+
+    store.forget('once.example', 22);
+
+    // After forget the session pin is gone. verifyAsync with a rejecting onFirstTime
+    // should now reach the handler and return false — proving sessionTrust was cleared
+    // (if sessionTrust still had the fingerprint, the call would return true without
+    // consulting onFirstTime at all).
+    const onFirstTime = vi.fn(async () => 'reject' as const);
+    expect(await store.verifyAsync('once.example', 22, key, undefined, onFirstTime)).toBe(false);
+    expect(onFirstTime).toHaveBeenCalledTimes(1);
+  });
+
   it('treats a thrown onFirstTime handler as reject', async () => {
     const store = new HostKeyStore();
     const key = Buffer.from('throw-key');
