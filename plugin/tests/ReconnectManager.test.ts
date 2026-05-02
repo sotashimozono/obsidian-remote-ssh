@@ -177,4 +177,59 @@ describe('ReconnectManager', () => {
       .filter((v): v is number => v !== null);
     expect(totals.every(t => t === 2)).toBe(true);
   });
+
+  it('emits delayMs values following exponential schedule', async () => {
+    const delays: number[] = [];
+    const m = new ReconnectManager({
+      attempt: async () => { throw new Error('always'); },
+      onState: (s) => {
+        if (s.kind === 'waiting') delays.push((s as { kind: 'waiting'; delayMs: number }).delayMs);
+      },
+      backoff: { initialMs: 10, multiplier: 3, maxMs: 100, jitterPct: 0, maxRetries: 4 },
+      ...makeImmediateScheduler(),
+    });
+    await m.run();
+    expect(delays[0]).toBe(10);
+    expect(delays[1]).toBe(30);
+    expect(delays[2]).toBe(90);
+    expect(delays[3]).toBe(100);
+  });
+
+  it('maxRetries:1 calls attempt exactly once then fails', async () => {
+    let calls = 0;
+    const m = new ReconnectManager({
+      attempt: async () => { calls++; throw new Error('boom'); },
+      onState: () => {},
+      backoff: { ...cfgFast, maxRetries: 1 },
+      ...makeImmediateScheduler(),
+    });
+    const final = await m.run();
+    expect(calls).toBe(1);
+    expect(final.kind).toBe('failed');
+  });
+
+  it('cancel() immediately after construction leaves state idle', () => {
+    const m = new ReconnectManager({
+      attempt: async () => {},
+      onState: () => {},
+      backoff: cfgFast,
+      ...makeImmediateScheduler(),
+    });
+    m.cancel();
+    expect(m.state().kind).toBe('idle');
+    expect(m.isActive()).toBe(false);
+  });
+
+  it('state() reflects the latest transition seen by onState', async () => {
+    let lastOnState: ReconnectState | undefined;
+    const m = new ReconnectManager({
+      attempt: async () => { throw new Error('fail'); },
+      onState: (s) => { lastOnState = s; },
+      backoff: { ...cfgFast, maxRetries: 1 },
+      ...makeImmediateScheduler(),
+    });
+    await m.run();
+    expect(m.state().kind).toBe('failed');
+    expect(lastOnState?.kind).toBe('failed');
+  });
 });
