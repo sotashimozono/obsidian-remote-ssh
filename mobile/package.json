@@ -1,0 +1,16 @@
+{
+  "name": "obsidian-remote-ssh-mobile",
+  "version": "0.1.0",
+  "description": "Mobile transport layer for obsidian-remote-ssh (iOS/Android via WebSocket relay)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.0",
+    "vitest": "^4.0.0",
+    "obsidian": "latest"
+  }
+}

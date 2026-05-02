@@ -1,0 +1,7 @@
+{
+  "name": "@obsidian-remote-ssh/next",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Platform-agnostic shared types and interfaces for obsidian-remote-ssh"
+}
