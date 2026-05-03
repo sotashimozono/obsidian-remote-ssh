@@ -67,6 +67,11 @@ test.afterAll(async () => {
     await Promise.allSettled([
       remote.removeFile(`${STAMP}-create.md`),
       remote.removeFile(`${STAMP}-modify.md`),
+      remote.removeFile(`${STAMP}-delete.md`),
+      // rename source path: only present on remote if test 4 crashed
+      // before `remote.rename()` ran. removeFile ignores ENOENT so
+      // it's safe when the rename succeeded normally.
+      remote.removeFile(`${STAMP}-rename-src.md`),
       remote.removeFile(`${STAMP}-renamed.md`),
       remote.removeFile(`${STAMP}-image.md`),
       remote.removeFile(`${STAMP}-image.png`),
@@ -91,8 +96,9 @@ test.describe('Remote → Obsidian reflection (M11)', () => {
     ).toBeVisible({ timeout: REFLECT_TIMEOUT_MS });
   });
 
-  test('2 — modify: mtime advances after remote overwrite', async () => {
+  test('2 — modify: remote overwrite reflects in editor + advances mtime', async () => {
     const file = `${STAMP}-modify.md`;
+    const sentinel = `MODIFIED-${STAMP}`;
     await remote.writeFile(file, '# initial\n');
     const before = await remote.stat(file);
     expect(before).not.toBeNull();
@@ -103,16 +109,30 @@ test.describe('Remote → Obsidian reflection (M11)', () => {
       fileLocator(obsidian.page, file),
     ).toBeVisible({ timeout: REFLECT_TIMEOUT_MS });
 
+    // Open the note before mutating so we can watch the editor pane
+    // pick up the change. Obsidian activates a file on single click;
+    // .cm-content is CodeMirror's content host.
+    await fileLocator(obsidian.page, file).click();
+    await expect(
+      obsidian.page.locator('.cm-editor .cm-content'),
+    ).toBeVisible({ timeout: REFLECT_TIMEOUT_MS });
+
     // Sleep past 1 s so the second write's mtime is at least 1 second
     // ahead of the first (sftp's mtime resolution is per-second).
     await obsidian.page.waitForTimeout(1_100);
-    await remote.writeFile(file, '# modified\n');
+    await remote.writeFile(file, `# ${sentinel}\n`);
 
-    // Poll the daemon-side stat until mtime advances. We assert via
-    // SFTP rather than the Obsidian UI because the File Explorer's
-    // mtime isn't exposed as a stable DOM attribute.
+    // (a) Daemon-side ground truth: the SFTP write landed.
     const after = await waitForMtimeChange(remote, file, before!.mtimeMs);
     expect(after.mtimeMs).toBeGreaterThan(before!.mtimeMs);
+
+    // (b) Reflect chain end-to-end: the open editor shows the new
+    // content. This is the assert M2 was missing — without it the
+    // test only proves SFTP works, not that fs.watch → RPC push →
+    // Vault adapter → editor refresh delivered the change.
+    await expect(
+      obsidian.page.locator('.cm-editor .cm-content'),
+    ).toContainText(sentinel, { timeout: REFLECT_TIMEOUT_MS });
   });
 
   test('3 — delete: remote-removed file disappears from File Explorer', async () => {
@@ -199,7 +219,7 @@ async function waitForMtimeChange(
   while (Date.now() < deadline) {
     const s = await r.stat(file);
     if (s && s.mtimeMs > baselineMs) return s;
-    await new Promise(r => setTimeout(r, 250));
+    await new Promise(resolve => setTimeout(resolve, 250));
   }
   throw new Error(`mtime did not advance for ${file} within ${REFLECT_TIMEOUT_MS}ms`);
 }
