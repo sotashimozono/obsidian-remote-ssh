@@ -47,10 +47,22 @@ npm run sshd:stop
 
 # Plugin-side perf bench (separate from `test:integration`)
 npm run test:integration:bench
+
+# E2E against a real Obsidian window (Playwright + CDP)
+# Requires: Obsidian installed + Docker test sshd running + plugin built.
+# Linux/macOS only locally; Windows is workflow-only (Xvfb-dependent).
+OBSIDIAN_PATH=/path/to/obsidian npm run build && npm run sshd:start
+npm run test:e2e               # all specs (smoke + sync + reflect + demo)
+npm run test:e2e:reflect       # just the M11 remote-→-Obsidian reflection set
+npm run sshd:stop
 ```
 
 A working dev vault path can be configured via `REMOTE_SSH_DEV_VAULT`
 env var; `npm run build:full` then ships the plugin into that vault.
+
+The E2E suite also runs nightly via `.github/workflows/e2e.yml`
+(03:00 UTC / 12:00 JST). Trigger off-cycle from GitHub Actions →
+"E2E smoke (Playwright + Obsidian)" → "Run workflow".
 
 ## Branch + commit convention
 

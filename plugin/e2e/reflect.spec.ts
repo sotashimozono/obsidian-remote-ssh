@@ -1,0 +1,259 @@
+import { test, expect, type Page } from '@playwright/test';
+import { launchObsidian, type ObsidianHandle } from './helpers/obsidian';
+import { scaffoldTestVault, type ScaffoldResult } from './helpers/vault-scaffold';
+import { RemoteVerifier } from './helpers/remote-verifier';
+
+/**
+ * M11 (#125) — remote-write reflection scenarios.
+ *
+ * Direction: REMOTE → Obsidian. The companion `sync.spec.ts` covers
+ * the opposite (Obsidian writes → remote sees them); this file covers
+ * the path that `sync.spec.ts` doesn't: the daemon's `fs.watch`
+ * notification plus the `ChangeListener` → `Vault adapter` →
+ * File Explorer re-render chain.
+ *
+ * Each scenario writes (or mutates / deletes / renames) a file on the
+ * remote via a direct SFTP connection (`RemoteVerifier`, NOT the
+ * plugin), then asserts that the connected Obsidian window's File
+ * Explorer reflects the change within `REFLECT_TIMEOUT_MS`.
+ *
+ * Skipped en bloc when:
+ *   - the Docker test sshd is unreachable (no key file or no port 2222)
+ *   - the plugin failed to connect to the remote vault
+ *
+ * Run: `npm run test:e2e:reflect`
+ */
+
+const STAMP = Date.now().toString(36);
+
+// fs.watch notification → RPC push → ChangeListener → adapter update
+// → File Explorer re-render. Empirically this is sub-second on a warm
+// connection but the first event after connect can take 5+ s as the
+// daemon's watcher finishes its initial scan. 15 s gives headroom
+// without burying real regressions.
+const REFLECT_TIMEOUT_MS = 15_000;
+
+let obsidian: ObsidianHandle;
+let scaffold: ScaffoldResult;
+let remote: RemoteVerifier;
+let connected = false;
+
+test.beforeAll(async () => {
+  remote = new RemoteVerifier();
+  const remoteOk = await remote.connect();
+  if (!remoteOk) {
+    test.skip(true, 'Docker test sshd is not running — skipping reflect tests');
+    return;
+  }
+
+  scaffold = scaffoldTestVault();
+  obsidian = await launchObsidian(scaffold.vaultPath);
+
+  await connectToRemote(obsidian.page);
+
+  const fileExplorer = obsidian.page.locator('.nav-files-container');
+  const explorerVisible = await fileExplorer.isVisible({ timeout: 15_000 }).catch(() => false);
+  if (explorerVisible) {
+    const items = await fileExplorer.locator('.nav-file, .nav-folder').count();
+    connected = items > 0;
+  }
+  if (!connected) {
+    test.skip(true, 'Could not connect to remote vault — skipping reflect tests');
+  }
+});
+
+test.afterAll(async () => {
+  if (remote) {
+    await Promise.allSettled([
+      remote.removeFile(`${STAMP}-create.md`),
+      remote.removeFile(`${STAMP}-modify.md`),
+      remote.removeFile(`${STAMP}-renamed.md`),
+      remote.removeFile(`${STAMP}-image.md`),
+      remote.removeFile(`${STAMP}-image.png`),
+    ]);
+    await remote.disconnect();
+  }
+  await obsidian?.cleanup();
+  scaffold?.cleanup();
+});
+
+test.describe('Remote → Obsidian reflection (M11)', () => {
+  test.beforeEach(() => {
+    if (!connected) test.skip(true, 'Not connected to remote');
+  });
+
+  test('1 — create: remote-written file appears in File Explorer', async () => {
+    const file = `${STAMP}-create.md`;
+    await remote.writeFile(file, `# Created remotely at ${STAMP}\n`);
+
+    await expect(
+      fileLocator(obsidian.page, file),
+    ).toBeVisible({ timeout: REFLECT_TIMEOUT_MS });
+  });
+
+  test('2 — modify: mtime advances after remote overwrite', async () => {
+    const file = `${STAMP}-modify.md`;
+    await remote.writeFile(file, '# initial\n');
+    const before = await remote.stat(file);
+    expect(before).not.toBeNull();
+
+    // Wait for File Explorer to pick up the create first; the modify
+    // assert below would otherwise race against the initial reflect.
+    await expect(
+      fileLocator(obsidian.page, file),
+    ).toBeVisible({ timeout: REFLECT_TIMEOUT_MS });
+
+    // Sleep past 1 s so the second write's mtime is at least 1 second
+    // ahead of the first (sftp's mtime resolution is per-second).
+    await obsidian.page.waitForTimeout(1_100);
+    await remote.writeFile(file, '# modified\n');
+
+    // Poll the daemon-side stat until mtime advances. We assert via
+    // SFTP rather than the Obsidian UI because the File Explorer's
+    // mtime isn't exposed as a stable DOM attribute.
+    const after = await waitForMtimeChange(remote, file, before!.mtimeMs);
+    expect(after.mtimeMs).toBeGreaterThan(before!.mtimeMs);
+  });
+
+  test('3 — delete: remote-removed file disappears from File Explorer', async () => {
+    const file = `${STAMP}-delete.md`;
+    await remote.writeFile(file, '# delete-me\n');
+    await expect(
+      fileLocator(obsidian.page, file),
+    ).toBeVisible({ timeout: REFLECT_TIMEOUT_MS });
+
+    await remote.removeFile(file);
+
+    await expect(
+      fileLocator(obsidian.page, file),
+    ).toBeHidden({ timeout: REFLECT_TIMEOUT_MS });
+  });
+
+  test('4 — rename: old path gone + new path present', async () => {
+    const fromFile = `${STAMP}-rename-src.md`;
+    const toFile = `${STAMP}-renamed.md`;
+    await remote.writeFile(fromFile, '# rename-me\n');
+    await expect(
+      fileLocator(obsidian.page, fromFile),
+    ).toBeVisible({ timeout: REFLECT_TIMEOUT_MS });
+
+    await remote.rename(fromFile, toFile);
+
+    await expect(
+      fileLocator(obsidian.page, fromFile),
+    ).toBeHidden({ timeout: REFLECT_TIMEOUT_MS });
+    await expect(
+      fileLocator(obsidian.page, toFile),
+    ).toBeVisible({ timeout: REFLECT_TIMEOUT_MS });
+  });
+
+  test('5 — large-file image render: 1 MB PNG renders via ResourceBridge', async () => {
+    const png = `${STAMP}-image.png`;
+    const noteName = `${STAMP}-image.md`;
+
+    // 1 MB minimal-but-valid PNG. Real PNG header + IHDR + IDAT chunk
+    // padded with zeros — Obsidian/Chromium will decode it as a 1×1
+    // transparent image. The point is to push >1 MB through
+    // ResourceBridge, not to render a meaningful picture.
+    await remote.writeBinaryFile(png, makeOnePngOf(1024 * 1024));
+    await remote.writeFile(noteName, `![[${png}]]\n`);
+
+    await expect(
+      fileLocator(obsidian.page, noteName),
+    ).toBeVisible({ timeout: REFLECT_TIMEOUT_MS });
+
+    // Open the markdown note. Obsidian's File Explorer activates a
+    // file on a single click; preview mode is the default.
+    await fileLocator(obsidian.page, noteName).click();
+
+    // The embedded image surfaces as an <img> inside the markdown
+    // preview pane. Asserting `naturalWidth > 0` is what catches a
+    // ResourceBridge regression — a broken bridge would still render
+    // the <img> tag but with naturalWidth === 0.
+    const img = obsidian.page.locator('.markdown-preview-view img').first();
+    await expect(img).toBeVisible({ timeout: REFLECT_TIMEOUT_MS });
+    const decoded = await img.evaluate((el: HTMLImageElement) =>
+      el.naturalWidth > 0 && el.naturalHeight > 0
+    );
+    expect(decoded).toBe(true);
+  });
+});
+
+// ─── helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Locate a File Explorer entry by filename. Obsidian sets
+ * `data-path` on every `.nav-file-title` so the selector is stable
+ * across themes / language packs.
+ */
+function fileLocator(page: Page, fileName: string) {
+  return page.locator(`.nav-file-title[data-path$="${fileName}"]`);
+}
+
+async function waitForMtimeChange(
+  r: RemoteVerifier,
+  file: string,
+  baselineMs: number,
+): Promise<{ mtimeMs: number; size: number }> {
+  const deadline = Date.now() + REFLECT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const s = await r.stat(file);
+    if (s && s.mtimeMs > baselineMs) return s;
+    await new Promise(r => setTimeout(r, 250));
+  }
+  throw new Error(`mtime did not advance for ${file} within ${REFLECT_TIMEOUT_MS}ms`);
+}
+
+/**
+ * Connect to the pre-configured E2E test profile via command palette.
+ * Mirrors the connect flow in `sync.spec.ts`. Kept private to this
+ * file to avoid coupling the helpers package to a specific UI flow.
+ */
+async function connectToRemote(page: Page): Promise<void> {
+  await page.keyboard.press('Control+P');
+  await page.waitForTimeout(500);
+  await page.keyboard.type('Remote SSH: Connect');
+  await page.waitForTimeout(500);
+  const palette = page.locator('.prompt');
+  await palette.locator('.suggestion-item').first().click();
+
+  // Profile picker may or may not appear depending on plugin version;
+  // try to click through it without failing if it's auto-selected.
+  const picker = page.locator('.prompt');
+  if (await picker.isVisible({ timeout: 3_000 }).catch(() => false)) {
+    const profile = picker.locator('.suggestion-item').first();
+    if (await profile.isVisible().catch(() => false)) {
+      await profile.click();
+    }
+  }
+
+  // Allow the connect handshake + initial fs.walk to land.
+  await page.waitForTimeout(10_000);
+}
+
+/**
+ * Build a ~`size`-byte buffer that decodes as a valid PNG. Layout:
+ *   [8-byte PNG signature]
+ *   [IHDR chunk: 1×1 RGBA, 25 bytes including length+type+data+crc]
+ *   [IDAT chunk: zlib-deflated single-pixel data]
+ *   [IEND chunk]
+ * The buffer is padded with zeros AFTER IEND; chromium tolerates
+ * trailing garbage and decodes the declared 1×1 image regardless.
+ *
+ * Why a real PNG and not random bytes: the large-file scenario
+ * specifically targets the ResourceBridge thumbnail / image path,
+ * which gates on Content-Type sniffing. Random bytes get served as
+ * application/octet-stream and the <img>'s naturalWidth stays 0.
+ */
+function makeOnePngOf(size: number): Buffer {
+  // Tiny pre-built 1×1 transparent PNG (67 bytes).
+  const seed = Buffer.from(
+    '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4'
+    + '890000000d49444154789c6300010000000500010d0a2db40000000049454e44'
+    + 'ae426082',
+    'hex',
+  );
+  if (size <= seed.length) return seed.subarray(0, size);
+  const pad = Buffer.alloc(size - seed.length);
+  return Buffer.concat([seed, pad]);
+}

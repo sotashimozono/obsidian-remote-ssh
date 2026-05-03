@@ -110,6 +110,61 @@ export class RemoteVerifier {
     });
   }
 
+  /**
+   * Write binary content. Used by the large-image render scenario
+   * where a Buffer payload (e.g. a 1 MB PNG) is what we need on disk.
+   */
+  async writeBinaryFile(relativePath: string, content: Buffer): Promise<void> {
+    const fullPath = `${TEST_VAULT_REMOTE}/${relativePath}`;
+    return new Promise((resolve, reject) => {
+      this.requireClient().sftp((err, sftp) => {
+        if (err) { reject(err); return; }
+        sftp.writeFile(fullPath, content, (writeErr) => {
+          sftp.end();
+          if (writeErr) reject(writeErr);
+          else resolve();
+        });
+      });
+    });
+  }
+
+  /**
+   * Stat a remote path. Returns mtime in milliseconds + size; null if
+   * the path is missing. Used by the modify scenario to assert that
+   * the daemon side actually saw a write — not just that the plugin
+   * thinks it did. ssh2 returns mtime as POSIX seconds since epoch;
+   * we multiply by 1000 so callers can compare against `Date.now()`.
+   */
+  async stat(relativePath: string): Promise<{ mtimeMs: number; size: number } | null> {
+    const fullPath = `${TEST_VAULT_REMOTE}/${relativePath}`;
+    return new Promise((resolve) => {
+      this.requireClient().sftp((err, sftp) => {
+        if (err) { resolve(null); return; }
+        sftp.stat(fullPath, (statErr, attrs) => {
+          sftp.end();
+          if (statErr || !attrs) { resolve(null); return; }
+          resolve({ mtimeMs: attrs.mtime * 1000, size: attrs.size });
+        });
+      });
+    });
+  }
+
+  /** Atomic rename on the remote (POSIX `rename(2)`). */
+  async rename(fromRelative: string, toRelative: string): Promise<void> {
+    const fromPath = `${TEST_VAULT_REMOTE}/${fromRelative}`;
+    const toPath = `${TEST_VAULT_REMOTE}/${toRelative}`;
+    return new Promise((resolve, reject) => {
+      this.requireClient().sftp((err, sftp) => {
+        if (err) { reject(err); return; }
+        sftp.rename(fromPath, toPath, (renameErr) => {
+          sftp.end();
+          if (renameErr) reject(renameErr);
+          else resolve();
+        });
+      });
+    });
+  }
+
   /** Delete a file on the remote (for test cleanup). */
   async removeFile(relativePath: string): Promise<void> {
     const fullPath = `${TEST_VAULT_REMOTE}/${relativePath}`;

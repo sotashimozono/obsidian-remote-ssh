@@ -1,6 +1,6 @@
 {
   "name": "obsidian-remote-ssh",
-  "version": "0.4.126",
+  "version": "0.4.127",
   "description": "VS Code Remote SSH-like experience for Obsidian",
   "main": "main.js",
   "scripts": {
@@ -16,6 +16,8 @@
     "test:replay": "node scripts/replay-prev-tests.mjs",
     "test:integration": "vitest run --config vitest.integration.config.ts --exclude **/perf.sync.bench.test.ts",
     "test:integration:bench": "vitest run --config vitest.integration.config.ts tests/integration/perf.sync.bench.test.ts",
+    "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "test:e2e:reflect": "playwright test --config e2e/playwright.config.ts e2e/reflect.spec.ts",
     "sshd:start": "node scripts/start-test-sshd.mjs",
     "sshd:stop": "node scripts/stop-test-sshd.mjs",
     "lint": "eslint \"src/**/*.ts\"",
@@ -37,6 +39,7 @@
   },
   "devDependencies": {
     "@eslint-community/eslint-plugin-eslint-comments": "^4.7.1",
+    "@playwright/test": "^1.59.1",
     "@types/node": "^25.6.0",
     "@types/ssh2": "^1.11.19",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
