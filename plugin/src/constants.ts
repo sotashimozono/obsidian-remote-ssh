@@ -25,6 +25,12 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   // Phase 4 marker for shadow vaults; null on a normal vault. Only
   // `ShadowVaultBootstrap` writes a non-null value.
   autoConnectProfileId: null,
+  // #149 terminal pane defaults — readable on a typical screen, holds
+  // ~30 screens of scrollback at 24 rows. The View also has fallbacks
+  // (`?? 12`, `?? 1000`) so removing these from data.json by hand is
+  // safe; these constants are the canonical "user hasn't customised" values.
+  terminalFontSize: 12,
+  terminalScrollback: 1000,
 };
 
 export const MAX_RETRY = 4;

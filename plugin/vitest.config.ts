@@ -43,6 +43,10 @@ export default defineConfig({
         'src/ui/PendingEditsModal.ts',
         'src/ui/PendingPluginsModal.ts',
         'src/ui/RemotePathBrowserModal.ts',
+        // #149 — heavy xterm.js DOM rendering + ResizeObserver makes
+        // jsdom unit tests impractical. Manual smoke against a real
+        // Obsidian window covers this; RemoteShell has its own unit tests.
+        'src/ui/RemoteTerminalView.ts',
         'src/ui/StatusBar.ts',
         'src/ui/ThreeWayMergeModal.ts',
         'src/ui/WriteConflictModal.ts',

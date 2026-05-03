@@ -1,5 +1,5 @@
 import { Client } from 'ssh2';
-import type { ConnectConfig, KeyboardInteractiveCallback, Prompt, SFTPWrapper, Stats } from 'ssh2';
+import type { ClientChannel, ConnectConfig, KeyboardInteractiveCallback, Prompt, PseudoTtyOptions, SFTPWrapper, Stats } from 'ssh2';
 import type { Duplex } from 'stream';
 import type { RemoteEntry, RemoteStat, SshProfile } from '../types';
 import { TMP_SUFFIX } from '../constants';
@@ -315,6 +315,47 @@ export class SftpClient {
     const sftp = this.requireSftp();
     return new Promise((resolve, reject) => {
       sftp.fastPut(localPath, remotePath, { concurrency: 4 }, err => err ? reject(asError(err)) : resolve());
+    });
+  }
+
+  /**
+   * Open an interactive shell channel (PTY-backed) on the same SSH
+   * connection that already carries SFTP / RPC. The returned
+   * `ClientChannel` is a Duplex — write keystrokes in, read terminal
+   * output out — plus `setWindow(rows, cols, h, w)` for live resize.
+   *
+   * `cmd` is optional; when supplied, ssh2 uses `exec` on the channel
+   * with the PTY attached so the user can launch a specific shell or
+   * program (e.g. `/usr/bin/zsh -l`). When omitted, the remote opens
+   * the user's default login shell.
+   *
+   * Errors propagate via Promise rejection. The most common one in
+   * the wild is `Channel open failure: administratively prohibited`,
+   * which means the remote sshd has `PermitTTY no` — surface as a
+   * notice telling the user to flip it on.
+   */
+  async openShell(opts: {
+    rows: number;
+    cols: number;
+    term?: string;
+    cmd?: string;
+  }): Promise<ClientChannel> {
+    const client = this.requireClient();
+    const pty: PseudoTtyOptions = {
+      rows: opts.rows,
+      cols: opts.cols,
+      term: opts.term ?? 'xterm-256color',
+    };
+    return new Promise((resolve, reject) => {
+      const cb = (err: Error | undefined, stream: ClientChannel): void => {
+        if (err) reject(asError(err));
+        else resolve(stream);
+      };
+      if (opts.cmd) {
+        client.exec(opts.cmd, { pty }, cb);
+      } else {
+        client.shell(pty, cb);
+      }
     });
   }
 

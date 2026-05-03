@@ -17,6 +17,7 @@ import type { ReconnectState } from './transport/ReconnectManager';
 import * as fs from 'fs';
 import { StatusBar } from './ui/StatusBar';
 import { ConnectModal } from './ui/ConnectModal';
+import { RemoteTerminalView, VIEW_TYPE_REMOTE_TERMINAL } from './ui/RemoteTerminalView';
 import { SettingsTab } from './settings/SettingsTab';
 import { logger } from './util/logger';
 import { classifyToNotice } from './transport/errorTaxonomy';
@@ -64,6 +65,15 @@ export default class RemoteSshPlugin extends Plugin {
   /** Owns the daemon fs.watch subscription + notification dispatch. */
   private fsChangeListener!: FsChangeListener;
   private observability: ObservabilityInstaller | null = null;
+  /**
+   * #149 — re-entrant guard for `openRemoteTerminal()`. The
+   * `addCommand` checkCallback doesn't debounce, so rapid command-
+   * palette activations would otherwise both pass the
+   * `getLeavesOfType(...).length === 0` check (because the first
+   * call's `await leaf.setViewState` is still pending) and create
+   * two terminal leaves with two RemoteShell channels.
+   */
+  private openingTerminal = false;
 
   async onload() {
     await this.loadSettings();
@@ -195,6 +205,26 @@ export default class RemoteSshPlugin extends Plugin {
       id: 'show-onboarding',
       name: 'Set up first remote vault',
       callback: () => this.showOnboarding(),
+    });
+
+    // #149 — terminal pane. View registered unconditionally so a
+    // shadow vault that's still warming up can re-open a leaf saved
+    // in workspace.json before the connection completes; the View
+    // itself handles the disconnected state.
+    this.registerView(VIEW_TYPE_REMOTE_TERMINAL, leaf => new RemoteTerminalView(leaf, {
+      getClient: () => this.conn.client.isAlive() ? this.conn.client : null,
+      settings: this.settings,
+    }));
+
+    this.addCommand({
+      id: 'open-terminal',
+      name: 'Open remote terminal',
+      checkCallback: (checking) => {
+        const ready = this.conn.client.isAlive();
+        if (checking) return ready;
+        if (ready) void this.openRemoteTerminal();
+        return true;
+      },
     });
 
     // Phase 4 + 6C-prep: if this vault was opened with an
@@ -567,6 +597,10 @@ export default class RemoteSshPlugin extends Plugin {
       || this.conn.isAlive()
       || this.settings.activeProfileId !== null;
     this.conn.cancelReconnect();
+    // #149 — close the terminal pane(s) before tearing the SSH
+    // session down so the shell channel close fires while the ssh2
+    // Client is still around (cleaner teardown logs).
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_REMOTE_TERMINAL);
     this.adapterMgr.restore();
     await this.conn.disconnectTransport();
     this.setState(SyncState.IDLE);
@@ -575,6 +609,38 @@ export default class RemoteSshPlugin extends Plugin {
       await this.saveSettings();
     }
     if (wasActive) new Notice('Remote SSH: disconnected');
+  }
+
+  /**
+   * Open or reveal the remote terminal pane in the right sidebar.
+   * Re-using an existing leaf keeps the shell channel alive across
+   * focus changes; opening a fresh leaf each time would reset
+   * scrollback and lose any in-flight commands.
+   *
+   * Uses `setActiveLeaf` rather than `revealLeaf` because the latter
+   * requires Obsidian v1.7.2 and our manifest declares
+   * `minAppVersion: 1.4.0` — `setActiveLeaf` has the same observable
+   * effect (focus + render) and has been stable since pre-1.0.
+   */
+  async openRemoteTerminal(): Promise<void> {
+    if (this.openingTerminal) return;
+    this.openingTerminal = true;
+    try {
+      const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_REMOTE_TERMINAL);
+      if (existing.length > 0) {
+        this.app.workspace.setActiveLeaf(existing[0], { focus: true });
+        return;
+      }
+      const leaf = this.app.workspace.getRightLeaf(false);
+      if (!leaf) {
+        new Notice('Remote SSH: no available workspace leaf to open the terminal in');
+        return;
+      }
+      await leaf.setViewState({ type: VIEW_TYPE_REMOTE_TERMINAL, active: true });
+      this.app.workspace.setActiveLeaf(leaf, { focus: true });
+    } finally {
+      this.openingTerminal = false;
+    }
   }
 
   /**

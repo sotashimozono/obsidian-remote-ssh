@@ -107,6 +107,18 @@ export interface PluginSettings {
    */
   telemetryEnabled?: boolean;
   /**
+   * #149 — terminal pane preferences. All optional; the View applies
+   * sensible defaults when missing. `terminalShell` overrides the
+   * remote login shell (e.g. `/usr/bin/zsh -l`); blank/missing means
+   * use the remote user's $SHELL. `terminalFontSize` is xterm.js's
+   * `fontSize` option (px). `terminalScrollback` is the in-memory
+   * line buffer size; only applies for the lifetime of the View
+   * (not persisted across re-opens, per v1 scope).
+   */
+  terminalShell?: string;
+  terminalFontSize?: number;
+  terminalScrollback?: number;
+  /**
    * Shadow-vault marker (Phase 4). When set, the plugin's
    * `onLayoutReady` callback finds the matching profile and
    * automatically connects to it, then runs `VaultModelBuilder` to

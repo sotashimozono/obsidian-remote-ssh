@@ -107,6 +107,62 @@ export class SettingsTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }
         }));
+
+    this.renderTerminalPanel(containerEl);
+  }
+
+  /**
+   * #149 — terminal pane settings. The View reads these on every
+   * `onOpen` (no event subscription), so changes take effect the
+   * next time the user opens the terminal pane. Unset / blank values
+   * fall back to xterm.js defaults via `?? 12 / ?? 1000` in the View.
+   */
+  private renderTerminalPanel(containerEl: HTMLElement) {
+    new Setting(containerEl).setName('Terminal').setHeading();
+
+    new Setting(containerEl)
+      .setName('Shell command')
+      .setDesc(
+        'Override the remote shell. Leave blank to use the remote user\'s '
+        + 'login shell ($SHELL). Example: "/usr/bin/zsh -l".',
+      )
+      .addText(t => t
+        // Description text below names $SHELL explicitly; placeholder
+        // stays linter-friendly with a sentence-case noun phrase.
+        .setPlaceholder('Default login shell')
+        .setValue(this.plugin.settings.terminalShell ?? '')
+        .onChange(async v => {
+          const trimmed = v.trim();
+          this.plugin.settings.terminalShell = trimmed === '' ? undefined : trimmed;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Font size (px)')
+      .addText(t => t
+        .setPlaceholder('12')
+        .setValue(String(this.plugin.settings.terminalFontSize ?? 12))
+        .onChange(async v => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n >= 6 && n <= 32) {
+            this.plugin.settings.terminalFontSize = n;
+            await this.plugin.saveSettings();
+          }
+        }));
+
+    new Setting(containerEl)
+      .setName('Scrollback (lines)')
+      .setDesc('Lines kept in the terminal\'s in-memory buffer. Bigger = more memory; not persisted across re-opens.')
+      .addText(t => t
+        .setPlaceholder('1000')
+        .setValue(String(this.plugin.settings.terminalScrollback ?? 1000))
+        .onChange(async v => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n >= 100 && n <= 100_000) {
+            this.plugin.settings.terminalScrollback = n;
+            await this.plugin.saveSettings();
+          }
+        }));
   }
 
   private renderTelemetryPanel(containerEl: HTMLElement) {
