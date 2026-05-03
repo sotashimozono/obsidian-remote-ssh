@@ -46,6 +46,65 @@
 
 ---
 
+## Why this plugin (vs the alternatives)
+
+Most "edit my vault from anywhere" tooling for Obsidian falls into one
+of three buckets. Each is a great fit for its own use case; this plugin
+sits in a different niche.
+
+### Obsidian Sync (official, paid)
+
+Obsidian's first-party sync service. End-to-end encrypted, zero-config,
+official support, version history. Lives on Obsidian's servers — the
+vault is replicated to every device that has Sync enabled.
+
+**Use it when** you want managed sync, are happy with the subscription,
+and don't need the vault on a specific machine you control.
+
+### File-sync tools (Syncthing, Dropbox, iCloud, OneDrive, …)
+
+The vault is a folder on disk; some external sync tool replicates that
+folder across machines. Each Obsidian instance opens a local copy.
+
+**Use it when** you already run such a tool and the vault fits
+naturally into your existing sync setup.
+
+### `obsidian-git` (community plugin)
+
+Treats the vault as a git repo and runs `git pull` / `commit` / `push`
+against it. The repo lives on your local disk; the remote is GitHub or
+a self-hosted git server.
+
+**Use it when** you want git history per save and are comfortable
+resolving merge conflicts in a terminal.
+
+### `obsidian-remote-ssh` (this plugin) — the niche
+
+The vault **only ever lives on a remote SSH host you control**. There
+is no second copy. Reads and writes go through a small Go daemon the
+plugin auto-deploys on first connect; your local Obsidian opens a
+"shadow" window showing a real-time view of the remote files.
+
+**Use it when:**
+
+- The vault is bigger than you want to replicate to every laptop or
+  phone (a 50 k-file research vault, a media-attachment-heavy vault).
+- The remote is the *source of truth* and other tools (cron jobs,
+  scripts, an LLM pipeline, the user's own `git`) operate on it
+  directly. Local sync would race those writers.
+- You don't want a third party to ever hold the vault — managed sync
+  is off the table for legal, privacy, or compliance reasons.
+- You want remote-side tooling (the integrated terminal pane,
+  Templater scripts that shell out, plugins that import `.enex` via a
+  local script) to act on the actual canonical files, not a synced
+  copy.
+
+If your needs match any of the alternatives' use-cases, those are
+simpler choices. This plugin is built for the case where "the vault
+lives over there, full stop" is the actual requirement.
+
+---
+
 ## Install
 
 > ⚠️ The plugin is not yet in the Obsidian community plugin browser.
