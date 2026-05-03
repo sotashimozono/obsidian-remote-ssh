@@ -88,6 +88,22 @@ jobs:
             exit 1
           fi
 
+      - name: manifest-beta.json must equal manifest.json (pre-1.0)
+        # BRAT (--beta) pulls manifest-beta.json from HEAD of the
+        # default branch. Pre-1.0 every merge IS a beta — there's no
+        # separate `next` branch yet — so beta and stable manifests
+        # must stay byte-identical. Once a `next` branch is cut for
+        # post-1.0 work, drop this assert and let manifest-beta.json
+        # advance independently on `next`.
+        run: |
+          if ! diff -q manifest.json manifest-beta.json > /dev/null; then
+            echo "::error::manifest-beta.json content differs from manifest.json."\
+              " Pre-1.0 they must match. Re-run 'cd plugin && npm version <same>'"\
+              " (the bump script syncs both)."
+            diff manifest.json manifest-beta.json || true
+            exit 1
+          fi
+
       - name: PR version must be strictly greater than base
         run: |
           # Pure-shell semver compare: strip pre-release suffix, split,

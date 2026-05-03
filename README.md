@@ -48,11 +48,35 @@
 
 ## Install
 
-> ⚠️ The plugin is not yet in the Obsidian community plugin browser. You can
-> install via [BRAT](https://github.com/TfTHacker/obsidian42-brat) (add
-> `sotashimozono/obsidian-remote-ssh`) or manually from a GitHub Release.
+> ⚠️ The plugin is not yet in the Obsidian community plugin browser.
+> Install via **BRAT** (recommended for testers — auto-updates) or manually
+> from a [GitHub Release](https://github.com/sotashimozono/obsidian-remote-ssh/releases).
 
-### 1 — Download the latest release
+### Option A — BRAT (Beta Reviewers Auto-update Tool)
+
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) is itself a community
+plugin that auto-installs and auto-updates beta releases of other plugins.
+
+1. Install **Obsidian42 - BRAT** from Settings → Community plugins → Browse.
+2. Open BRAT's settings → click **"Add Beta plugin"** (not "...with frozen version").
+3. Paste `sotashimozono/obsidian-remote-ssh`. Leave version blank.
+4. BRAT downloads `main.js` + `manifest-beta.json` + `styles.css` from the
+   most recent release on this repo and installs them under
+   `<vault>/.obsidian/plugins/remote-ssh/`.
+5. Toggle **Remote SSH** on under Community plugins.
+
+You still have to drop a **daemon binary** for your remote OS/arch into
+`<vault>/.obsidian/plugins/remote-ssh/server-bin/` — see
+[Verifying the daemon](#verifying-the-daemon-optional-but-recommended) below.
+BRAT only handles the plugin itself.
+
+> Pre-1.0 every merge to `main` ships as a beta. The `manifest-beta.json` and
+> `manifest.json` channels are byte-identical until a 1.0 stable line is cut,
+> so BRAT's `--beta` mode and stable installs receive the same builds today.
+
+### Option B — Manual install
+
+#### 1 — Download the latest release
 
 Go to the [Releases page](https://github.com/sotashimozono/obsidian-remote-ssh/releases),
 find the most recent tag, and download:
@@ -70,7 +94,7 @@ The daemon binary is what the plugin auto-uploads to your remote on first
 connect. The OS/arch picks the binary that runs on the **remote**, not on
 the machine where Obsidian is installed.
 
-### 2 — Drop the files into your vault
+#### 2 — Drop the files into your vault
 
 Create the plugin folder and place the files like this:
 
@@ -86,7 +110,7 @@ Create the plugin folder and place the files like this:
           obsidian-remote-server-linux-amd64    ← rename / pick yours
 ```
 
-### 3 — Enable in Obsidian
+#### 3 — Enable in Obsidian
 
 Settings → Community plugins → "Installed plugins" → toggle **Remote SSH**
 on. Reload the vault if Obsidian doesn't pick it up immediately.

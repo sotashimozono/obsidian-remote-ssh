@@ -263,6 +263,7 @@ jobs:
           files: |
             plugin/main.js
             plugin/manifest.json
+            manifest-beta.json
             plugin/styles.css
             server/dist/obsidian-remote-server-linux-amd64
             server/dist/obsidian-remote-server-linux-amd64.bundle
