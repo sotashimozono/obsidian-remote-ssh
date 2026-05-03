@@ -43,7 +43,7 @@ Numbers in the table reflect a `~/work/VaultDev`-class remote
 | QuickLatex | renders LaTeX inline. Pure UI, no FS access | ✅ verified-by-architecture | Not affected. |
 | Importer | converts external formats (Evernote `.enex`, etc.) to MD using `path.join(getBasePath(), folder.path)` as `outputDir` for the Yarle Evernote converter (Node `fs.writeFile`) | 🟡 expected (smoke pending after #170) | `getBasePath()` now returns the shadow-vault local root via #170, so the converter writes files into the shadow dir; the file-watcher propagates them to the remote. Initial conversion of a large `.enex` may produce many writes; watch for queue lag. |
 | Copilot | reads `getBasePath?.()` then falls back to `basePath` for local-context AI indexing (`src/miyo/miyoUtils.ts`) | 🟡 expected (smoke pending after #170) | Either form now resolves to the shadow-vault local root via #170, so Copilot's local-context indexing operates against the synced copy. The remote is the source of truth; the index reflects whatever has been mirrored to the shadow dir. |
-| Git (Vinzent03) | uses `simple-git` with `getBasePath()` as the working directory; spawns the local `git` binary | ❌ broken (un-fixable at this layer) | Patching `basePath` to the shadow-vault path lets `simple-git` run, but it operates on the *shadow* git repo, not the remote one — silently mis-routing commits. A "remote git over SSH" feature would be needed (tracked in #150). |
+| Git (Vinzent03) | desktop hardcodes `SimpleGit` (spawns local `git` against `getBasePath()`); mobile uses `IsomorphicGit` via `MyAdapter(vault.adapter)` (pure JS, no shell-out) | ❌ broken on desktop / fixable upstream | The desktop path silently mis-routes commits to the shadow git repo, not the remote. The isomorphic-git path *would* work transparently against our remote adapter but is gated behind `Platform.isDesktopApp` with no toggle. **We won't ship a workaround** — see [#150](../../issues/150) for the rationale. Users wanting git on a remote vault should use the integrated terminal pane ([#149](../../issues/149)) or file a feature request at Vinzent03/obsidian-git for a `forceIsomorphicGit` toggle. |
 | Excalidraw | drawings stored as `.excalidraw.md` (JSON) or embedded markdown; embedded images go through `getResourcePath`. `pathToFileURL(adapter.basePath)` is used as a vault-membership prefix check (`src/utils/fileUtils.ts:343`). | ✅ verified-by-harness (#124 F13) | The `RPC` transport is required for the ResourceBridge to serve images. On `SFTP` transport, embedded images fall back to a broken `data:` URL. First read of a large `.excalidraw.md` pulls the whole JSON; subsequent edits stream cleanly. After #170 the prefix check stays internally consistent (both sides see the shadow path). F13 harness scenario (`plugin/tests/compat/excalidraw.test.ts`) covers `.excalidraw.md` text round-trip + binary attachment CRUD with byte-exact equality on a 1 KB cyclic blob and a 4 KB PNG-magic + xorshift32 payload. |
 | Remotely Save | `getBasePath().split("?")[0]` as a vault-instance ID for cloud-sync conflict detection (`src/main.ts:1736`) | 🟡 expected | Shadow-vault path is fine: gives a stable per-machine ID after #170. Cloud-sync semantics aren't affected. |
 | Tasks | scans `metadataCache.getFileCache(file).listItems` across every markdown file for `- [ ]` checkboxes; aggregates open / done counts | ✅ verified-by-harness (#124 F14) | Pure `metadataCache` reader, no `basePath` access. F14 harness scenario (`plugin/tests/compat/tasks.test.ts`) drives the per-file aggregation against a 10-file fixture vault (mixed open/done counts, frontmatter-tagged entries, empty/no-task negative-controls) and asserts vault-wide totals (18 open / 16 done / 34 total / 8 with-tasks) plus DataviewJS-shape filters (project-tag, completion ratio, top-3 by open count). |
@@ -133,8 +133,12 @@ Things that aren't a specific plugin but trip plugins in general:
   Obsidian version upgrades. See the **basePath compat survey** section
   below (#133, 2026-04-29) for the top-20 plugin survey, and #170 for
   the implementation. **Exception:** plugins that shell out to a local
-  binary (notably obsidian-Git via `simple-git`) will operate on the
-  shadow git repo rather than the remote one — patching can't fix this.
+  binary (notably obsidian-Git's `SimpleGit` desktop path) operate on
+  the shadow git repo rather than the remote one — patching can't fix
+  this from our side. obsidian-Git's bundled `IsomorphicGit` mode
+  *would* work transparently against our adapter but is gated to
+  mobile-only by the upstream; see the table row on line 46 for the
+  user-facing recommendation.
 - **Worker threads** spawned by plugins are independent JS contexts —
   they don't see our patched `app.vault.adapter`. Plugins that pass file
   paths to a worker for parsing (some search-heavy plugins do this)
@@ -178,8 +182,12 @@ changes ship with this survey.
 - **6 / 20** plugins read `basePath` (or the equivalent
   `getBasePath()` method) from the adapter.
 - **3 are high-risk** (`fs-read`): Templater, Kanban, Importer.
-- **1 is fundamentally incompatible** even with patching: Git
-  (Vinzent03), via `simple-git` shelling out to a local `git` binary.
+- **1 is incompatible without an upstream change**: Git (Vinzent03)
+  hardcodes `SimpleGit` (shells out to local `git`) on desktop. Its
+  bundled `IsomorphicGit` path uses a `vault.adapter` wrapper and
+  would work against our remote adapter, but the gating
+  (`Platform.isDesktopApp`) has no toggle. Tracked in [#150](../../issues/150)
+  as won't-do; see table row on line 46.
 - The method form `getBasePath()` is more common in real usage than
   the property `.basePath` (Templater, Importer, Copilot, Remotely
   Save, Git all prefer it). **Both must be patched** if we ship a fix.
@@ -199,7 +207,7 @@ compare, child-process cwd, etc.).
 | Tasks | 3.4M | none in plugin source | none | none | n/a |
 | Advanced Tables | 2.8M | none | none | none | n/a |
 | Calendar | 2.6M | none | none | none | n/a |
-| Git (Vinzent03) | 2.5M | `src/main.ts:466` — `path.join(getBasePath(), filePath)` for `electron.shell.showItemInFolder`; `simpleGit.ts:44` uses `getBasePath()` as `simple-git` `baseDir` (spawns local `git`) | fs-read + child-process | high (un-fixable) | `simple-git` shells out to the *local* `git` binary against a *local* path; patching `basePath` to the shadow vault would silently mis-route operations. Document as known-incompatible |
+| Git (Vinzent03) | 2.5M | `src/main.ts:466` — `path.join(getBasePath(), filePath)` for `electron.shell.showItemInFolder`; `simpleGit.ts:44` uses `getBasePath()` as `simple-git` `baseDir` (spawns local `git`); `gitManager/myAdapter.ts:10-37` wraps `vault.adapter` for `IsomorphicGit` (mobile-only path) | fs-read + child-process | high (fixable upstream) | `SimpleGit` (desktop) shells out to local `git` against a local path; patching `basePath` would silently mis-route. `IsomorphicGit` (mobile, gated `Platform.isDesktopApp`) routes through `vault.adapter` and would work transparently against our remote adapter — but the gating has no toggle. We won't ship a workaround; see [#150](../../issues/150) and table row on line 46 |
 | Style Settings | 2.3M | none | none | none | n/a |
 | Kanban | 2.2M | `src/components/Item/helpers.ts:450` — `(adapter as any).basePath` joined with attachment path, fed to `fs.copyFile` on Electron clipboard image paste | fs-read | high | Patch returns shadow-vault path; `fs.copyFile` lands in shadow vault and syncs up |
 | Iconize | 2.0M | none | none | none | n/a |
@@ -225,11 +233,15 @@ compare, child-process cwd, etc.).
   display/metadata cases** (Excalidraw URL-prefix compare, Remotely
   Save instance ID): both want a stable, internally consistent local
   path, which the shadow-vault path provides.
-- **obsidian-Git is the one genuine casualty** — `simple-git` shells
-  out to a local `git` binary, so even with `basePath` patched it
-  would operate on the shadow vault rather than the canonical remote
-  one. Document as incompatible; a separate "remote git over SSH"
-  feature would be the only fix.
+- **obsidian-Git is the one casualty** — desktop hardcodes `SimpleGit`,
+  which shells out to a local `git` binary, so even with `basePath`
+  patched it would operate on the shadow vault rather than the
+  canonical remote one. obsidian-Git's bundled `IsomorphicGit` path
+  *does* go through `vault.adapter` and would work against our remote
+  adapter transparently, but it's gated `Platform.isDesktopApp` with
+  no toggle. We won't ship a workaround (see [#150](../../issues/150));
+  users who want git on a remote vault should use the integrated
+  terminal pane ([#149](../../issues/149)).
 - **14 / 20 top plugins read no `basePath` at all**, so the blast
   radius of the current "do nothing" stance is ~30% of the most-
   installed plugins. That is too large to ignore but small enough
