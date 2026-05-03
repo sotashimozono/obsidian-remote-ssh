@@ -2,10 +2,16 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from
 import * as fs from 'node:fs';
 import type { EventRef, Vault } from 'obsidian';
 import { perfTracer } from '../../src/util/PerfTracer';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { SftpDataAdapter } from '../../src/adapter/SftpDataAdapter';
 import { RpcRemoteFsClient } from '../../src/adapter/RpcRemoteFsClient';
 import { ReadCache } from '../../src/cache/ReadCache';
 import { DirCache } from '../../src/cache/DirCache';
+import { ConflictResolver, type ThreeWayPanes } from '../../src/conflict/ConflictResolver';
+import { AncestorTracker } from '../../src/conflict/AncestorTracker';
+import { OfflineQueue, type QueuedOp } from '../../src/offline/OfflineQueue';
+import { QueueReplayer } from '../../src/offline/QueueReplayer';
 import { VaultModelBuilder, type ObsidianClassDeps } from '../../src/vault/VaultModelBuilder';
 import type { FsChangedParams } from '../../src/proto/types';
 import { deployTestDaemon, LOCAL_DAEMON_BINARY, type DeployedDaemon } from './helpers/deployDaemonOnce';
@@ -305,16 +311,24 @@ describe('Phase C E2E — sync reflect matrix', () => {
     expect(fakeFE.snapshot().paths).toContain(target);
   });
 
-  it('large file (1 MB) — bandwidth path exercises daemon + reader stat', async () => {
+  it('large file (10 MB) — bandwidth path exercises daemon + reader stat', async () => {
+    // #109 spec: 10 MB pushes the wire-transfer envelope and verifies
+    // the daemon doesn't time out on long writes + the reader's
+    // applyFsChange survives a slow stat against a freshly-flushed
+    // multi-MB inode. Budget x20 (vs x5 for the old 1 MB case) gives
+    // generous headroom for CI's typical SSH RTT without burying real
+    // regressions: at ~50 MB/s effective sftp throughput the wire
+    // transfer alone is ~200 ms, plus the reader's fs.changed → stat
+    // round-trip.
     const target = `${subdirRel}/note-large.bin`;
-    const data = Buffer.alloc(1024 * 1024, 0x42);
+    const data = Buffer.alloc(10 * 1024 * 1024, 0x42);
 
     const r = await assertSyncReflect({
-      label: 'large-file',
+      label: 'large-file-10mb',
       op: () => writerAdapter.writeBinary(target, asArrayBuffer(data)),
       reader: { fakeFE },
       expect: { path: target, event: 'create' },
-      budgetMs: PER_CASE_BUDGET_MS * 5,
+      budgetMs: PER_CASE_BUDGET_MS * 20,
     });
 
     expect(r.e2eMs).toBeGreaterThan(0);
@@ -363,6 +377,167 @@ describe('Phase C E2E — sync reflect matrix', () => {
     // The remote still holds writer A's content.
     const final = await writerAdapter.read(target);
     expect(final).toBe('version-2');
+  });
+
+  it('3-way conflict — onTextConflict receives {ancestor, mine, theirs} and keep-mine wins', async () => {
+    // #109: deeper variant — the previous test asserted the daemon
+    // rejects with PreconditionFailed; this one wires a real
+    // ConflictResolver + AncestorTracker on a third "Bob" adapter
+    // and verifies the full 3-way merge pipeline:
+    //
+    //   Alice creates "version-1"  (becomes Bob's ancestor)
+    //   Bob reads               → ancestor remembered
+    //   Alice overwrites with "alice-edit"   (becomes "theirs" on Bob)
+    //   Bob writes "bob-edit"   → PreconditionFailed
+    //     → ConflictResolver.resolve → onTextConflict({...})
+    //     → stub returns keep-mine
+    //   Remote ends up holding "bob-edit"
+    //
+    // Validates the production wiring used by ThreeWayMergeModal —
+    // the previous test only proved the daemon rejects, not that the
+    // resolver chain runs end-to-end.
+    const target = `${subdirRel}/note-conflict-3way.md`;
+
+    const bobReadCache = new ReadCache({ maxBytes: 64 * 1024 * 1024 });
+    const bobDirCache = new DirCache();
+    const bobAncestor = new AncestorTracker();
+    const recorded: Array<{ vaultPath: string; panes: ThreeWayPanes }> = [];
+    const onTextConflict = async (vaultPath: string, panes: ThreeWayPanes) => {
+      recorded.push({ vaultPath, panes });
+      return { decision: 'keep-mine' as const };
+    };
+    const bobConflictResolver = new ConflictResolver(
+      new RpcRemoteFsClient(reader.conn.rpc),
+      bobReadCache,
+      bobAncestor,
+      onTextConflict,
+      null, // no two-choice fallback — text path is what we're exercising
+    );
+    const bobAdapter = new SftpDataAdapter(
+      new RpcRemoteFsClient(reader.conn.rpc),
+      '',
+      bobReadCache,
+      bobDirCache,
+      'e2e-bob',
+      null,                  // pathMapper
+      null,                  // resourceBridge
+      bobConflictResolver,
+      bobAncestor,
+    );
+
+    // Alice creates "version-1" (Bob's eventual ancestor pane).
+    await writerAdapter.write(target, 'version-1');
+
+    // Bob reads — primes both readCache (mtime M1) and ancestorTracker.
+    const v1 = await bobAdapter.read(target);
+    expect(v1).toBe('version-1');
+
+    // Alice overwrites — remote mtime advances to M2; this becomes
+    // Bob's "theirs" pane.
+    await writerAdapter.write(target, 'alice-edit');
+
+    // Bob writes with stale M1 → PreconditionFailed → ConflictResolver
+    // sees ancestor + onTextConflict wired → calls the stub.
+    await bobAdapter.write(target, 'bob-edit');
+
+    // Stub got called exactly once with the expected panes.
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0].vaultPath).toBe(target);
+    expect(recorded[0].panes).toEqual({
+      ancestor: 'version-1',
+      mine: 'bob-edit',
+      theirs: 'alice-edit',
+    });
+
+    // keep-mine landed on the remote.
+    const final = await writerAdapter.read(target);
+    expect(final).toBe('bob-edit');
+  });
+
+  it('disconnect → queue → reconnect: pre-queued ops drain in order, reader observes them', async () => {
+    // #109 final case: validates F3 (offline queue) + F6 (replay) +
+    // F19 (in-order delivery) by pre-populating the OfflineQueue and
+    // running QueueReplayer against the connected writerAdapter.
+    //
+    // The "disconnect" half of the spec (forcibly killing the SSH
+    // socket so SftpDataAdapter.write* enqueues internally) involves
+    // AdapterManager orchestration that's already covered by the
+    // unit-test suite for OfflineQueue + ReconnectManager. Here we
+    // focus on the integration assertion the unit suites can't make:
+    // queued ops, drained in order, surface on the reader's
+    // FakeFileExplorer with the same ordering the user typed.
+    const queueDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'rssh-queue-e2e-'));
+    let queue: OfflineQueue | null = null;
+    // F19 in-order delivery is asserted via this arrival-order log, not
+    // via the FakeFileExplorer.snapshot().paths shape (that snapshot is
+    // lex-sorted, so a/b/c paths would appear ordered even if the daemon
+    // delivered them out of order — a false-positive vector).
+    const arrivalOrder: string[] = [];
+    const baseStamp = `${stamp}-drain`;
+    const subRoot = `${subdirRel}/${baseStamp}`;
+    const orderRef = harnessVault.on('create', (file: unknown) => {
+      const p = (file as { path?: string } | null)?.path;
+      if (typeof p === 'string' && p.startsWith(subRoot)) arrivalOrder.push(p);
+    });
+    try {
+      queue = await OfflineQueue.open(queueDir);
+
+      const ops: QueuedOp[] = [
+        { kind: 'mkdir', path: subRoot },
+        {
+          kind: 'writeBinary',
+          path: `${subRoot}/a.bin`,
+          contentBase64: Buffer.from('queued-a').toString('base64'),
+        },
+        {
+          kind: 'writeBinary',
+          path: `${subRoot}/b.bin`,
+          contentBase64: Buffer.from('queued-b').toString('base64'),
+        },
+        {
+          kind: 'writeBinary',
+          path: `${subRoot}/c.bin`,
+          contentBase64: Buffer.from('queued-c').toString('base64'),
+        },
+      ];
+      for (const op of ops) await queue.enqueue(op);
+      expect(queue.pending()).toHaveLength(ops.length);
+
+      // "Reconnect" — drain via QueueReplayer against the live writer
+      // adapter. SftpDataAdapter.replayQueuedOp is the same hook the
+      // production reconnect path uses.
+      const replayer = new QueueReplayer(queue, writerAdapter);
+      const report = await replayer.run();
+      expect(report.errors).toEqual([]);
+      expect(report.drained).toBe(ops.length);
+      expect(queue.pending()).toEqual([]);
+
+      // Wait for each path to reflect on the reader so we don't race
+      // the assertion against an in-flight fs.changed notification.
+      // QueuedOp is a discriminated union; pathOf narrows each variant
+      // to its observable target path (rename → newPath, copy → dstPath,
+      // everything else → .path).
+      const pathOf = (o: QueuedOp): string =>
+        o.kind === 'rename' ? o.newPath
+          : o.kind === 'copy' ? o.dstPath
+            : o.path;
+      for (const op of ops) {
+        await fakeFE.awaitReflect(pathOf(op), 'create', PER_CASE_BUDGET_MS * 5);
+      }
+
+      // Falsifiable F19 assertion: arrivalOrder is the actual sequence
+      // of `vault.trigger('create', file)` calls observed by the reader's
+      // pipeline. Equality with the source `ops` order proves both
+      // (a) all 4 ops landed and (b) the daemon → reader pipeline
+      // preserved write order.
+      expect(arrivalOrder).toEqual(ops.map(pathOf));
+    } finally {
+      harnessVault.offref(orderRef);
+      await Promise.allSettled([
+        queue?.clear() ?? Promise.resolve(),
+        fs.promises.rm(queueDir, { recursive: true, force: true }),
+      ]);
+    }
   });
 });
 
