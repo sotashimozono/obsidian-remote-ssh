@@ -23,6 +23,10 @@
 > _Status: pre-1.0. End-to-end against Linux + macOS remotes with the bundled
 > Go daemon. Install only into a dev vault for now; production use after v1.0._
 
+![Demo: connect to a remote vault and edit](https://raw.githubusercontent.com/sotashimozono/obsidian-remote-ssh/media/demo.gif)
+
+<sub>Recorded in CI by <a href=".github/workflows/demo-capture.yml"><code>demo-capture.yml</code></a> — re-run on demand.</sub>
+
 ---
 
 ## What you can do

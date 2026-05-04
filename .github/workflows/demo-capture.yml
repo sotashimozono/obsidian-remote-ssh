@@ -1,0 +1,156 @@
+name: Demo capture (GIF -> media branch)
+
+# Scripted walkthrough of the plugin UI, recorded as a GIF and pushed
+# to the orphan `media` branch. The README embeds the GIF via the raw
+# GitHub URL so it stays up to date without binary files on main.
+#
+# Run manually whenever the plugin UI changes enough to warrant a fresh
+# recording. Not triggered on every push - a 1 MB GIF in CI is cheap
+# to produce but wasteful to regenerate nightly.
+#
+# Result:
+#   https://raw.githubusercontent.com/sotashimozono/obsidian-remote-ssh/media/demo.gif
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to force-push to the media branch
+
+concurrency:
+  group: demo-capture
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    name: Record demo + push GIF
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: plugin/package-lock.json
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: false
+
+      - run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
+      - name: Build plugin
+        run: node esbuild.config.mjs production
+
+      - name: Build server daemon
+        run: npm run build:server
+
+      - name: Install Xvfb + ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb ffmpeg
+
+      - name: Bring up test sshd
+        run: npm run sshd:start
+
+      # Same cache key as e2e.yml so the AppImage is shared across runs.
+      - name: Cache Obsidian AppImage
+        id: obsidian-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/obsidian/Obsidian.AppImage
+          key: obsidian-appimage-1.8.9
+
+      - name: Download Obsidian AppImage
+        if: steps.obsidian-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/obsidian
+          curl -L -o ~/obsidian/Obsidian.AppImage \
+            "https://github.com/nicehash/Obsidian/releases/download/v1.8.9/Obsidian-1.8.9.AppImage" \
+            || curl -L -o ~/obsidian/Obsidian.AppImage \
+            "https://github.com/nicehash/Obsidian/releases/download/v1.7.7/Obsidian-1.7.7.AppImage"
+          chmod +x ~/obsidian/Obsidian.AppImage
+
+      - name: Extract AppImage (no FUSE in CI)
+        run: |
+          cd ~/obsidian
+          ./Obsidian.AppImage --appimage-extract || true
+
+      - name: Start Xvfb
+        run: |
+          Xvfb :99 -screen 0 1280x800x24 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+
+      - name: Start screen recording
+        # x11grab pulls frames straight off the Xvfb display. ultrafast
+        # + crf 18 keeps the encoder cheap; we re-encode to GIF anyway.
+        run: |
+          ffmpeg \
+            -f x11grab -video_size 1280x800 -i :99 \
+            -r 10 -c:v libx264 -preset ultrafast -crf 18 \
+            /tmp/demo-raw.mp4 &
+          echo "FFMPEG_PID=$!" >> "$GITHUB_ENV"
+
+      - name: Run demo walkthrough
+        env:
+          OBSIDIAN_PATH: ~/obsidian/squashfs-root/obsidian
+          DISPLAY: ':99'
+        run: npx playwright test --config e2e/playwright.config.ts demo.spec.ts
+
+      - name: Stop screen recording
+        run: |
+          kill "$FFMPEG_PID" || true
+          # Give ffmpeg time to flush and finalize the mp4 container.
+          sleep 3
+
+      - name: Convert to GIF (two-pass palettegen)
+        # Pass 1 builds an optimised palette from the actual frames;
+        # pass 2 applies it with Bayer dithering. Skipping the palette
+        # pass produces a 5-10x larger file with banded gradients.
+        run: |
+          ffmpeg -i /tmp/demo-raw.mp4 \
+            -vf "fps=8,scale=800:-1:flags=lanczos,palettegen=stats_mode=diff" \
+            /tmp/palette.png
+
+          ffmpeg -i /tmp/demo-raw.mp4 -i /tmp/palette.png \
+            -filter_complex "fps=8,scale=800:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
+            -loop 0 /tmp/demo.gif
+
+      - name: Push GIF to media branch
+        # Single-commit force-push to an orphan branch keeps the main
+        # repo free of binary churn. Raw URL stays stable across runs.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd /tmp
+          mkdir media-push
+          cd media-push
+          git init
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add origin \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          cp /tmp/demo.gif demo.gif
+          git add demo.gif
+          git commit -m "chore: update demo.gif [skip ci]"
+          git push --force origin HEAD:media
+
+      - name: Tear down test sshd
+        if: always()
+        run: npm run sshd:stop
+
+      - name: Upload raw mp4 (debug)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: demo-raw-${{ github.run_id }}
+          path: /tmp/demo-raw.mp4
+          retention-days: 3
