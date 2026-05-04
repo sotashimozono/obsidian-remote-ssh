@@ -3,8 +3,22 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+import * as os from 'node:os';
 
 const CDP_PORT = Number(process.env.CDP_PORT ?? '9222');
+
+/**
+ * Expand a leading `~/` (and bare `~`) to the user's home dir.
+ * `child_process.spawn` does not perform shell expansion, so a literal
+ * `~/foo` from an env var is taken verbatim and ENOENTs at exec time.
+ */
+function expandHome(p: string): string {
+  if (p === '~') return os.homedir();
+  if (p.startsWith('~/') || p.startsWith('~\\')) {
+    return path.join(os.homedir(), p.slice(2));
+  }
+  return p;
+}
 
 /**
  * Resolve the Obsidian binary path.
@@ -14,7 +28,7 @@ const CDP_PORT = Number(process.env.CDP_PORT ?? '9222');
  *   2. Platform default install locations
  */
 function resolveObsidianPath(): string {
-  if (process.env.OBSIDIAN_PATH) return process.env.OBSIDIAN_PATH;
+  if (process.env.OBSIDIAN_PATH) return expandHome(process.env.OBSIDIAN_PATH);
 
   switch (process.platform) {
     case 'win32':
