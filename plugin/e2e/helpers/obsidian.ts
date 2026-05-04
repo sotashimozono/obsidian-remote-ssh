@@ -100,13 +100,15 @@ export async function launchObsidian(
 
   // Obsidian opens new vaults in Restricted Mode — community plugins
   // listed in `community-plugins.json` are NOT loaded until the user
-  // (or, here, the test) clicks "Turn on community plugins" in
-  // Settings -> Community plugins, plus the trust prompt that
-  // follows. Without this step the test vault has no plugin running,
-  // commands aren't registered, and every spec downstream is testing
-  // an empty Obsidian.
-  await ensureCommunityPluginsEnabled(page);
-  await waitForPluginEnabled(page, 'remote-ssh', 30_000);
+  // (or, here, the test harness) flips the global "community plugins"
+  // toggle and trusts the vault. We do that via the in-renderer
+  // `app.plugins` API rather than UI-driving Settings (the toggle's
+  // DOM shape is unstable across Obsidian versions). Then block until
+  // the plugin's instance is up AND at least one of its commands has
+  // registered — without this guard the suite was running against an
+  // empty Obsidian and every assertion downstream was meaningless.
+  await ensurePluginLoaded(page, 'remote-ssh');
+  await waitForPluginLoaded(page, 'remote-ssh', 30_000);
 
   const cleanup = async () => {
     try { await browser.close(); } catch { /* best effort */ }
@@ -220,77 +222,86 @@ async function connectOverCDPWithRetry(
 }
 
 /**
- * Walk Obsidian's Settings -> Community plugins UI to flip the global
- * "community plugins enabled" toggle, then accept the trust prompt
- * that follows. No-op (returns silently) if the vault is already
- * past restricted mode — important so the helper is safe to call on
- * a vault that's been opened before.
+ * Force Obsidian out of Restricted Mode and load the plugin via the
+ * internal `app.plugins` API. Driving the Settings UI was unreliable
+ * (button-text vs toggle-switch differs across Obsidian versions,
+ * and `enabledPlugins.has(id)` returns true the moment the id is in
+ * `community-plugins.json` — even when the actual plugin instance
+ * never started).
+ *
+ * Calls (all idempotent):
+ *   - `app.plugins.setEnable(true)`         -> turn the global toggle
+ *                                              on; clears restricted mode
+ *   - `app.plugins.enablePluginAndSave(id)` -> load the plugin and
+ *                                              persist to community-plugins.json
  */
-async function ensureCommunityPluginsEnabled(page: Page): Promise<void> {
-  // Open Settings (Ctrl+, on Linux).
-  await page.keyboard.press('Control+,');
-  await page.waitForTimeout(1_000);
-
-  const settingsModal = page.locator('.modal-container');
-  if (!await settingsModal.isVisible({ timeout: 5_000 }).catch(() => false)) {
-    // Settings didn't open at all — nothing more we can do here. The
-    // downstream waitForPluginEnabled will surface the resulting
-    // failure with a useful timeout error.
-    return;
-  }
-
-  // Settings sidebar -> "Community plugins" tab.
-  const cpTab = settingsModal
-    .locator('.vertical-tab-nav-item:has-text("Community plugins")')
-    .first();
-  if (await cpTab.isVisible({ timeout: 3_000 }).catch(() => false)) {
-    await cpTab.click();
-    await page.waitForTimeout(500);
-
-    // The "Turn on community plugins" button only exists while the
-    // vault is in restricted mode; if it's missing, plugins are
-    // already enabled and we just need to close the dialog.
-    const turnOnBtn = page
-      .locator('button:has-text("Turn on community plugins")')
-      .first();
-    if (await turnOnBtn.isVisible({ timeout: 1_500 }).catch(() => false)) {
-      await turnOnBtn.click();
-      await page.waitForTimeout(500);
-
-      // Some Obsidian versions show a follow-up trust dialog with the
-      // same button label; click whichever is now on top of the modal
-      // stack.
-      const trustBtn = page
-        .locator('.modal button:has-text("Turn on community plugins"), .modal button:has-text("Trust author")')
-        .first();
-      if (await trustBtn.isVisible({ timeout: 1_500 }).catch(() => false)) {
-        await trustBtn.click();
-      }
-      // Plugin start is async; give it a beat before we go check.
-      await page.waitForTimeout(2_000);
+async function ensurePluginLoaded(page: Page, pluginId: string): Promise<void> {
+  await page.evaluate(async (id) => {
+    interface PluginsApi {
+      setEnable?: (enable: boolean) => Promise<void> | void;
+      enablePluginAndSave?: (id: string) => Promise<void>;
+      enablePlugin?: (id: string) => Promise<void>;
+      isEnabled?: () => boolean;
+      plugins?: Record<string, unknown>;
     }
-  }
+    const app = (globalThis as unknown as { app?: { plugins?: PluginsApi } }).app;
+    const plugins = app?.plugins;
+    if (!plugins) {
+      throw new Error('app.plugins not available — Obsidian renderer not ready');
+    }
 
-  // Close settings.
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(500);
+    if (plugins.isEnabled && !plugins.isEnabled()) {
+      await plugins.setEnable?.(true);
+    }
+
+    if (!plugins.plugins?.[id]) {
+      // enablePluginAndSave is the public-ish path that updates
+      // community-plugins.json too. Fall back to enablePlugin if the
+      // method name has drifted across Obsidian versions.
+      if (plugins.enablePluginAndSave) {
+        await plugins.enablePluginAndSave(id);
+      } else if (plugins.enablePlugin) {
+        await plugins.enablePlugin(id);
+      } else {
+        throw new Error('app.plugins has no enablePlugin/enablePluginAndSave');
+      }
+    }
+  }, pluginId);
 }
 
 /**
- * Block until the named plugin is loaded and registered with the
- * Obsidian app. Throws after `timeoutMs`. This is the canonical
- * "did the plugin actually start" check — `community-plugins.json`
- * having the id is necessary but not sufficient.
+ * Block until the named plugin's instance is loaded AND at least one
+ * of its namespaced commands has been registered. Throws after
+ * `timeoutMs`. This is the canonical "the plugin actually started"
+ * check.
+ *
+ * `enabledPlugins.has(id)` is NOT used here: that set tracks intent
+ * (id present in community-plugins.json) and stays truthy even when
+ * the plugin's onload threw and no commands ever registered.
  */
-async function waitForPluginEnabled(
+async function waitForPluginLoaded(
   page: Page,
   pluginId: string,
   timeoutMs: number,
 ): Promise<void> {
   await page.waitForFunction(
     (id) => {
-      const app = (globalThis as unknown as { app?: { plugins?: { enabledPlugins?: Set<string> } } }).app;
-      return Boolean(app?.plugins?.enabledPlugins?.has?.(id));
+      interface AppShape {
+        plugins?: { plugins?: Record<string, unknown> };
+        commands?: { commands?: Record<string, unknown> };
+      }
+      const app = (globalThis as unknown as { app?: AppShape }).app;
+      const instance = app?.plugins?.plugins?.[id];
+      const cmds = app?.commands?.commands;
+      if (!instance || !cmds) return false;
+      // Any command whose id is namespaced to this plugin counts —
+      // doesn't depend on a specific command name surviving a
+      // refactor. Plugin command ids are `${pluginId}:${cmd}`.
+      const prefix = `${id}:`;
+      for (const key in cmds) {
+        if (key.startsWith(prefix)) return true;
+      }
+      return false;
     },
     pluginId,
     { timeout: timeoutMs },
