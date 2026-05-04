@@ -1,5 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
-import { launchObsidian, type ObsidianHandle } from './helpers/obsidian';
+import {
+  launchObsidian,
+  connectAndOpenShadow,
+  type ObsidianHandle,
+} from './helpers/obsidian';
 import { scaffoldTestVault, type ScaffoldResult } from './helpers/vault-scaffold';
 import { RemoteVerifier } from './helpers/remote-verifier';
 
@@ -49,16 +53,19 @@ test.beforeAll(async () => {
   scaffold = scaffoldTestVault();
   obsidian = await launchObsidian(scaffold.vaultPath);
 
-  await connectToRemote(obsidian.page);
-
-  const fileExplorer = obsidian.page.locator('.nav-files-container');
-  const explorerVisible = await fileExplorer.isVisible({ timeout: 15_000 }).catch(() => false);
-  if (explorerVisible) {
-    const items = await fileExplorer.locator('.nav-file, .nav-folder').count();
-    connected = items > 0;
-  }
-  if (!connected) {
-    test.skip(true, 'Could not connect to remote vault — skipping reflect tests');
+  // connectAndOpenShadow drives the connect command, clicks through
+  // the passphrase modal, and returns a fresh handle attached to
+  // the shadow vault Obsidian opens for the connected profile. Any
+  // assertion below now runs against the SHADOW vault's window —
+  // which is the only window where remote files actually appear.
+  // The previous heuristic (`items > 0`) was a false positive:
+  // local_demo*.md from the scaffold seed was always non-zero, so
+  // `connected` was true even when the connect command was a no-op.
+  try {
+    obsidian = await connectAndOpenShadow(obsidian, scaffold.vaultPath);
+    connected = true;
+  } catch (e) {
+    test.skip(true, `connectAndOpenShadow failed: ${String(e)}`);
   }
 });
 
@@ -222,33 +229,6 @@ async function waitForMtimeChange(
     await new Promise(resolve => setTimeout(resolve, 250));
   }
   throw new Error(`mtime did not advance for ${file} within ${REFLECT_TIMEOUT_MS}ms`);
-}
-
-/**
- * Connect to the pre-configured E2E test profile via command palette.
- * Mirrors the connect flow in `sync.spec.ts`. Kept private to this
- * file to avoid coupling the helpers package to a specific UI flow.
- */
-async function connectToRemote(page: Page): Promise<void> {
-  await page.keyboard.press('Control+P');
-  await page.waitForTimeout(500);
-  await page.keyboard.type('Remote SSH: Connect');
-  await page.waitForTimeout(500);
-  const palette = page.locator('.prompt');
-  await palette.locator('.suggestion-item').first().click();
-
-  // Profile picker may or may not appear depending on plugin version;
-  // try to click through it without failing if it's auto-selected.
-  const picker = page.locator('.prompt');
-  if (await picker.isVisible({ timeout: 3_000 }).catch(() => false)) {
-    const profile = picker.locator('.suggestion-item').first();
-    if (await profile.isVisible().catch(() => false)) {
-      await profile.click();
-    }
-  }
-
-  // Allow the connect handshake + initial fs.walk to land.
-  await page.waitForTimeout(10_000);
 }
 
 /**

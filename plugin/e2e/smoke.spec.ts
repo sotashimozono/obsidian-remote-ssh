@@ -1,5 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { launchObsidian, type ObsidianHandle } from './helpers/obsidian';
+import {
+  launchObsidian,
+  connectAndOpenShadow,
+  type ObsidianHandle,
+} from './helpers/obsidian';
 import { scaffoldTestVault, type ScaffoldResult } from './helpers/vault-scaffold';
 
 /**
@@ -90,70 +94,39 @@ test.describe('Remote SSH E2E smoke', () => {
   });
 
   test('4 — connect to remote vault via command palette', async () => {
-    const { page } = obsidian;
+    // connectAndOpenShadow drives palette → "Remote SSH: Connect" →
+    // passphrase modal Connect button → kill original → relaunch on
+    // the shadow vault path Obsidian registered. After it returns,
+    // `obsidian` points at the SHADOW window (the only one where
+    // the connected status bar + remote files actually appear).
+    obsidian = await connectAndOpenShadow(obsidian, scaffold.vaultPath);
 
-    // Open command palette and invoke Connect
-    await page.keyboard.press('Control+P');
-    await page.waitForTimeout(500);
-    const palette = page.locator('.prompt');
-    await expect(palette).toBeVisible({ timeout: 10_000 });
-
-    await page.keyboard.type('Remote SSH: Connect');
-    await page.waitForTimeout(500);
-
-    // Click the first matching suggestion
-    const connectCmd = palette.locator('.suggestion-item').first();
-    await connectCmd.click();
-
-    // Wait for the profile picker or direct connect. If a profile
-    // picker appears, select the first (E2E Test) profile.
-    const profilePicker = page.locator('.prompt');
-    if (await profilePicker.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      const firstProfile = profilePicker.locator('.suggestion-item').first();
-      if (await firstProfile.isVisible().catch(() => false)) {
-        await firstProfile.click();
-      }
-    }
-
-    // Wait for shadow vault window or connection status indicator.
-    // The status bar should show connection activity within 30s.
-    // We look for any status bar item mentioning "Remote" or "SSH"
-    // or the connected indicator.
-    const statusBar = page.locator('.status-bar');
-    await expect(statusBar).toBeVisible({ timeout: 30_000 });
-
-    // Allow time for the connection attempt. Even if the Docker sshd
-    // isn't running, we verify the plugin attempted to connect by
-    // checking for a notice (success or error).
-    const notice = page.locator('.notice');
-    await expect(notice).toBeVisible({ timeout: 30_000 });
+    // The shadow vault's status bar must report the live connection.
+    // This is the assertion the previous test 4 was missing — it
+    // relied on "any .notice is visible" which fired even on
+    // connection FAILURES (the failure notice itself is a .notice).
+    const statusBar = obsidian.page.locator('.status-bar');
+    await expect(statusBar).toContainText('Remote SSH: Connected', {
+      timeout: 30_000,
+    });
   });
 
   test('5 — file explorer shows remote files after connect', async () => {
-    const { page } = obsidian;
+    // Test 4 left `obsidian` attached to the shadow vault. The
+    // file explorer there should list the docker test sshd's
+    // pre-seeded `remote_demo*.md` (5 files).
+    const fileExplorer = obsidian.page.locator('.nav-files-container');
+    await expect(fileExplorer).toBeVisible({ timeout: 10_000 });
 
-    // This test depends on test 4 having successfully connected.
-    // Check if we're in a shadow vault by looking for files in the
-    // file explorer.
-    const fileExplorer = page.locator('.nav-files-container');
-
-    // If the connection succeeded (Docker sshd was running), the
-    // file explorer should have items. If not, skip gracefully.
-    const isVisible = await fileExplorer.isVisible({ timeout: 10_000 }).catch(() => false);
-    if (!isVisible) {
-      test.skip(true, 'File explorer not visible — connection may not have succeeded');
-      return;
+    // Anchor on the actual remote filenames rather than just
+    // "items > 0" — the previous count-only assertion passed on
+    // any vault that had at least one local file, including the
+    // scaffold's seeded local_demo*.md, and didn't actually verify
+    // a remote sync had happened.
+    for (const i of [1, 2, 3, 4, 5]) {
+      await expect(
+        obsidian.page.locator(`.nav-file-title[data-path$="remote_demo${i}.md"]`),
+      ).toBeVisible({ timeout: 15_000 });
     }
-
-    // Check that at least one file or folder is shown
-    const items = fileExplorer.locator('.nav-file, .nav-folder');
-    const count = await items.count();
-
-    if (count === 0) {
-      test.skip(true, 'No files in explorer — Docker sshd may not be running');
-      return;
-    }
-
-    expect(count).toBeGreaterThan(0);
   });
 });

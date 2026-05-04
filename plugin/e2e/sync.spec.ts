@@ -1,5 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { launchObsidian, type ObsidianHandle } from './helpers/obsidian';
+import {
+  launchObsidian,
+  connectAndOpenShadow,
+  type ObsidianHandle,
+} from './helpers/obsidian';
 import { scaffoldTestVault, type ScaffoldResult } from './helpers/vault-scaffold';
 import { RemoteVerifier } from './helpers/remote-verifier';
 
@@ -42,38 +46,19 @@ test.beforeAll(async () => {
   scaffold = scaffoldTestVault();
   obsidian = await launchObsidian(scaffold.vaultPath);
 
-  // Connect to remote vault via command palette
-  const { page } = obsidian;
-  await page.keyboard.press('Control+P');
-  await page.waitForTimeout(500);
-  await page.keyboard.type('Remote SSH: Connect');
-  await page.waitForTimeout(500);
-  const palette = page.locator('.prompt');
-  const cmd = palette.locator('.suggestion-item').first();
-  await cmd.click();
-
-  // Select profile if picker appears
-  const picker = page.locator('.prompt');
-  if (await picker.isVisible({ timeout: 3_000 }).catch(() => false)) {
-    const profile = picker.locator('.suggestion-item').first();
-    if (await profile.isVisible().catch(() => false)) {
-      await profile.click();
-    }
-  }
-
-  // Wait for connection — look for shadow vault window or status change
-  await page.waitForTimeout(10_000);
-
-  // Check if connection succeeded by looking for file explorer content
-  const fileExplorer = page.locator('.nav-files-container');
-  const explorerVisible = await fileExplorer.isVisible({ timeout: 15_000 }).catch(() => false);
-  if (explorerVisible) {
-    const items = await fileExplorer.locator('.nav-file, .nav-folder').count();
-    connected = items > 0;
-  }
-
-  if (!connected) {
-    test.skip(true, 'Could not connect to remote vault — skipping sync tests');
+  // connectAndOpenShadow drives palette → "Remote SSH: Connect" →
+  // passphrase modal Connect button → reads obsidian.json for the
+  // new shadow vault entry → relaunches our managed Obsidian on
+  // the shadow vault path. The returned handle's `page` is now
+  // attached to the shadow window (the only one with remote files
+  // visible). The previous heuristic — `connected = items > 0` —
+  // returned true on the scaffold's seeded local_demo*.md even
+  // when the connect command was a silent no-op.
+  try {
+    obsidian = await connectAndOpenShadow(obsidian, scaffold.vaultPath);
+    connected = true;
+  } catch (e) {
+    test.skip(true, `connectAndOpenShadow failed: ${String(e)}`);
   }
 });
 
