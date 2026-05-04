@@ -61,28 +61,41 @@ jobs:
       - name: Bring up test sshd
         run: npm run sshd:start
 
-      # Same cache key as e2e.yml so the AppImage is shared across runs.
+      # Cache key v2: previous v1 entry was poisoned by a curl run that
+      # saved a "Not Found" HTML body as Obsidian.AppImage (no `-f`),
+      # which then survived in the cache and broke every later run.
       - name: Cache Obsidian AppImage
         id: obsidian-cache
         uses: actions/cache@v5
         with:
           path: ~/obsidian/Obsidian.AppImage
-          key: obsidian-appimage-1.8.9
+          key: obsidian-appimage-1.8.9-v2
 
       - name: Download Obsidian AppImage
         if: steps.obsidian-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/obsidian
-          curl -L -o ~/obsidian/Obsidian.AppImage \
+          # `-f` makes curl exit non-zero on HTTP 4xx/5xx instead of
+          # writing the error body to disk. Try the 1.8.9 mirror first,
+          # fall back to 1.7.7 only if that fails.
+          curl -fL -o ~/obsidian/Obsidian.AppImage \
             "https://github.com/nicehash/Obsidian/releases/download/v1.8.9/Obsidian-1.8.9.AppImage" \
-            || curl -L -o ~/obsidian/Obsidian.AppImage \
+            || curl -fL -o ~/obsidian/Obsidian.AppImage \
             "https://github.com/nicehash/Obsidian/releases/download/v1.7.7/Obsidian-1.7.7.AppImage"
           chmod +x ~/obsidian/Obsidian.AppImage
+
+      - name: Verify AppImage is a real ELF binary
+        # Belt-and-braces guard: if the cached entry (or a fresh
+        # download) ever turns out to be HTML/text again, fail loudly
+        # here instead of silently in --appimage-extract.
+        run: |
+          file ~/obsidian/Obsidian.AppImage
+          file ~/obsidian/Obsidian.AppImage | grep -q 'ELF .* executable'
 
       - name: Extract AppImage (no FUSE in CI)
         run: |
           cd ~/obsidian
-          ./Obsidian.AppImage --appimage-extract || true
+          ./Obsidian.AppImage --appimage-extract
 
       - name: Start Xvfb
         run: |

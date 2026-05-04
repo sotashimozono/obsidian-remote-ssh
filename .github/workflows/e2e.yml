@@ -61,29 +61,39 @@ jobs:
       - name: Bring up test sshd
         run: npm run sshd:start
 
-      # Download and cache the Obsidian AppImage
+      # Download and cache the Obsidian AppImage. Cache key v2: v1
+      # was poisoned by a curl run that saved a "Not Found" HTML body
+      # as Obsidian.AppImage (no `-f`), which then broke every later
+      # run that hit the cache.
       - name: Cache Obsidian AppImage
         id: obsidian-cache
         uses: actions/cache@v5
         with:
           path: ~/obsidian/Obsidian.AppImage
-          key: obsidian-appimage-1.8.9
+          key: obsidian-appimage-1.8.9-v2
 
       - name: Download Obsidian AppImage
         if: steps.obsidian-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/obsidian
-          curl -L -o ~/obsidian/Obsidian.AppImage \
+          # `-f` makes curl exit non-zero on HTTP 4xx/5xx instead of
+          # writing the error body to disk.
+          curl -fL -o ~/obsidian/Obsidian.AppImage \
             "https://github.com/nicehash/Obsidian/releases/download/v1.8.9/Obsidian-1.8.9.AppImage" \
-            || curl -L -o ~/obsidian/Obsidian.AppImage \
+            || curl -fL -o ~/obsidian/Obsidian.AppImage \
             "https://github.com/nicehash/Obsidian/releases/download/v1.7.7/Obsidian-1.7.7.AppImage"
           chmod +x ~/obsidian/Obsidian.AppImage
+
+      - name: Verify AppImage is a real ELF binary
+        run: |
+          file ~/obsidian/Obsidian.AppImage
+          file ~/obsidian/Obsidian.AppImage | grep -q 'ELF .* executable'
 
       - name: Extract AppImage (no FUSE in CI)
         run: |
           cd ~/obsidian
-          ./Obsidian.AppImage --appimage-extract || true
-          ls -la squashfs-root/ || true
+          ./Obsidian.AppImage --appimage-extract
+          ls -la squashfs-root/
 
       # Xvfb for headless Electron
       - name: Start Xvfb
