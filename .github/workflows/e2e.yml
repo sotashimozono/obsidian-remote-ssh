@@ -79,9 +79,9 @@ jobs:
           # `-f` makes curl exit non-zero on HTTP 4xx/5xx instead of
           # writing the error body to disk.
           curl -fL -o ~/obsidian/Obsidian.AppImage \
-            "https://github.com/nicehash/Obsidian/releases/download/v1.8.9/Obsidian-1.8.9.AppImage" \
+            "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.8.9/Obsidian-1.8.9.AppImage" \
             || curl -fL -o ~/obsidian/Obsidian.AppImage \
-            "https://github.com/nicehash/Obsidian/releases/download/v1.7.7/Obsidian-1.7.7.AppImage"
+            "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.7.7/Obsidian-1.7.7.AppImage"
           chmod +x ~/obsidian/Obsidian.AppImage
 
       - name: Verify AppImage is a real ELF binary
