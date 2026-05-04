@@ -1,6 +1,7 @@
-import { test, type Page, type CDPSession } from '@playwright/test';
+import { test, expect, type Page, type CDPSession } from '@playwright/test';
 import { launchObsidian, type ObsidianHandle } from './helpers/obsidian';
 import { scaffoldTestVault, type ScaffoldResult } from './helpers/vault-scaffold';
+import { RemoteVerifier } from './helpers/remote-verifier';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -220,7 +221,26 @@ test('capture demo screencast', async () => {
     // Hold the shadow-vault state long enough for auto-connect to
     // finish painting (status bar flips to "Connected", file
     // explorer fills with remote_demo*.md).
-    await obsidian.page.waitForTimeout(3_500);
+    await obsidian.page.waitForTimeout(2_500);
+
+    // Ctrl+N → create a new note in the (now-remote) vault. The
+    // editor pane opens with cursor focused; typed text streams
+    // back to the remote over RPC. Obsidian autosaves after a
+    // short idle, so the file lands on the SSH host without an
+    // explicit save action.
+    await obsidian.page.keyboard.press('Control+N');
+    await obsidian.page.waitForTimeout(800);
+    await obsidian.page.keyboard.type(
+      '# Demonstration\n\n',
+      { delay: 60 },
+    );
+    await obsidian.page.keyboard.type(
+      'This note was just created from Obsidian over SSH/RPC. ' +
+      'Anything typed here is written to the remote host in real time.',
+      { delay: 25 },
+    );
+    // Allow Obsidian's autosave + the daemon's write round-trip.
+    await obsidian.page.waitForTimeout(2_500);
 
     await stopScreencast(session2);
     allManifest.push(...saveFrames(frames2, 'phase2'));
@@ -240,4 +260,35 @@ test('capture demo screencast', async () => {
   }
   fs.writeFileSync(path.join(SCREENSHOTS, 'concat.txt'), lines.join('\n') + '\n');
   console.log(`[demo] wrote concat manifest: ${allManifest.length} frames total`);
+
+  // ── Phase 3 (NON-VISUAL): SFTP verify the new note landed ────
+  // This is the actual E2E assertion the GIF doesn't show. We
+  // connect directly to the docker test sshd as the `tester` user
+  // and read the just-created note off /home/tester/vault. The
+  // file Obsidian made will have an "Untitled" name; we find the
+  // one that isn't pre-seeded `remote_demo*.md` and assert its
+  // content includes what we typed. If the typing flow only
+  // updated the editor's local buffer (i.e. the daemon dropped
+  // the write), this assert fails loud — the GIF wouldn't.
+  const remote = new RemoteVerifier();
+  const ok = await remote.connect();
+  expect(ok, 'RemoteVerifier could not connect to test sshd').toBe(true);
+  try {
+    const entries = await remote.listDir('.');
+    const isPreseeded = (n: string) =>
+      /^remote_demo[1-5]\.md$/.test(n) || n === '.obsidian';
+    const newNotes = entries.filter((n) => n.endsWith('.md') && !isPreseeded(n));
+    expect(
+      newNotes.length,
+      `expected exactly one new .md on remote; got: [${entries.join(', ')}]`,
+    ).toBeGreaterThanOrEqual(1);
+
+    const content = await remote.readFile(newNotes[0]);
+    expect(content, `${newNotes[0]} unreadable on remote`).not.toBeNull();
+    expect(content!).toContain('# Demonstration');
+    expect(content!).toContain('SSH/RPC');
+    console.log(`[demo] verified remote file ${newNotes[0]} (${content!.length} chars)`);
+  } finally {
+    await remote.disconnect();
+  }
 });
