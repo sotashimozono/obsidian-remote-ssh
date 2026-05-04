@@ -1,9 +1,12 @@
 name: E2E smoke (Playwright + Obsidian)
 
-# Nightly smoke tests that launch a real Obsidian window and exercise
-# the plugin via Playwright over CDP. Heavier than unit/integration
-# tests (~3-5 min for Electron boot + scenarios), so this runs on a
-# cron schedule and on-demand, NOT per-PR.
+# Real Obsidian window driven by Playwright over CDP. Heavier than
+# unit/integration tests (~3-5 min for Electron boot + scenarios),
+# but on the merge path: the previous nightly-cron + continue-on-
+# error setup hid 3+ days of fake-green where every smoke test was
+# silently skipping because Obsidian's window never booted. Per-PR
+# trigger with paths-filter keeps the cost off docs PRs while
+# putting real failures in front of the author.
 #
 # Prerequisites satisfied by the job itself:
 #   - Obsidian AppImage (downloaded + cached)
@@ -17,9 +20,26 @@ name: E2E smoke (Playwright + Obsidian)
 # without the full Obsidian chrome.
 
 on:
-  schedule:
-    # Nightly at 03:00 UTC (12:00 JST)
-    - cron: '0 3 * * *'
+  pull_request:
+    branches: [main]
+    paths:
+      # Plugin or daemon source — anything that could change the
+      # Obsidian-side behaviour the spec drives.
+      - 'plugin/src/**'
+      - 'plugin/e2e/**'
+      - 'plugin/package.json'
+      - 'plugin/package-lock.json'
+      - 'plugin/esbuild.config.mjs'
+      - 'plugin/playwright.config.ts'
+      - 'plugin/tsconfig.json'
+      - 'server/**'
+      # Docker test sshd or seeded fixtures — the remote vault
+      # contents the spec asserts against.
+      - 'docker/test-sshd/**'
+      - 'docker/test-vault/**'
+      - 'docker-compose.yml'
+      # The workflow itself.
+      - '.github/workflows/e2e.yml'
   workflow_dispatch:
 
 concurrency:
@@ -104,7 +124,9 @@ jobs:
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
 
       - name: Run E2E smoke tests
-        continue-on-error: true
+        # No continue-on-error: now that this runs per-PR, hidden
+        # failures need to surface as red status checks rather than
+        # be quietly logged in nightly artifacts no one watches.
         env:
           OBSIDIAN_PATH: ~/obsidian/squashfs-root/obsidian
           DISPLAY: ':99'
