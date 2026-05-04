@@ -138,6 +138,11 @@ function registerVault(vaultPath: string): () => void {
   let original: string | null = null;
   if (fs.existsSync(configPath)) {
     original = fs.readFileSync(configPath, 'utf8');
+  } else {
+    // First-launch CI runners (and any environment where Obsidian has
+    // never been started) won't have ~/.config/obsidian/ yet, and
+    // writeFileSync does not auto-create parent directories.
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
   }
 
   const config = original ? JSON.parse(original) : { vaults: {} };
