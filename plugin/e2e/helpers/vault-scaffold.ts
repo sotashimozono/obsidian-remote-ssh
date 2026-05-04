@@ -95,17 +95,42 @@ export function scaffoldTestVault(): ScaffoldResult {
     'utf8',
   );
 
-  // Enable the plugin in community-plugins.json
+  // Pre-write the on-disk state Obsidian normally reaches AFTER the
+  // user has gone through Settings -> Community plugins -> Turn on:
+  //   community-plugins.json -> these plugins should be enabled
+  //   core-plugins.json      -> default core plugins are configured
+  //   app.json               -> some user setting has been touched
+  //
+  // Note: workspace.json is intentionally NOT pre-written. Obsidian's
+  // renderer treats a workspace with empty `main.children` as "no
+  // active leaf" and paints nothing — the DOM still loads (so
+  // page.evaluate works and waitForPluginLoaded passes) but the
+  // window is visually black, which broke the demo recording. Let
+  // Obsidian generate workspace.json itself on first save with a
+  // real leaf view; that produces a visible vault.
   fs.writeFileSync(
     path.join(obsidianDir, 'community-plugins.json'),
     JSON.stringify([PLUGIN_ID]),
     'utf8',
   );
 
-  // Minimal app.json so Obsidian doesn't show the first-run wizard
+  fs.writeFileSync(
+    path.join(obsidianDir, 'core-plugins.json'),
+    JSON.stringify([
+      'file-explorer', 'global-search', 'switcher', 'graph', 'backlink',
+      'canvas', 'outgoing-link', 'tag-pane', 'page-preview', 'daily-notes',
+      'templates', 'note-composer', 'command-palette', 'editor-status',
+      'bookmarks', 'markdown-importer', 'outline', 'word-count',
+      'file-recovery',
+    ]),
+    'utf8',
+  );
+
+  // app.json with a single setting touched. An empty-object app.json
+  // is treated as "never configured" by some Obsidian builds.
   fs.writeFileSync(
     path.join(obsidianDir, 'app.json'),
-    JSON.stringify({}),
+    JSON.stringify({ promptDelete: false }, null, 2),
     'utf8',
   );
 
@@ -128,47 +153,27 @@ export function scaffoldTestVault(): ScaffoldResult {
  * has visible content in E2E tests and demo screenshots.
  */
 function seedDemoNotes(vaultPath: string): void {
-  const notes: Array<{ dir?: string; name: string; content: string }> = [
-    {
-      name: 'welcome_local.md',
-      content: [
-        '# Welcome (local)',
-        '',
-        'This note was created **locally** in the scaffold vault.',
-        'When connected, the remote vault will also contain',
-        '`welcome_remote.md` and `notes_remote.md` — files that',
-        'already existed on the server before you connected.',
-        '',
-        '## Try it',
-        '',
-        '1. Connect to the remote via **Remote SSH: Connect**',
-        '2. The file explorer shows both `*_local` and `*_remote` files',
-        '3. Create `demonstration.md` — it appears on the server too',
-        '',
-      ].join('\n'),
-    },
-    {
-      name: 'setup_local.md',
-      content: [
-        '# Setup (local)',
-        '',
-        'This note describes the local Obsidian environment.',
-        '',
-        '- **Plugin**: Remote SSH',
-        '- **Transport**: RPC (recommended) or SFTP',
-        '- **Auth**: private key / password / ssh-agent',
-        '',
-        'Edits here are written to the remote in real time.',
-        '',
-      ].join('\n'),
-    },
-  ];
-
-  for (const note of notes) {
-    const dir = note.dir
-      ? path.join(vaultPath, note.dir)
-      : vaultPath;
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, note.name), note.content, 'utf8');
+  // Five `local_demo*.md` notes, deliberately uniform in shape, so
+  // the demo GIF reads as: "the local vault has local_demoN; after
+  // connect, the shadow vault has remote_demoN" — a clean visual
+  // contrast with the docker/test-vault fixtures of the same shape.
+  const N = 5;
+  for (let i = 1; i <= N; i++) {
+    const content = [
+      `# Local demo ${i}`,
+      '',
+      'This note lives **on the local machine** in the scaffold vault.',
+      `It is one of ${N} \`local_demo*.md\` files seeded so the file`,
+      'explorer has visible content before any SSH connection happens.',
+      '',
+      'After **Remote SSH: Connect**, a separate shadow vault opens',
+      'with the remote files (`remote_demo1.md` … `remote_demo5.md`).',
+      '',
+    ].join('\n');
+    fs.writeFileSync(
+      path.join(vaultPath, `local_demo${i}.md`),
+      content,
+      'utf8',
+    );
   }
 }

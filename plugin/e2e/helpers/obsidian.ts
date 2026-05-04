@@ -222,20 +222,48 @@ async function connectOverCDPWithRetry(
 }
 
 /**
- * Force Obsidian out of Restricted Mode and load the plugin via the
- * internal `app.plugins` API. Driving the Settings UI was unreliable
- * (button-text vs toggle-switch differs across Obsidian versions,
- * and `enabledPlugins.has(id)` returns true the moment the id is in
- * `community-plugins.json` — even when the actual plugin instance
- * never started).
+ * Click "Trust author and enable plugins" if Obsidian's per-vault
+ * trust dialog is blocking the workspace. This must be done BEFORE
+ * any test fires keyboard shortcuts — Obsidian's modal swallows
+ * Ctrl+P / Ctrl+, while it's open, which is exactly what was
+ * silently breaking every spec downstream. Returns whether the
+ * button was actually clicked (informational; both branches are
+ * safe to ignore).
+ */
+async function dismissTrustDialog(page: Page): Promise<boolean> {
+  // Obsidian renders the trust dialog inside a `.modal` container
+  // with two buttons. We anchor on the affirmative button text
+  // because it's far less likely to drift than DOM structure.
+  const trustBtn = page
+    .locator('button:has-text("Trust author and enable plugins")')
+    .first();
+  if (!await trustBtn.isVisible({ timeout: 8_000 }).catch(() => false)) {
+    return false;
+  }
+  await trustBtn.click();
+  // Wait for the modal to actually disappear before continuing —
+  // a stale modal blocks the next keyboard shortcut even if the
+  // button click "succeeded".
+  await trustBtn.waitFor({ state: 'detached', timeout: 8_000 }).catch(() => {});
+  return true;
+}
+
+/**
+ * Force Obsidian out of Restricted Mode and load the plugin. First
+ * dismiss the trust dialog if it's blocking the UI (clicking
+ * "Trust author and enable plugins" is what Obsidian itself does to
+ * flip restricted mode off + load community-plugins.json). Then call
+ * the `app.plugins` API as a safety net for paths where the dialog
+ * never appeared (e.g., Obsidian build that auto-trusts pre-config'd
+ * vaults).
  *
- * Calls (all idempotent):
- *   - `app.plugins.setEnable(true)`         -> turn the global toggle
- *                                              on; clears restricted mode
- *   - `app.plugins.enablePluginAndSave(id)` -> load the plugin and
- *                                              persist to community-plugins.json
+ * Idempotent: safe to call on a vault that's already trusted; both
+ * the dialog dismissal and the API call no-op if their precondition
+ * is already met.
  */
 async function ensurePluginLoaded(page: Page, pluginId: string): Promise<void> {
+  await dismissTrustDialog(page);
+
   await page.evaluate(async (id) => {
     interface PluginsApi {
       setEnable?: (enable: boolean) => Promise<void> | void;

@@ -102,51 +102,53 @@ jobs:
           Xvfb :99 -screen 0 1280x800x24 &
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
 
-      - name: Start screen recording
-        # x11grab pulls frames straight off the Xvfb display. ultrafast
-        # + crf 18 keeps the encoder cheap; we re-encode to GIF anyway.
-        run: |
-          ffmpeg \
-            -f x11grab -video_size 1280x800 -i :99 \
-            -r 10 -c:v libx264 -preset ultrafast -crf 18 \
-            /tmp/demo-raw.mp4 &
-          echo "FFMPEG_PID=$!" >> "$GITHUB_ENV"
-
       - name: Run demo walkthrough
-        # continue-on-error so a partial walkthrough still produces a
-        # usable GIF — without this, a mid-test crash kills the screen
-        # recorder before the conversion + push steps get to run.
-        continue-on-error: true
+        # No continue-on-error: a walkthrough crash means the GIF
+        # would be missing frames anyway, and a real failure should
+        # fail the workflow loudly.
         env:
           OBSIDIAN_PATH: ~/obsidian/squashfs-root/obsidian
           DISPLAY: ':99'
         run: npx playwright test --config e2e/playwright.config.ts demo.spec.ts
 
-      - name: Stop screen recording
-        if: always()
+      - name: Stitch screencast frames into a GIF (two-pass palettegen)
+        # x11grab + Electron + CDP doesn't paint to display :99 in
+        # this Xvfb harness — recordings come out solid black. CDP
+        # `Page.startScreencast` (driven by the spec) does work and
+        # gives many natural-rate frames per transition.
+        #
+        # The spec writes `e2e/demo-screenshots/concat.txt` with
+        # per-frame `duration` lines reflecting the original capture
+        # cadence; here ffmpeg resamples to a fixed 10 fps for a
+        # smooth GIF. The fps filter smooths through any irregular
+        # capture spacing without inflating file size.
         run: |
-          kill "$FFMPEG_PID" || true
-          # Give ffmpeg time to flush and finalize the mp4 container.
-          sleep 3
+          CONCAT="$PWD/e2e/demo-screenshots/concat.txt"
+          if [ ! -s "$CONCAT" ]; then
+            echo "::error::concat.txt missing or empty — spec didn't produce frames"
+            exit 1
+          fi
+          echo "frame count: $(grep -c '^file ' "$CONCAT")"
+          head -10 "$CONCAT"
+          echo "..."
 
-      - name: Convert to GIF (two-pass palettegen)
-        if: always()
-        # Pass 1 builds an optimised palette from the actual frames;
-        # pass 2 applies it with Bayer dithering. Skipping the palette
-        # pass produces a 5-10x larger file with banded gradients.
-        run: |
-          ffmpeg -i /tmp/demo-raw.mp4 \
-            -vf "fps=8,scale=800:-1:flags=lanczos,palettegen=stats_mode=diff" \
+          # Pass 1: build an optimised palette across all frames.
+          ffmpeg -y -f concat -safe 0 -i "$CONCAT" \
+            -vf "fps=10,scale=800:-1:flags=lanczos,palettegen=stats_mode=diff" \
             /tmp/palette.png
 
-          ffmpeg -i /tmp/demo-raw.mp4 -i /tmp/palette.png \
-            -filter_complex "fps=8,scale=800:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
+          # Pass 2: apply the palette with Bayer dithering at 10 fps.
+          # -loop 0 makes the GIF loop forever in viewers.
+          ffmpeg -y -f concat -safe 0 -i "$CONCAT" \
+            -i /tmp/palette.png \
+            -lavfi "fps=10,scale=800:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
             -loop 0 /tmp/demo.gif
+
+          ls -la /tmp/demo.gif
 
       - name: Push GIF to media branch
         # Single-commit force-push to an orphan branch keeps the main
         # repo free of binary churn. Raw URL stays stable across runs.
-        if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -167,10 +169,13 @@ jobs:
         if: always()
         run: npm run sshd:stop
 
-      - name: Upload raw mp4 (debug)
+      - name: Upload Playwright screenshots (debug)
+        # CDP-captured screenshots are the source frames the GIF was
+        # stitched from — keep them around for 3 days for debugging.
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: demo-raw-${{ github.run_id }}
-          path: /tmp/demo-raw.mp4
+          name: demo-screenshots-${{ github.run_id }}
+          path: plugin/e2e/demo-screenshots/
           retention-days: 3
+          if-no-files-found: warn
