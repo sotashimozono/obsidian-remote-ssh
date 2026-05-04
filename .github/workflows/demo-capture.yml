@@ -113,18 +113,24 @@ jobs:
           echo "FFMPEG_PID=$!" >> "$GITHUB_ENV"
 
       - name: Run demo walkthrough
+        # continue-on-error so a partial walkthrough still produces a
+        # usable GIF — without this, a mid-test crash kills the screen
+        # recorder before the conversion + push steps get to run.
+        continue-on-error: true
         env:
           OBSIDIAN_PATH: ~/obsidian/squashfs-root/obsidian
           DISPLAY: ':99'
         run: npx playwright test --config e2e/playwright.config.ts demo.spec.ts
 
       - name: Stop screen recording
+        if: always()
         run: |
           kill "$FFMPEG_PID" || true
           # Give ffmpeg time to flush and finalize the mp4 container.
           sleep 3
 
       - name: Convert to GIF (two-pass palettegen)
+        if: always()
         # Pass 1 builds an optimised palette from the actual frames;
         # pass 2 applies it with Bayer dithering. Skipping the palette
         # pass produces a 5-10x larger file with banded gradients.
@@ -140,6 +146,7 @@ jobs:
       - name: Push GIF to media branch
         # Single-commit force-push to an orphan branch keeps the main
         # repo free of binary churn. Raw URL stays stable across runs.
+        if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
