@@ -45,28 +45,22 @@ test.describe('Remote SSH E2E smoke', () => {
   test('2 — plugin settings tab is accessible', async () => {
     const { page } = obsidian;
 
-    // Open settings via command palette
+    // Open Settings (Ctrl+,) and assert the Remote SSH plugin tab
+    // is reachable. The previous version of this test only
+    // annotated when the tab was visible — it never failed, so a
+    // missing tab would silently slip through.
     await page.keyboard.press('Control+,');
-    await page.waitForTimeout(1_000);
-
-    // Navigate to community plugins section and find Remote SSH
     const settingsModal = page.locator('.modal-container');
     await expect(settingsModal).toBeVisible({ timeout: 10_000 });
 
-    // Look for the plugin in the settings sidebar
-    const pluginTab = settingsModal.locator(
-      '.vertical-tab-nav-item:has-text("Remote SSH")',
-    );
+    const pluginTab = settingsModal
+      .locator('.vertical-tab-nav-item:has-text("Remote SSH")')
+      .first();
+    await expect(pluginTab).toBeVisible({ timeout: 5_000 });
 
-    // Close settings
+    // Close settings so subsequent tests start from a clean state.
     await page.keyboard.press('Escape');
-
-    if (await pluginTab.isVisible().catch(() => false)) {
-      test.info().annotations.push({
-        type: 'info',
-        description: 'Remote SSH plugin tab found in settings',
-      });
-    }
+    await expect(settingsModal).toBeHidden({ timeout: 5_000 });
   });
 
   test('3 — command palette shows Remote SSH commands', async () => {
