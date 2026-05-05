@@ -223,13 +223,32 @@ test('capture demo screencast', async () => {
     // explorer fills with remote_demo*.md).
     await obsidian.page.waitForTimeout(2_500);
 
-    // Ctrl+N → create a new note in the (now-remote) vault. The
-    // editor pane opens with cursor focused; typed text streams
-    // back to the remote over RPC. Obsidian autosaves after a
-    // short idle, so the file lands on the SSH host without an
-    // explicit save action.
+    // Ctrl+N creates `Untitled.md` in the (now-remote) vault.
+    // Empirically Obsidian doesn't always auto-open the new file
+    // in an editor pane when the vault is RPC-mediated — the file
+    // appears in the file explorer but the workspace stays on the
+    // empty-state ("No file is open") panel, which means
+    // subsequent `keyboard.type` lands nowhere and the autosaved
+    // file is empty. Belt-and-braces: if the editor isn't visible
+    // after Ctrl+N, click the new file in the file explorer to
+    // open it, then click into the editor body to ensure focus is
+    // in CodeMirror.
     await obsidian.page.keyboard.press('Control+N');
-    await obsidian.page.waitForTimeout(800);
+    await obsidian.page.waitForTimeout(1_000);
+
+    const editor = obsidian.page.locator('.cm-editor .cm-content').first();
+    if (!await editor.isVisible({ timeout: 1_500 }).catch(() => false)) {
+      const untitled = obsidian.page
+        .locator('.nav-file-title[data-path^="Untitled"]')
+        .first();
+      if (await untitled.isVisible({ timeout: 3_000 }).catch(() => false)) {
+        await untitled.click();
+        await obsidian.page.waitForTimeout(800);
+      }
+    }
+    await editor.waitFor({ state: 'visible', timeout: 8_000 });
+    await editor.click();
+
     await obsidian.page.keyboard.type(
       '# Demonstration\n\n',
       { delay: 60 },
@@ -240,7 +259,9 @@ test('capture demo screencast', async () => {
       { delay: 25 },
     );
     // Allow Obsidian's autosave + the daemon's write round-trip.
-    await obsidian.page.waitForTimeout(2_500);
+    // CI's autosave debounce is occasionally slower than local;
+    // 4 s gives headroom without dragging out the GIF.
+    await obsidian.page.waitForTimeout(4_000);
 
     await stopScreencast(session2);
     allManifest.push(...saveFrames(frames2, 'phase2'));

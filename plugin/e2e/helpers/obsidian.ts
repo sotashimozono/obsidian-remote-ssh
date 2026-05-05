@@ -188,13 +188,28 @@ export async function connectAndOpenShadow(
   while (Date.now() < deadline) {
     try {
       const cfg = JSON.parse(fs.readFileSync(obsidianConfigPath, 'utf8')) as {
-        vaults?: Record<string, { path?: string }>;
+        vaults?: Record<string, { path?: string; ts?: number }>;
       };
+      // obsidian.json accumulates entries across spec files (it's
+      // the user-global config). After demo.spec.ts runs, this map
+      // can hold a stale entry for the deleted demo scaffold AND
+      // the shadow vault from that demo. "First non-scaffold
+      // entry" risks returning the deleted scaffold and crashing
+      // launchObsidian downstream. Filter to entries that (a)
+      // aren't this spec's scaffold, (b) actually exist on disk,
+      // and (c) pick the most recently registered (highest `ts`)
+      // so we land on the freshly-opened shadow vault rather than
+      // a leftover.
+      let bestTs = -1;
       for (const id of Object.keys(cfg.vaults ?? {})) {
-        const entryPath = cfg.vaults?.[id]?.path;
-        if (entryPath && entryPath !== scaffoldVaultPath) {
+        const entry = cfg.vaults?.[id];
+        const entryPath = entry?.path;
+        if (!entryPath || entryPath === scaffoldVaultPath) continue;
+        if (!fs.existsSync(entryPath)) continue;
+        const ts = entry?.ts ?? 0;
+        if (ts > bestTs) {
+          bestTs = ts;
           shadowVaultPath = entryPath;
-          break;
         }
       }
     } catch {
