@@ -41,6 +41,14 @@ on:
       # The workflow itself.
       - '.github/workflows/e2e.yml'
   workflow_dispatch:
+  schedule:
+    # Weekly deep run (Sundays 03:00 UTC = 12:00 JST). Per-PR is the
+    # primary gate; this catches environment drift that doesn't go
+    # through a PR — e.g. the Obsidian AppImage URL silently
+    # breaking, the docker base image updating, or ssh2 deprecating
+    # an option. Weekly (not nightly) keeps cost minimal while still
+    # flagging rot within a week of it landing.
+    - cron: '0 3 * * 0'
 
 concurrency:
   group: e2e-${{ github.ref }}
