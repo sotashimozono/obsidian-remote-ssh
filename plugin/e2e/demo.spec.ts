@@ -1,5 +1,10 @@
 import { test, expect, type Page, type CDPSession } from '@playwright/test';
-import { launchObsidian, type ObsidianHandle } from './helpers/obsidian';
+import {
+  launchObsidian,
+  driveConnectFlow,
+  findShadowVaultPath,
+  type ObsidianHandle,
+} from './helpers/obsidian';
 import { scaffoldTestVault, type ScaffoldResult } from './helpers/vault-scaffold';
 import { RemoteVerifier } from './helpers/remote-verifier';
 import * as fs from 'node:fs';
@@ -156,23 +161,11 @@ test('capture demo screencast', async () => {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(700);
 
-  // Open command palette.
-  await page.keyboard.press('Control+P');
-  await page.waitForTimeout(400);
-
-  // Type "Remote SSH" letter by letter; the palette filters live.
-  await page.keyboard.type('Remote SSH', { delay: 70 });
-  await page.waitForTimeout(900);
-
-  // Press Enter on the highlighted "Connect to remote vault"
-  // command -> the per-profile passphrase modal opens.
-  await page.keyboard.press('Enter');
-  await page.waitForTimeout(1_200);
-
-  // Click Connect on the passphrase modal -> SSH handshake fires
-  // and a notice surfaces.
-  const connectBtn = page.locator('.modal button:has-text("Connect")').first();
-  await connectBtn.click();
+  // Drive the connect command via the shared helper. The UI part
+  // (palette → type → Enter → Connect button) is recorded by Phase
+  // 1's screencast; we keep capturing for ~2.5 s after the click so
+  // the GIF includes the connect notice that fires.
+  await driveConnectFlow(page);
   await page.waitForTimeout(2_500);
 
   await stopScreencast(session1);
@@ -181,30 +174,17 @@ test('capture demo screencast', async () => {
 
   // ── Phase 2: relaunch on shadow vault and screencast it ──
   // The shadow vault opens as a separate Electron process which
-  // doesn't inherit our --remote-debugging-port. Workaround: read
-  // ~/.config/obsidian/obsidian.json to find the new vault entry,
-  // kill the original, and relaunch our managed instance pointed
-  // at the shadow vault. Plugin auto-connect on first open
+  // doesn't inherit our --remote-debugging-port, so Playwright
+  // can't see it over the existing CDP connection. Workaround:
+  // poll obsidian.json for the new vault entry (via shared helper),
+  // kill the original, relaunch our managed instance on the shadow
+  // path, and screencast that. Plugin auto-connect on first open
   // populates the file explorer with remote_demo*.md.
-  const obsidianConfigPath = path.join(
-    process.env.APPDATA ?? path.join(process.env.HOME ?? '', '.config'),
-    'obsidian',
-    'obsidian.json',
-  );
   let shadowVaultPath: string | null = null;
   try {
-    const cfg = JSON.parse(fs.readFileSync(obsidianConfigPath, 'utf8')) as {
-      vaults?: Record<string, { path?: string }>;
-    };
-    for (const id of Object.keys(cfg.vaults ?? {})) {
-      const entryPath = cfg.vaults?.[id]?.path;
-      if (entryPath && entryPath !== scaffold.vaultPath) {
-        shadowVaultPath = entryPath;
-        break;
-      }
-    }
+    shadowVaultPath = await findShadowVaultPath(scaffold.vaultPath, 15_000);
   } catch (e) {
-    console.log('[demo] failed to read obsidian.json:', String(e));
+    console.log('[demo] no shadow vault found:', String(e));
   }
 
   if (shadowVaultPath) {

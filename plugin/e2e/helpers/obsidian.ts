@@ -129,36 +129,20 @@ export async function launchObsidian(
 }
 
 /**
- * Drive the per-profile connect flow on `handle.page` end-to-end and
- * return a NEW handle attached to the shadow vault Obsidian opens
- * for the connected profile.
+ * Drive the per-profile connect flow on `page` up to (and including)
+ * clicking the passphrase modal's `Connect` button. Does NOT wait
+ * for the shadow vault to materialise — the caller decides when to
+ * poll for it (so demo.spec.ts can keep its screencast running while
+ * the UI handshake happens).
  *
- * The shadow vault is a separate Electron process that doesn't
- * inherit our `--remote-debugging-port`, so Playwright can't see it
- * over the existing CDP connection. Workaround mirrors what the
- * demo spec already does: read the new entry in
- * `~/.config/obsidian/obsidian.json` (the one whose path isn't the
- * scaffold's), tear down the original handle, then `launchObsidian`
- * ourselves on the shadow vault path. Plugin auto-connect on first
- * open populates the file explorer with the remote files.
- *
- * The connect flow itself drives the UI:
+ * Steps:
  *   1. Ctrl+P → palette opens
  *   2. type "Remote SSH: Connect" → "Connect to remote vault" highlighted
  *   3. Enter → per-profile passphrase modal opens
  *   4. click `Connect` button → SSH handshake fires (Enter in the
  *      empty passphrase input does NOT submit; verified empirically)
- *
- * Throws if no shadow vault entry shows up in obsidian.json within
- * 15 s — that's the canonical "connect didn't actually run" signal.
  */
-export async function connectAndOpenShadow(
-  handle: ObsidianHandle,
-  scaffoldVaultPath: string,
-): Promise<ObsidianHandle> {
-  const { page } = handle;
-
-  // Drive the connect command via the palette.
+export async function driveConnectFlow(page: Page): Promise<void> {
   await page.keyboard.press('Control+P');
   await page.waitForTimeout(500);
   await page.keyboard.type('Remote SSH: Connect', { delay: 25 });
@@ -166,40 +150,39 @@ export async function connectAndOpenShadow(
   await page.keyboard.press('Enter');
   await page.waitForTimeout(1_200);
 
-  // Click the Connect button on the passphrase modal. Pressing
-  // Enter in the empty passphrase input doesn't submit — only the
-  // explicit button click kicks off the SSH handshake.
   const connectBtn = page.locator('.modal button:has-text("Connect")').first();
   if (await connectBtn.isVisible({ timeout: 5_000 }).catch(() => false)) {
     await connectBtn.click();
   }
+}
 
-  // Poll obsidian.json until the shadow vault entry appears (the
-  // plugin registers the new path in the global vaults map before
-  // firing `obsidian://open?path=`). Don't just sleep a fixed time —
-  // boot variance + handshake latency makes that flaky.
+/**
+ * Poll Obsidian's user-global config for the shadow vault entry the
+ * plugin registers when a connect command fires. Returns the on-disk
+ * path. Throws if no eligible entry shows up within `timeoutMs` —
+ * that's the canonical "connect didn't actually run" signal.
+ *
+ * `obsidian.json` accumulates entries across spec files (it's
+ * user-global), so the picker filters to entries whose path
+ * (a) isn't this spec's scaffold, (b) actually exists on disk, and
+ * (c) picks the most recently registered (highest `ts`).
+ */
+export async function findShadowVaultPath(
+  scaffoldVaultPath: string,
+  timeoutMs: number,
+): Promise<string> {
   const obsidianConfigPath = path.join(
     process.env.APPDATA ?? path.join(process.env.HOME ?? '', '.config'),
     'obsidian',
     'obsidian.json',
   );
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + timeoutMs;
   let shadowVaultPath: string | null = null;
   while (Date.now() < deadline) {
     try {
       const cfg = JSON.parse(fs.readFileSync(obsidianConfigPath, 'utf8')) as {
         vaults?: Record<string, { path?: string; ts?: number }>;
       };
-      // obsidian.json accumulates entries across spec files (it's
-      // the user-global config). After demo.spec.ts runs, this map
-      // can hold a stale entry for the deleted demo scaffold AND
-      // the shadow vault from that demo. "First non-scaffold
-      // entry" risks returning the deleted scaffold and crashing
-      // launchObsidian downstream. Filter to entries that (a)
-      // aren't this spec's scaffold, (b) actually exist on disk,
-      // and (c) pick the most recently registered (highest `ts`)
-      // so we land on the freshly-opened shadow vault rather than
-      // a leftover.
       let bestTs = -1;
       for (const id of Object.keys(cfg.vaults ?? {})) {
         const entry = cfg.vaults?.[id];
@@ -215,15 +198,34 @@ export async function connectAndOpenShadow(
     } catch {
       // file may be mid-write; retry
     }
-    if (shadowVaultPath) break;
+    if (shadowVaultPath) return shadowVaultPath;
     await new Promise((r) => setTimeout(r, 500));
   }
-  if (!shadowVaultPath) {
-    throw new Error(
-      'connectAndOpenShadow: no shadow vault entry appeared in obsidian.json ' +
-      'within 15 s — connect command likely never fired',
-    );
-  }
+  throw new Error(
+    `findShadowVaultPath: no shadow vault entry appeared in obsidian.json ` +
+    `within ${timeoutMs} ms — connect command likely never fired`,
+  );
+}
+
+/**
+ * Drive the per-profile connect flow on `handle.page` end-to-end and
+ * return a NEW handle attached to the shadow vault Obsidian opens
+ * for the connected profile.
+ *
+ * Composes `driveConnectFlow` (UI) + `findShadowVaultPath` (config
+ * polling) so callers that want a different lifecycle (the demo
+ * spec wraps the UI part in a screencast) can use those building
+ * blocks directly.
+ *
+ * Throws if no shadow vault entry shows up in obsidian.json within
+ * 15 s — propagated from `findShadowVaultPath`.
+ */
+export async function connectAndOpenShadow(
+  handle: ObsidianHandle,
+  scaffoldVaultPath: string,
+): Promise<ObsidianHandle> {
+  await driveConnectFlow(handle.page);
+  const shadowVaultPath = await findShadowVaultPath(scaffoldVaultPath, 15_000);
 
   // Hand off to a fresh Obsidian instance on the shadow vault path
   // so Playwright/CDP attaches to the connected window directly.
