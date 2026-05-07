@@ -1,16 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const loggerMock = {
-  installFileSink: vi.fn(),
-  uninstallFileSink: vi.fn().mockResolvedValue(undefined),
-  wrapConsole: vi.fn(),
-  unwrapConsole: vi.fn(),
-  warn: vi.fn(),
-  info: vi.fn(),
-};
-
-const installErrorHookMock = vi.fn();
-const uninstallErrorHookMock = vi.fn();
+const {
+  loggerMock,
+  installErrorHookMock,
+  uninstallErrorHookMock,
+} = vi.hoisted(() => ({
+  loggerMock: {
+    installFileSink: vi.fn(),
+    uninstallFileSink: vi.fn().mockResolvedValue(undefined),
+    wrapConsole: vi.fn(),
+    unwrapConsole: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
+  },
+  installErrorHookMock: vi.fn(),
+  uninstallErrorHookMock: vi.fn(),
+}));
 
 vi.mock('../src/util/logger', () => ({ logger: loggerMock }));
 vi.mock('../src/util/errorHook', () => ({
