@@ -133,6 +133,9 @@ function patchDom(): void {
       this.appendChild(t);
     }
   };
+  proto.appendText = function (this: HTMLElement, t: string): void {
+    this.appendChild(document.createTextNode(t));
+  };
   // Real Obsidian: toggleClass(classes: string | string[], value: boolean).
   proto.toggleClass = function (this: HTMLElement, c: string | string[], on: boolean): void {
     const list = Array.isArray(c) ? c : [c];
@@ -357,10 +360,13 @@ export class Setting {
 export class Modal {
   contentEl: HTMLElement;
   modalEl: HTMLElement;
+  titleEl: HTMLElement;
 
   constructor(public readonly app: App) {
     this.modalEl = document.createElement('div');
+    this.titleEl = document.createElement('h2');
     this.contentEl = document.createElement('div');
+    this.modalEl.appendChild(this.titleEl);
     this.modalEl.appendChild(this.contentEl);
   }
 
@@ -457,6 +463,7 @@ declare global {
     addClass(...classes: string[]): void;
     removeClass(...classes: string[]): void;
     setText(t: string | DocumentFragment): void;
+    appendText(t: string): void;
     toggleClass(c: string | string[], on: boolean): void;
   }
 }
