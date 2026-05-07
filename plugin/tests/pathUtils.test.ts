@@ -73,7 +73,6 @@ describe('path utility helpers', () => {
     const originalUserProfile = process.env.USERPROFILE;
     try {
       process.env.HOME = '/home/alice';
-      process.env.USERPROFILE = '';
       expect(expandHome('~/vault')).toBe('/home/alice/vault');
     } finally {
       process.env.HOME = originalHome;
