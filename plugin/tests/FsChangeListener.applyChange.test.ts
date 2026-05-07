@@ -140,11 +140,23 @@ describe('FsChangeListener notification + applyChange', () => {
     expect(applyChange).not.toHaveBeenCalled();
   });
 
-  it('applyChange handles created/modified/deleted/renamed branches', async () => {
+  function invokeApplyChange(
+    listener: FsChangeListener,
+    oldPath: string,
+    newPath: string | undefined,
+    event: 'created' | 'modified' | 'deleted' | 'renamed',
+  ): Promise<void> {
+    return (listener as unknown as {
+      applyChange: (o: string, n: string | undefined, e: typeof event) => Promise<void>;
+    }).applyChange(oldPath, newPath, event);
+  }
+
+  it('applyChange created: inserts with stat metadata when stat succeeds', async () => {
     const { listener, stat } = makeListener();
     stat.mockResolvedValueOnce({ type: 'folder', ctime: 1, mtime: 2, size: 3 });
-    await (listener as unknown as { applyChange: (...args: unknown[]) => Promise<void> })
-      .applyChange('dir', undefined, 'created');
+
+    await invokeApplyChange(listener, 'dir', undefined, 'created');
+
     expect(hoisted.builderMethods.insertOne).toHaveBeenCalledWith({
       path: 'dir',
       isDirectory: true,
@@ -152,32 +164,23 @@ describe('FsChangeListener notification + applyChange', () => {
       mtime: 2,
       size: 3,
     }, { ensureParents: true });
+  });
 
+  it('applyChange created: warns and returns when stat returns null', async () => {
+    const { listener, stat } = makeListener();
     stat.mockResolvedValueOnce(null);
-    await (listener as unknown as { applyChange: (...args: unknown[]) => Promise<void> })
-      .applyChange('note.md', undefined, 'modified');
-    expect(hoisted.builderMethods.modifyOne).toHaveBeenCalledWith('note.md');
 
-    await (listener as unknown as { applyChange: (...args: unknown[]) => Promise<void> })
-      .applyChange('old.md', undefined, 'deleted');
-    expect(hoisted.builderMethods.removeOne).toHaveBeenCalledWith('old.md');
+    await invokeApplyChange(listener, 'missing.md', undefined, 'created');
 
-    await (listener as unknown as { applyChange: (...args: unknown[]) => Promise<void> })
-      .applyChange('a.md', undefined, 'renamed');
-    expect(hoisted.logger.warn).toHaveBeenCalledWith('applyChange(renamed): missing newPath for a.md');
-
-    await (listener as unknown as { applyChange: (...args: unknown[]) => Promise<void> })
-      .applyChange('a.md', 'b.md', 'renamed');
-    expect(hoisted.builderMethods.renameOne).toHaveBeenCalledWith('a.md', 'b.md');
-    expect(hoisted.perfTracer.end).toHaveBeenCalled();
+    expect(hoisted.builderMethods.insertOne).not.toHaveBeenCalled();
+    expect(hoisted.logger.warn).toHaveBeenCalledWith('applyChange(created): stat failed for missing.md');
   });
 
   it('applyChange modified: calls modifyOne with stat metadata when stat succeeds', async () => {
     const { listener, stat } = makeListener();
     stat.mockResolvedValueOnce({ type: 'file', ctime: 10, mtime: 20, size: 100 });
 
-    await (listener as unknown as { applyChange: (...args: unknown[]) => Promise<void> })
-      .applyChange('note.md', undefined, 'modified');
+    await invokeApplyChange(listener, 'note.md', undefined, 'modified');
 
     expect(hoisted.builderMethods.modifyOne).toHaveBeenCalledWith('note.md', {
       ctime: 10,
@@ -186,15 +189,39 @@ describe('FsChangeListener notification + applyChange', () => {
     });
   });
 
-  it('applyChange created: warns and returns when stat returns null', async () => {
+  it('applyChange modified: calls modifyOne without metadata when stat returns null', async () => {
     const { listener, stat } = makeListener();
     stat.mockResolvedValueOnce(null);
 
-    await (listener as unknown as { applyChange: (...args: unknown[]) => Promise<void> })
-      .applyChange('missing.md', undefined, 'created');
+    await invokeApplyChange(listener, 'note.md', undefined, 'modified');
 
-    expect(hoisted.builderMethods.insertOne).not.toHaveBeenCalled();
-    expect(hoisted.logger.warn).toHaveBeenCalledWith('applyChange(created): stat failed for missing.md');
+    expect(hoisted.builderMethods.modifyOne).toHaveBeenCalledWith('note.md');
+  });
+
+  it('applyChange deleted: removes the path', async () => {
+    const { listener } = makeListener();
+
+    await invokeApplyChange(listener, 'old.md', undefined, 'deleted');
+
+    expect(hoisted.builderMethods.removeOne).toHaveBeenCalledWith('old.md');
+  });
+
+  it('applyChange renamed: warns when newPath is missing', async () => {
+    const { listener } = makeListener();
+
+    await invokeApplyChange(listener, 'a.md', undefined, 'renamed');
+
+    expect(hoisted.builderMethods.renameOne).not.toHaveBeenCalled();
+    expect(hoisted.logger.warn).toHaveBeenCalledWith('applyChange(renamed): missing newPath for a.md');
+  });
+
+  it('applyChange renamed: renames the path when newPath is provided and ends the perf span', async () => {
+    const { listener } = makeListener();
+
+    await invokeApplyChange(listener, 'a.md', 'b.md', 'renamed');
+
+    expect(hoisted.builderMethods.renameOne).toHaveBeenCalledWith('a.md', 'b.md');
+    expect(hoisted.perfTracer.end).toHaveBeenCalled();
   });
 
   it('ignores notifications when interpretWatchEvent returns null (path filtered out)', async () => {

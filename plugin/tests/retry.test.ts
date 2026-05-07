@@ -1,12 +1,18 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RETRY_MAX_MS } from '../src/constants';
 import { withRetry } from '../src/util/retry';
 import { logger } from '../src/util/logger';
 
 describe('withRetry', () => {
   const aw = (globalThis as typeof globalThis & { activeWindow: typeof globalThis }).activeWindow;
-  const originalSetTimeout = aw.setTimeout.bind(aw);
+  let originalSetTimeout: typeof aw.setTimeout;
   const delays: number[] = [];
+
+  beforeEach(() => {
+    // Capture per-test so a fake-timer left behind by another suite cannot
+    // poison our restore path.
+    originalSetTimeout = aw.setTimeout.bind(aw);
+  });
 
   afterEach(() => {
     delays.length = 0;
