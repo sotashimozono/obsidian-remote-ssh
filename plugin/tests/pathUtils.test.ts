@@ -59,8 +59,9 @@ describe('path utility helpers', () => {
   });
 
   it('toLocalPath uses platform-aware path join', () => {
-    expect(toLocalPath('/tmp/work', 'docs/a.md')).toContain('docs');
-    expect(toLocalPath('/tmp/work', 'docs/a.md').endsWith('docs/a.md') || toLocalPath('/tmp/work', 'docs/a.md').endsWith('docs\\a.md')).toBe(true);
+    const result = toLocalPath('/tmp/work', 'docs/a.md');
+    expect(result).toContain('docs');
+    expect(result.endsWith('docs/a.md') || result.endsWith('docs\\a.md')).toBe(true);
   });
 
   it('toRemotePath uses posix separator', () => {
@@ -70,11 +71,14 @@ describe('path utility helpers', () => {
   it('expandHome expands "~/" using HOME', () => {
     const originalHome = process.env.HOME;
     const originalUserProfile = process.env.USERPROFILE;
-    process.env.HOME = '/home/alice';
-    process.env.USERPROFILE = '';
-    expect(expandHome('~/vault')).toBe('/home/alice/vault');
-    process.env.HOME = originalHome;
-    process.env.USERPROFILE = originalUserProfile;
+    try {
+      process.env.HOME = '/home/alice';
+      process.env.USERPROFILE = '';
+      expect(expandHome('~/vault')).toBe('/home/alice/vault');
+    } finally {
+      process.env.HOME = originalHome;
+      process.env.USERPROFILE = originalUserProfile;
+    }
   });
 
   it('expandHome leaves non-tilde paths unchanged', () => {
