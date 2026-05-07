@@ -4,17 +4,18 @@ import { withRetry } from '../src/util/retry';
 import { logger } from '../src/util/logger';
 
 describe('withRetry', () => {
-  const originalSetTimeout = activeWindow.setTimeout.bind(activeWindow);
+  const aw = (globalThis as typeof globalThis & { activeWindow: typeof globalThis }).activeWindow;
+  const originalSetTimeout = aw.setTimeout.bind(aw);
   const delays: number[] = [];
 
   afterEach(() => {
     delays.length = 0;
-    activeWindow.setTimeout = originalSetTimeout;
+    aw.setTimeout = originalSetTimeout;
     vi.restoreAllMocks();
   });
 
   function installImmediateSleep(): void {
-    activeWindow.setTimeout = ((cb: TimerHandler, ms?: number) => {
+    aw.setTimeout = ((cb: TimerHandler, ms?: number) => {
       delays.push(Number(ms ?? 0));
       if (typeof cb === 'function') cb();
       return 0 as unknown as number;
