@@ -172,6 +172,54 @@ describe('FsChangeListener notification + applyChange', () => {
     expect(hoisted.perfTracer.end).toHaveBeenCalled();
   });
 
+  it('applyChange modified: calls modifyOne with stat metadata when stat succeeds', async () => {
+    const { listener, stat } = makeListener();
+    stat.mockResolvedValueOnce({ type: 'file', ctime: 10, mtime: 20, size: 100 });
+
+    await (listener as unknown as { applyChange: (...args: unknown[]) => Promise<void> })
+      .applyChange('note.md', undefined, 'modified');
+
+    expect(hoisted.builderMethods.modifyOne).toHaveBeenCalledWith('note.md', {
+      ctime: 10,
+      mtime: 20,
+      size: 100,
+    });
+  });
+
+  it('applyChange created: warns and returns when stat returns null', async () => {
+    const { listener, stat } = makeListener();
+    stat.mockResolvedValueOnce(null);
+
+    await (listener as unknown as { applyChange: (...args: unknown[]) => Promise<void> })
+      .applyChange('missing.md', undefined, 'created');
+
+    expect(hoisted.builderMethods.insertOne).not.toHaveBeenCalled();
+    expect(hoisted.logger.warn).toHaveBeenCalledWith('applyChange(created): stat failed for missing.md');
+  });
+
+  it('ignores notifications when interpretWatchEvent returns null (path filtered out)', async () => {
+    const { listener } = makeListener();
+    const dataAdapter = { invalidateRemotePath: vi.fn() };
+    const applyChange = vi.spyOn(listener as unknown as { applyChange: (...args: unknown[]) => Promise<void> }, 'applyChange').mockResolvedValue();
+    hoisted.interpretWatchEvent.mockReturnValue(null);
+
+    await listener.subscribe({
+      rpcConnection: makeRpcConnection() as never,
+      dataAdapter: dataAdapter as never,
+      pathMapper: {} as never,
+    });
+    const handler = hoisted.onNotification.mock.calls[0]?.[1] as (params: {
+      event: 'modified'; path: string; subscriptionId: string;
+    }) => void;
+
+    handler({ event: 'modified', path: 'filtered.md', subscriptionId: 'sub-1' });
+
+    // T4a stamps every push frame even before path filtering
+    expect(hoisted.perfTracer.point).toHaveBeenCalledTimes(1);
+    expect(dataAdapter.invalidateRemotePath).not.toHaveBeenCalled();
+    expect(applyChange).not.toHaveBeenCalled();
+  });
+
   it('applyChange catches builder failures and logs warnings', async () => {
     const { listener } = makeListener();
     hoisted.builderMethods.removeOne.mockImplementation(() => {

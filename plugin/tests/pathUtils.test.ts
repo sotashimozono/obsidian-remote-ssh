@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { describe, it, expect } from 'vitest';
 import {
   ensureTrailingSlash,
@@ -73,10 +74,26 @@ describe('path utility helpers', () => {
     const originalUserProfile = process.env.USERPROFILE;
     try {
       process.env.HOME = '/home/alice';
-      expect(expandHome('~/vault')).toBe('/home/alice/vault');
+      delete process.env.USERPROFILE;
+      // Use path.join for platform-agnostic comparison (Windows uses backslashes)
+      expect(expandHome('~/vault')).toBe(path.join('/home/alice', 'vault'));
     } finally {
-      process.env.HOME = originalHome;
-      process.env.USERPROFILE = originalUserProfile;
+      if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome;
+      if (originalUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = originalUserProfile;
+    }
+  });
+
+  it('expandHome falls back to cwd-relative when neither HOME nor USERPROFILE is set', () => {
+    const originalHome = process.env.HOME;
+    const originalUserProfile = process.env.USERPROFILE;
+    try {
+      delete process.env.HOME;
+      delete process.env.USERPROFILE;
+      // home = '' → path.join('', 'vault') = 'vault'
+      expect(expandHome('~/vault')).toBe(path.join('', 'vault'));
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome;
+      if (originalUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = originalUserProfile;
     }
   });
 

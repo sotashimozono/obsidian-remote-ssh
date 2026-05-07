@@ -64,4 +64,30 @@ describe('withRetry', () => {
     expect(delays.slice(0, 5)).toEqual([1000, 2000, 4000, 8000, 16000]);
     expect(delays.slice(5)).toEqual([RETRY_MAX_MS, RETRY_MAX_MS]);
   });
+
+  it('throws immediately when maxAttempts is 1 with no retry', async () => {
+    installImmediateSleep();
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const boom = new Error('instant');
+    const fn = vi.fn(async () => { throw boom; });
+
+    await expect(withRetry(fn, 'label', 1)).rejects.toBe(boom);
+
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    expect(delays).toEqual([]);
+  });
+
+  it('uses errorMessage for non-Error thrown values', async () => {
+    installImmediateSleep();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const fn = vi.fn()
+      .mockRejectedValueOnce('plain string error')
+      .mockResolvedValueOnce('ok');
+
+    await expect(withRetry(fn, 'label', 3)).resolves.toBe('ok');
+
+    expect(warn.mock.calls[0]?.[0]).toContain('label: attempt 1 failed (plain string error)');
+  });
 });

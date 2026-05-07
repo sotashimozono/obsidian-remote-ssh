@@ -1,5 +1,5 @@
 import { App } from 'obsidian';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { FsChangeListener } from '../src/vault/FsChangeListener';
 
 function makeRpcConnection() {
@@ -15,6 +15,10 @@ function makeRpcConnection() {
 }
 
 describe('FsChangeListener lifecycle', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('subscribe registers handler and fs.watch once, then is idempotent', async () => {
     const listener = new FsChangeListener(new App());
     const { rpcConnection, onNotification, call } = makeRpcConnection();
@@ -83,5 +87,37 @@ describe('FsChangeListener lifecycle', () => {
     expect(call).toHaveBeenCalledWith('fs.unwatch', { subscriptionId: 'sub-1' });
     expect(off).toHaveBeenCalledTimes(1);
     expect(listener.hasContext()).toBe(false);
+  });
+
+  it('subscribe disposes the notification handler when fs.watch call rejects', async () => {
+    const listener = new FsChangeListener(new App());
+    const { rpcConnection, onNotification, call, off } = makeRpcConnection();
+    // First call rejects, second succeeds — verifies subscribe is not blocked after failure
+    call.mockRejectedValueOnce(new Error('connection refused'));
+    call.mockResolvedValue({ subscriptionId: 'sub-1' });
+    const dataAdapter = { invalidateRemotePath: vi.fn() };
+    const pathMapper = { toRemotePath: vi.fn(), toVaultPath: vi.fn() };
+
+    vi.spyOn(console, 'error').mockImplementation(() => {}); // suppress logger output
+
+    await listener.subscribe({
+      rpcConnection: rpcConnection as never,
+      dataAdapter: dataAdapter as never,
+      pathMapper: pathMapper as never,
+    });
+
+    // Handler was registered then disposed to prevent leaks
+    expect(onNotification).toHaveBeenCalledTimes(1);
+    expect(off).toHaveBeenCalledTimes(1);
+    // pathMapper captured before rpc.call, so hasContext is true (resume remains possible)
+    expect(listener.hasContext()).toBe(true);
+
+    // subscriptionId was never set → a retry subscribe() goes through (not blocked)
+    await listener.subscribe({
+      rpcConnection: rpcConnection as never,
+      dataAdapter: dataAdapter as never,
+      pathMapper: pathMapper as never,
+    });
+    expect(onNotification).toHaveBeenCalledTimes(2);
   });
 });
