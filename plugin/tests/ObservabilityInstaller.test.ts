@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -40,7 +41,11 @@ describe('ObservabilityInstaller', () => {
 
     installer.install();
 
-    expect(loggerMock.installFileSink).toHaveBeenCalledWith('/vault/.obsidian/plugins/remote-ssh/console.log');
+    // Use path.join so the assertion matches the OS-native separator
+    // (Windows: backslash; POSIX: forward slash) — the source uses path.join too.
+    expect(loggerMock.installFileSink).toHaveBeenCalledWith(
+      path.join('/vault', '.obsidian', 'plugins', 'remote-ssh', 'console.log'),
+    );
     expect(loggerMock.wrapConsole).toHaveBeenCalledTimes(1);
     expect(installErrorHookMock).toHaveBeenCalledTimes(1);
     expect(loggerMock.info).toHaveBeenCalledWith('Plugin remote-ssh v1.2.3 loaded');
