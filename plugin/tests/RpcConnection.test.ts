@@ -37,10 +37,10 @@ interface ServerScript {
   info?: { protocolVersion: number };
   /** Make `auth` reject with a custom error envelope. */
   authReject?: { code: number; message: string };
-  /** Make `auth` return a successful RPC result with ok:false. */
+  /** Make `auth` reply result.ok = false (token accepted but server refused). */
   authOkFalse?: boolean;
-  /** Make `server.info` reply with an error envelope. */
-  serverInfoReject?: { code: number; message: string };
+  /** Make `server.info` reply with an error envelope instead of a result. */
+  infoError?: { code: number; message: string };
 }
 
 /**
@@ -69,9 +69,9 @@ function startFakeDaemon(serverSide: Duplex, script: ServerScript = {}): () => v
       return;
     }
     if (req.method === 'server.info') {
-      if (script.serverInfoReject) {
+      if (script.infoError) {
         framed.writeMessage(Buffer.from(JSON.stringify({
-          jsonrpc: '2.0', id: req.id, error: script.serverInfoReject,
+          jsonrpc: '2.0', id: req.id, error: script.infoError,
         }), 'utf8'));
         return;
       }
@@ -128,23 +128,23 @@ describe('establishRpcConnection', () => {
     stop();
   });
 
-  it('rejects with AuthInvalid when auth returns ok:false (not an error envelope)', async () => {
+  it('rejects with AuthInvalid when auth returns result.ok = false', async () => {
     const pair = duplexPair();
     const stop = startFakeDaemon(pair.serverSide, { authOkFalse: true });
     await expect(
-      establishRpcConnection({ stream: pair.clientSide, token: 'stale' }),
+      establishRpcConnection({ stream: pair.clientSide, token: 'any' }),
     ).rejects.toMatchObject({ code: ErrorCode.AuthInvalid });
     stop();
   });
 
-  it('rejects and cleans up when server.info call returns an error', async () => {
+  it('rejects and closes when server.info returns an error envelope', async () => {
     const pair = duplexPair();
     const stop = startFakeDaemon(pair.serverSide, {
-      serverInfoReject: { code: -32603, message: 'internal server error' },
+      infoError: { code: -32000, message: 'method unavailable' },
     });
     await expect(
       establishRpcConnection({ stream: pair.clientSide, token: 'good' }),
-    ).rejects.toBeInstanceOf(RpcError);
+    ).rejects.toThrow('method unavailable');
     stop();
   });
 });
