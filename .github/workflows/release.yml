@@ -92,6 +92,10 @@ jobs:
       - run: npm ci
       - run: node node_modules/typescript/bin/tsc --noEmit
       - run: node node_modules/vitest/vitest.mjs run
+        env:
+          # Mirror ci.yml's heap bump: vitest 4 + jsdom + ~70 test files
+          # exceeds the default 4 GiB old-space, causing intermittent OOMs.
+          NODE_OPTIONS: --max-old-space-size=6144
 
   # ─── Phase D-δ / F24: build daemon binaries + cosign sign ────────────────────
   # Builds the 4-platform daemon binary set via `make -C server cross`,

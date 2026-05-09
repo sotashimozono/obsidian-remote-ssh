@@ -60,12 +60,23 @@ jobs:
       - run: npm ci
       # Coverage is only useful from one OS; run plain `vitest` on the
       # others so we don't pay the instrumentation cost everywhere.
+      #
+      # NODE_OPTIONS bumps the V8 old-space heap from the default ~4 GiB
+      # to 6 GiB. Vitest 4's default `forks` pool plus jsdom on every
+      # test file pushed peak RSS just past the default ceiling once the
+      # suite grew to ~70 files / ~1000 tests, producing intermittent
+      # `FATAL ERROR: Reached heap limit` crashes. The runners have
+      # 7+ GiB available, so 6 GiB is safe headroom.
       - name: Run tests with coverage
         if: matrix.os == 'ubuntu-latest'
         run: node node_modules/vitest/vitest.mjs run --coverage
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
       - name: Run tests
         if: matrix.os != 'ubuntu-latest'
         run: node node_modules/vitest/vitest.mjs run
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v6
@@ -115,6 +126,8 @@ jobs:
           cache-dependency-path: plugin/package-lock.json
       - run: npm ci
       - run: node node_modules/vitest/vitest.mjs run
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
 
   # ─── Production build + bundle size guard (matrix) ───────────────────────────
   # Build runs on every OS — cheap, catches esbuild platform issues. The
