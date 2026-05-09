@@ -56,7 +56,7 @@ export default defineConfig({
       // more UI/settings suites land and per-file coverage rises.
       thresholds: {
         lines: 76,
-        branches: 69,
+        branches: 70,
         functions: 72,
       },
     },
