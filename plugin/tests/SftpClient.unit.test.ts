@@ -616,8 +616,11 @@ describe('SftpClient.listRecursive()', () => {
       );
     wire(sut, sftp);
 
+    // relativePath is the full path under root, not just the basename:
+    // entries from `/vault/sub` come back as `sub/deep.md`, not `deep.md`
+    // (see SftpClient.listRecursive: `rel = full.slice(rootPath.length + 1)`).
     const entries = await sut.listRecursive('/vault');
-    expect(entries.map(e => e.relativePath).sort()).toEqual(['deep.md', 'root.md', 'sub']);
+    expect(entries.map(e => e.relativePath).sort()).toEqual(['root.md', 'sub', 'sub/deep.md']);
   });
 
   it('filter predicate excludes non-matching entries', async () => {
@@ -669,12 +672,19 @@ describe('SftpClient.rmdir()', () => {
     const sut  = makeSut();
     const sftp = makeSftp();
 
-    sftp.readdir.mockImplementation((_p: string, cb: (e: null, l: any[]) => void) =>
-      cb(null, [
-        { filename: 'file.md', attrs: fakeStats({ mtime: 1000 }) },
-        { filename: 'sub',     attrs: fakeStats({ dir: true }) },
-      ]),
-    );
+    // Path-aware mock: only `/vault` has children. Without this,
+    // `listRecursive`'s BFS would re-discover `sub` inside every
+    // descendant and grow the visited Set forever (heap-OOM after a
+    // few seconds — see issue diagnosed when this file was added).
+    sftp.readdir.mockImplementation((p: string, cb: (e: null, l: any[]) => void) => {
+      if (p === '/vault') {
+        return cb(null, [
+          { filename: 'file.md', attrs: fakeStats({ mtime: 1000 }) },
+          { filename: 'sub',     attrs: fakeStats({ dir: true }) },
+        ]);
+      }
+      return cb(null, []);
+    });
     sftp.unlink.mockImplementation((_p: string, cb: (e: null) => void) => cb(null));
     sftp.rmdir.mockImplementation((_p: string, cb: (e: null) => void) => cb(null));
     wire(sut, sftp);

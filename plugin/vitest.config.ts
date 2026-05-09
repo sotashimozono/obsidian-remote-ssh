@@ -24,6 +24,17 @@ export default defineConfig({
     setupFiles: ['./vitest.setup.ts'],
     include: ['tests/**/*.test.ts'],
     exclude: ['tests/integration/**', 'node_modules/**', 'tests/__mocks__/**'],
+    // Vitest 4's default `forks` pool spawns child Node processes that
+    // do NOT inherit the parent's `NODE_OPTIONS=--max-old-space-size`,
+    // so each worker is capped at the V8 default (~4 GiB). Once the
+    // suite grew to ~70 jsdom test files, individual workers started
+    // hitting `FATAL ERROR: Reached heap limit` mid-file (notably
+    // SftpClient.unit.test.ts, which exercises ~50 mock-heavy tests).
+    // Pass `--max-old-space-size=6144` to the spawned workers via
+    // `execArgv` so each gets the same 6 GiB headroom we set for the
+    // CI workflow's parent process. (In Vitest 4 `execArgv` is a
+    // top-level key inside `test`, not under `poolOptions`.)
+    execArgv: ['--max-old-space-size=6144'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
