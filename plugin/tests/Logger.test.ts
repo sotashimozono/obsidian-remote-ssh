@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -184,5 +184,175 @@ describe('Logger — debug gating', () => {
     await log.uninstallFileSink();
     const [line] = readJsonl();
     expect(line.level).toBe('debug');
+  });
+});
+
+// ── setDebug / setMaxLines / clear ──────────────────────────────────────
+
+describe('Logger — setDebug / setMaxLines / clear', () => {
+  it('setDebug(true) enables debug output after construction', async () => {
+    const log = new Logger(50, false);
+    log.setDebug(true);
+    log.installFileSink(logFile);
+    log.debug_('now visible');
+    await log.uninstallFileSink();
+    const lines = readJsonl();
+    expect(lines[0]?.level).toBe('debug');
+  });
+
+  it('setMaxLines shrinks the ring and evicts oldest entries', () => {
+    const log = new Logger(10, false);
+    log.setMaxLines(2);
+    log.info('a');
+    log.info('b');
+    log.info('c'); // should evict 'a'
+    expect(log.getLines().map((l) => l.message)).toEqual(['b', 'c']);
+  });
+
+  it('clear empties the in-memory ring', () => {
+    const log = new Logger(50, false);
+    log.info('x');
+    log.clear();
+    expect(log.getLines()).toHaveLength(0);
+  });
+});
+
+// ── wrapConsole / unwrapConsole ─────────────────────────────────────────
+
+describe('Logger — wrapConsole / unwrapConsole', () => {
+  // Safety net: always unwrap and close the file sink so that a failed
+  // test doesn't leak a patched console or an open fd into subsequent tests.
+  let wrappedLog: Logger | undefined;
+  afterEach(async () => {
+    if (wrappedLog) {
+      wrappedLog.unwrapConsole();
+      await wrappedLog.uninstallFileSink();
+      wrappedLog = undefined;
+    }
+  });
+
+  it('captures console.warn to the file sink as an external line', async () => {
+    wrappedLog = new Logger(50, false);
+    wrappedLog.installFileSink(logFile);
+    wrappedLog.wrapConsole();
+    console.warn('hello from outside');
+    wrappedLog.unwrapConsole();
+    await wrappedLog.uninstallFileSink();
+    const lines = readJsonl();
+    const ext = lines.find((l) => l.msg === 'hello from outside');
+    expect(ext).toBeDefined();
+    expect(ext?.level).toBe('warn');
+    expect(ext?.fields).toMatchObject({ external: true });
+  });
+
+  it('captures console.error to the file sink as an external line', async () => {
+    wrappedLog = new Logger(50, false);
+    wrappedLog.installFileSink(logFile);
+    wrappedLog.wrapConsole();
+    console.error('boom from outside');
+    wrappedLog.unwrapConsole();
+    await wrappedLog.uninstallFileSink();
+    const lines = readJsonl();
+    const ext = lines.find((l) => l.msg === 'boom from outside');
+    expect(ext).toBeDefined();
+    expect(ext?.level).toBe('error');
+  });
+
+  it('skips [RemoteSSH]-prefixed lines (own plugin messages)', async () => {
+    wrappedLog = new Logger(50, false);
+    wrappedLog.installFileSink(logFile);
+    wrappedLog.wrapConsole();
+    console.warn('[RemoteSSH] own log message');
+    wrappedLog.unwrapConsole();
+    await wrappedLog.uninstallFileSink();
+    const lines = readJsonl();
+    const external = lines.filter((l) => (l.fields as Record<string, unknown>)?.external === true);
+    expect(external).toHaveLength(0);
+  });
+
+  it('is idempotent — second wrapConsole is a no-op', () => {
+    wrappedLog = new Logger(50, false);
+    wrappedLog.wrapConsole();
+    const afterFirst = console.warn;
+    wrappedLog.wrapConsole(); // second call
+    expect(console.warn).toBe(afterFirst);
+  });
+
+  it('unwrapConsole stops capturing external console calls', async () => {
+    wrappedLog = new Logger(50, false);
+    wrappedLog.installFileSink(logFile);
+    wrappedLog.wrapConsole();
+    wrappedLog.unwrapConsole();
+    // After unwrap, console.warn should NOT be captured to the file sink
+    console.warn('should not appear after unwrap');
+    await wrappedLog.uninstallFileSink();
+    const lines = readJsonl();
+    const external = lines.filter(
+      (l) => (l.fields as Record<string, unknown>)?.external === true,
+    );
+    expect(external).toHaveLength(0);
+  });
+
+  it('unwrapConsole is a no-op when console was never wrapped', () => {
+    wrappedLog = new Logger(50, false);
+    expect(() => wrappedLog!.unwrapConsole()).not.toThrow();
+  });
+
+  it('captureExternal is a no-op when no file sink is installed', () => {
+    wrappedLog = new Logger(50, false);
+    wrappedLog.wrapConsole();
+    expect(() => console.warn('no sink — should not throw')).not.toThrow();
+    // The ring buffer must also be unmodified — captureExternal only writes
+    // to the file sink, so without one the call is a true no-op.
+    expect(wrappedLog.getLines()).toHaveLength(0);
+  });
+
+  it('formatArg renders Error args by their stack or message', async () => {
+    wrappedLog = new Logger(50, false);
+    wrappedLog.installFileSink(logFile);
+    wrappedLog.wrapConsole();
+    console.error(new Error('disk is full'));
+    wrappedLog.unwrapConsole();
+    await wrappedLog.uninstallFileSink();
+    const lines = readJsonl();
+    const ext = lines.find((l) => (l.fields as Record<string, unknown>)?.external === true);
+    expect(ext?.msg).toContain('disk is full');
+  });
+
+  it('formatArg falls back to String() for non-JSON-serializable primitives', async () => {
+    wrappedLog = new Logger(50, false);
+    wrappedLog.installFileSink(logFile);
+    wrappedLog.wrapConsole();
+    // BigInt is not JSON-serializable → goes through the catch branch
+    console.error(42n);
+    wrappedLog.unwrapConsole();
+    await wrappedLog.uninstallFileSink();
+    const lines = readJsonl();
+    const ext = lines.find((l) => (l.fields as Record<string, unknown>)?.external === true);
+    expect(ext?.msg).toBe('42');
+  });
+});
+
+// ── installFileSink mkdir failure ────────────────────────────────────────
+
+describe('Logger — installFileSink mkdir failure', () => {
+  it('calls fallbackError and returns early when mkdirSync throws', () => {
+    // Provoke a real mkdirSync failure: place a regular file where a
+    // parent directory is expected so the OS returns ENOTDIR.
+    const notADir = path.join(tmpDir, 'not-a-dir');
+    fs.writeFileSync(notADir, '', 'utf8');
+    const target = path.join(notADir, 'sub', 'console.log');
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const log = new Logger(50, false);
+      log.installFileSink(target);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('installFileSink mkdir failed'),
+      );
+      expect(fs.existsSync(target)).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });

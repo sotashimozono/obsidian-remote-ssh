@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { WindowSpawner, type UrlOpener } from '../src/shadow/WindowSpawner';
 
 function recordingOpener() {
@@ -32,5 +32,19 @@ describe('WindowSpawner', () => {
     const { opener } = recordingOpener();
     const url = new WindowSpawner(opener).spawn('/a/b');
     expect(url).toBe('obsidian://open?path=' + encodeURIComponent('/a/b'));
+  });
+
+  it('default opener delegates to window.open with _blank target', () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    try {
+      const spawner = new WindowSpawner();
+      spawner.spawn('/vault/path');
+      expect(openSpy).toHaveBeenCalledTimes(1);
+      const [url, target] = openSpy.mock.calls[0];
+      expect((url as string).startsWith('obsidian://open?path=')).toBe(true);
+      expect(target).toBe('_blank');
+    } finally {
+      openSpy.mockRestore();
+    }
   });
 });

@@ -37,6 +37,10 @@ interface ServerScript {
   info?: { protocolVersion: number };
   /** Make `auth` reject with a custom error envelope. */
   authReject?: { code: number; message: string };
+  /** Make `auth` reply result.ok = false (token accepted but server refused). */
+  authOkFalse?: boolean;
+  /** Make `server.info` reply with an error envelope instead of a result. */
+  infoError?: { code: number; message: string };
 }
 
 /**
@@ -53,6 +57,10 @@ function startFakeDaemon(serverSide: Duplex, script: ServerScript = {}): () => v
         framed.writeMessage(Buffer.from(JSON.stringify({
           jsonrpc: '2.0', id: req.id, error: script.authReject,
         }), 'utf8'));
+      } else if (script.authOkFalse) {
+        framed.writeMessage(Buffer.from(JSON.stringify({
+          jsonrpc: '2.0', id: req.id, result: { ok: false },
+        }), 'utf8'));
       } else {
         framed.writeMessage(Buffer.from(JSON.stringify({
           jsonrpc: '2.0', id: req.id, result: { ok: true },
@@ -61,6 +69,12 @@ function startFakeDaemon(serverSide: Duplex, script: ServerScript = {}): () => v
       return;
     }
     if (req.method === 'server.info') {
+      if (script.infoError) {
+        framed.writeMessage(Buffer.from(JSON.stringify({
+          jsonrpc: '2.0', id: req.id, error: script.infoError,
+        }), 'utf8'));
+        return;
+      }
       const info = script.info ?? { protocolVersion: PROTOCOL_VERSION };
       framed.writeMessage(Buffer.from(JSON.stringify({
         jsonrpc: '2.0', id: req.id,
@@ -111,6 +125,26 @@ describe('establishRpcConnection', () => {
       expect(e).toBeInstanceOf(RpcError);
       expect((e as RpcError).code).toBe(ErrorCode.ProtocolVersionTooOld);
     }
+    stop();
+  });
+
+  it('rejects with AuthInvalid when auth returns result.ok = false', async () => {
+    const pair = duplexPair();
+    const stop = startFakeDaemon(pair.serverSide, { authOkFalse: true });
+    await expect(
+      establishRpcConnection({ stream: pair.clientSide, token: 'any' }),
+    ).rejects.toMatchObject({ code: ErrorCode.AuthInvalid });
+    stop();
+  });
+
+  it('rejects and closes when server.info returns an error envelope', async () => {
+    const pair = duplexPair();
+    const stop = startFakeDaemon(pair.serverSide, {
+      infoError: { code: -32000, message: 'method unavailable' },
+    });
+    await expect(
+      establishRpcConnection({ stream: pair.clientSide, token: 'good' }),
+    ).rejects.toThrow('method unavailable');
     stop();
   });
 });
