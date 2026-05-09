@@ -175,7 +175,8 @@ describe('createJumpTunnel: auth handling', () => {
     const jump: JumpHostConfig = {
       ...baseJump,
       authMethod: 'privateKey',
-      privateKeyPath: '/nonexistent/path/that/does/not/exist/key',
+      // Use os.tmpdir() so the path is valid on both POSIX and Windows.
+      privateKeyPath: path.join(os.tmpdir(), 'remote-ssh-test-nonexistent-key-does-not-exist'),
     };
     await expect(createJumpTunnel(
       jump, 'target.example.com', 22, authResolver,
@@ -186,7 +187,9 @@ describe('createJumpTunnel: auth handling', () => {
   it('throws for an unrecognised auth method', async () => {
     const jump = {
       ...baseJump,
-      authMethod: 'kerberos' as JumpHostConfig['authMethod'],
+      // Double cast: explicit unsound widening so tsc stays happy if
+      // type-checking is ever enabled for tests.
+      authMethod: 'kerberos' as unknown as JumpHostConfig['authMethod'],
     };
     await expect(createJumpTunnel(
       jump, 'target.example.com', 22, authResolver,
@@ -378,7 +381,7 @@ describe('createJumpTunnel: host-key mismatch handler (#132 follow-up)', () => {
 
   it('async hostVerifier calls verify(false) when verifyAsync itself rejects (defence-in-depth)', async () => {
     const store = new HostKeyStore();
-    // Simulate an impossible internal failure from verifyAsync.
+    // Simulate an unexpected rejection from verifyAsync (defence-in-depth path).
     vi.spyOn(store, 'verifyAsync').mockRejectedValueOnce(new Error('unexpected internal failure'));
 
     const handler = vi.fn(async () => 'trust' as const);
