@@ -232,4 +232,47 @@ describe('ReconnectManager', () => {
     expect(m.state().kind).toBe('failed');
     expect(lastOnState?.kind).toBe('failed');
   });
+
+  it('continues the loop when onState throws instead of crashing', async () => {
+    let calls = 0;
+    const m = new ReconnectManager({
+      attempt: async () => { calls++; throw new Error('fail'); },
+      onState: (s) => {
+        if (s.kind === 'waiting') throw new Error('onState exploded');
+      },
+      backoff: { ...cfgFast, maxRetries: 1 },
+      ...makeImmediateScheduler(),
+    });
+    const final = await m.run();
+    expect(calls).toBe(1);
+    expect(final.kind).toBe('failed');
+  });
+
+  it('transitions to cancelled when the sleep timer fires after cancel() was called', async () => {
+    // Use a clearTimeoutFn that does NOT suppress the pending callback —
+    // simulating the race where the JS timer event fires between cancel()
+    // setting this.cancelled and clearTimeout actually removing the event.
+    let pendingCb: (() => void) | null = null;
+    const m = new ReconnectManager({
+      attempt: async () => { throw new Error('always'); },
+      onState: () => {},
+      backoff: { ...cfgFast, maxRetries: 3 },
+      setTimeoutFn: (cb) => { pendingCb = cb; return 1; },
+      clearTimeoutFn: () => { /* intentionally no-op — simulates late timer */ },
+    });
+
+    const runPromise = m.run();
+    // Yield once so setTimeoutFn is called and pendingCb is captured.
+    await Promise.resolve();
+
+    // cancel() sets this.cancelled = true and calls clearTimeoutFn (no-op here).
+    m.cancel();
+
+    // Manually fire the timer callback with cancelled=true already set.
+    expect(pendingCb).not.toBeNull();
+    pendingCb!();
+
+    const final = await runPromise;
+    expect(final.kind).toBe('cancelled');
+  });
 });

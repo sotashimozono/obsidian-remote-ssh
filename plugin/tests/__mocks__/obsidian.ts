@@ -138,6 +138,10 @@ function patchDom(): void {
     const list = Array.isArray(c) ? c : [c];
     for (const item of list) this.classList.toggle(item, on);
   };
+  // Real Obsidian: appendText(text: string) — appends a raw text node.
+  proto.appendText = function (this: HTMLElement, text: string): void {
+    this.appendChild(document.createTextNode(text));
+  };
 
   proto[PATCH_FLAG] = true;
 }
@@ -357,10 +361,13 @@ export class Setting {
 export class Modal {
   contentEl: HTMLElement;
   modalEl: HTMLElement;
+  titleEl: HTMLElement;
 
   constructor(public readonly app: App) {
     this.modalEl = document.createElement('div');
+    this.titleEl = document.createElement('div');
     this.contentEl = document.createElement('div');
+    this.modalEl.appendChild(this.titleEl);
     this.modalEl.appendChild(this.contentEl);
   }
 
@@ -458,6 +465,7 @@ declare global {
     removeClass(...classes: string[]): void;
     setText(t: string | DocumentFragment): void;
     toggleClass(c: string | string[], on: boolean): void;
+    appendText(text: string): void;
   }
 }
 

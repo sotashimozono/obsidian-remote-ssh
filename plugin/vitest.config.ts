@@ -55,9 +55,9 @@ export default defineConfig({
       // Calibrated for the current measured scope. Bring back up as
       // more UI/settings suites land and per-file coverage rises.
       thresholds: {
-        lines: 65,
-        branches: 60,
-        functions: 60,
+        lines: 74,
+        branches: 67,
+        functions: 70,
       },
     },
   },
