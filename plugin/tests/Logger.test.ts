@@ -220,10 +220,16 @@ describe('Logger — setDebug / setMaxLines / clear', () => {
 // ── wrapConsole / unwrapConsole ─────────────────────────────────────────
 
 describe('Logger — wrapConsole / unwrapConsole', () => {
-  // Safety net: always unwrap so that a failed test doesn't leak a
-  // patched console into subsequent tests.
+  // Safety net: always unwrap and close the file sink so that a failed
+  // test doesn't leak a patched console or an open fd into subsequent tests.
   let wrappedLog: Logger | undefined;
-  afterEach(() => { wrappedLog?.unwrapConsole(); wrappedLog = undefined; });
+  afterEach(async () => {
+    if (wrappedLog) {
+      wrappedLog.unwrapConsole();
+      await wrappedLog.uninstallFileSink();
+      wrappedLog = undefined;
+    }
+  });
 
   it('captures console.warn to the file sink as an external line', async () => {
     wrappedLog = new Logger(50, false);
@@ -296,6 +302,9 @@ describe('Logger — wrapConsole / unwrapConsole', () => {
     wrappedLog = new Logger(50, false);
     wrappedLog.wrapConsole();
     expect(() => console.warn('no sink — should not throw')).not.toThrow();
+    // The ring buffer must also be unmodified — captureExternal only writes
+    // to the file sink, so without one the call is a true no-op.
+    expect(wrappedLog.getLines()).toHaveLength(0);
   });
 
   it('formatArg renders Error args by their stack or message', async () => {
