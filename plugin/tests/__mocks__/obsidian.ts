@@ -430,6 +430,16 @@ export class Plugin {
   addSettingTab(): void { /* no-op */ }
 }
 
+// ─── requestUrl ──────────────────────────────────────────────────────
+//
+// Obsidian's cross-origin-friendly fetch wrapper. Actual HTTP calls
+// are never made in unit tests — this stub throws so a mis-wired
+// test fails loudly rather than silently hanging.
+
+export async function requestUrl(_opts: unknown): Promise<{ text: string; json: unknown }> {
+  throw new Error('requestUrl must be mocked in this test');
+}
+
 // ─── Re-exported types ───────────────────────────────────────────────
 //
 // The plugin uses `import type` for these elsewhere. Re-export so
