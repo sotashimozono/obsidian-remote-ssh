@@ -133,9 +133,15 @@ You still have to drop a **daemon binary** for your remote OS/arch into
 [Verifying the daemon](#verifying-the-daemon-optional-but-recommended) below.
 BRAT only handles the plugin itself.
 
-> Pre-1.0 every merge to `main` ships as a beta. The `manifest-beta.json` and
-> `manifest.json` channels are byte-identical until a 1.0 stable line is cut,
-> so BRAT's `--beta` mode and stable installs receive the same builds today.
+> **Two release channels.** This repo follows a `next` (integration) +
+> `main` (stable) branching model. Every merge to `next` advances both
+> manifests in lockstep, so BRAT's `--beta` mode (which fetches
+> `manifest-beta.json` from the repo's default branch) gives testers
+> early access to in-flight changes. Stable releases happen via
+> periodic promotion PRs that fast-forward `main` to `next`. Pre-1.0
+> the two channels carry the same builds in practice; once `next`
+> starts landing experimental work that should not auto-ship to stable
+> users, the channels will diverge.
 
 ### Option B — Manual install
 

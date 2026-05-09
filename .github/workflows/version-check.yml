@@ -12,7 +12,13 @@ name: Version check
 
 on:
   pull_request:
-    branches: [main]
+    # Two-axis branching model:
+    #   - `next`  → integration branch; most feature/fix PRs target this
+    #   - `main`  → stable channel; promotion PRs (`next` → `main`) and
+    #              emergency hotfixes target this
+    # Both bases enforce a strict version bump so the release pipeline
+    # always has a unique tag to publish from.
+    branches: [main, next]
 
 concurrency:
   group: version-check-${{ github.ref }}
