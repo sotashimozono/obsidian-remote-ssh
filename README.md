@@ -23,6 +23,13 @@
 > _Status: pre-1.0. End-to-end against Linux + macOS remotes with the bundled
 > Go daemon. Install only into a dev vault for now; production use after v1.0._
 
+> 📦 **Installing?** Grab the latest from the
+> [**Releases page**](https://github.com/sotashimozono/obsidian-remote-ssh/releases)
+> (stable artefacts, signed binaries) — or jump to the [Install](#install) section
+> below for BRAT / manual instructions. The repo's default view tracks the
+> integration branch (`next`); the [`main`](https://github.com/sotashimozono/obsidian-remote-ssh/tree/main)
+> branch holds the latest stable cut.
+
 ![Demo: connect to a remote vault and edit](https://raw.githubusercontent.com/sotashimozono/obsidian-remote-ssh/media/demo.gif)
 
 <sub>Recorded in CI by <a href=".github/workflows/demo-capture.yml"><code>demo-capture.yml</code></a> — re-run on demand.</sub>
