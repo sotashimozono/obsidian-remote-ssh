@@ -55,7 +55,7 @@ describe('ConflictResolver.swapClient', () => {
     await resolver.resolve(NORM_PATH, REMOTE_PATH, MINE, true, ORIGINAL_ERROR);
 
     expect(firstWrite).not.toHaveBeenCalled();
-    expect(secondWrite).toHaveBeenCalledWith(REMOTE_PATH, MINE, undefined);
+    expect(secondWrite).toHaveBeenCalledWith(REMOTE_PATH, MINE);
   });
 });
 

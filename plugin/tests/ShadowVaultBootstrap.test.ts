@@ -1,4 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+// Wrap `fs` in a vi.mock that re-exports the actual module. Vitest 4
+// turns the resulting namespace into a configurable object so the
+// `vi.spyOn(fs, 'symlinkSync')` call in the symlink-fallback suite can
+// redefine that property — the raw ESM namespace is non-configurable
+// and rejects spies. All other fs calls run against the real
+// implementation, so the scratch-tree I/O elsewhere is unaffected.
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof import('fs')>('fs');
+  return { ...actual, default: actual };
+});
+
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -502,8 +514,12 @@ describe('ShadowVaultBootstrap: collectPendingPluginSuggestions edge cases', () 
     const profile = makeProfile({ id: 'p1' });
     const result = await r.bootstrap(profile, [profile]);
 
+    // Bootstrap omits the field entirely when there are no suggestions
+    // (ShadowVaultBootstrap.ts:121-126 only writes the key when
+    // `pending.length > 0`). The absent key is the "no suggestions"
+    // signal that ShadowStartupCoordinator's no-op path relies on.
     const data = JSON.parse(fs.readFileSync(result.layout.pluginDataFile, 'utf-8'));
-    expect(data.pendingPluginSuggestions).toEqual([]);
+    expect(data.pendingPluginSuggestions).toBeUndefined();
   });
 
   it('omits suggestions when source community-plugins.json is invalid JSON', async () => {
@@ -516,7 +532,7 @@ describe('ShadowVaultBootstrap: collectPendingPluginSuggestions edge cases', () 
     const result = await r.bootstrap(profile, [profile]);
 
     const data = JSON.parse(fs.readFileSync(result.layout.pluginDataFile, 'utf-8'));
-    expect(data.pendingPluginSuggestions).toEqual([]);
+    expect(data.pendingPluginSuggestions).toBeUndefined();
   });
 
   it('still lists a plugin suggestion even when its data.json is invalid JSON (sourceData is null)', async () => {

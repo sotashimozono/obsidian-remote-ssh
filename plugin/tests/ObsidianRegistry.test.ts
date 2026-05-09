@@ -1,4 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+// Wrap `fs` in a vi.mock that re-exports the actual module. Vitest 4
+// turns the resulting namespace into a configurable object so the
+// later `vi.spyOn(fs, 'writeFileSync' | 'renameSync')` calls in this
+// file can redefine those properties — the raw ESM namespace is
+// non-configurable and rejects spies. All other fs calls run against
+// the real implementation, so the tmp-file I/O elsewhere is unaffected.
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof import('fs')>('fs');
+  return { ...actual, default: actual };
+});
+
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
