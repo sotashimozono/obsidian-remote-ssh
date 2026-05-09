@@ -138,6 +138,16 @@ describe('classifyError — message fallbacks', () => {
     expect(c.original).toBeInstanceOf(Error);
     expect(c.original.message).toBe('boom');
   });
+
+  it('error with a syscall code absent from mapSyscallCode falls through to "unknown"', () => {
+    // ENOENT is a real Node code, but mapSyscallCode does not classify it —
+    // the inner if(cat) guard is skipped and execution reaches the fallback.
+    const e = new Error('ENOENT: no such file or directory');
+    (e as Error & { code: string }).code = 'ENOENT';
+    const c = classifyError(e);
+    expect(c.category).toBe('unknown');
+    assertWellFormed(c);
+  });
 });
 
 // ── classifyToNotice convenience ──────────────────────────────────────
