@@ -142,4 +142,29 @@ describe('RpcClient', () => {
     framed.pushMessage({ jsonrpc: '2.0', id: req.id, result: { version: '1.0.0', protocolVersion: 1, capabilities: [], vaultRoot: '' } });
     await pending;
   });
+
+  it('isClosed() returns false before close and true after', () => {
+    const { client } = setup();
+    expect(client.isClosed()).toBe(false);
+    client.close();
+    expect(client.isClosed()).toBe(true);
+  });
+
+  it('rejects the call when writeMessage throws', async () => {
+    const { framed, client } = setup();
+    vi.spyOn(framed, 'writeMessage').mockImplementationOnce(() => {
+      throw new Error('write failed');
+    });
+    await expect(client.call('server.info', {})).rejects.toThrow('write failed');
+    expect(client.isClosed()).toBe(false);
+  });
+
+  it('onClose disposer removes the handler so it is not called on close', () => {
+    const { framed, client } = setup();
+    const cb = vi.fn();
+    const off = client.onClose(cb);
+    off();
+    framed.close();
+    expect(cb).not.toHaveBeenCalled();
+  });
 });

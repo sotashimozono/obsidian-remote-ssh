@@ -37,6 +37,10 @@ interface ServerScript {
   info?: { protocolVersion: number };
   /** Make `auth` reject with a custom error envelope. */
   authReject?: { code: number; message: string };
+  /** Make `auth` return a successful RPC result with ok:false. */
+  authOkFalse?: boolean;
+  /** Make `server.info` reply with an error envelope. */
+  serverInfoReject?: { code: number; message: string };
 }
 
 /**
@@ -53,6 +57,10 @@ function startFakeDaemon(serverSide: Duplex, script: ServerScript = {}): () => v
         framed.writeMessage(Buffer.from(JSON.stringify({
           jsonrpc: '2.0', id: req.id, error: script.authReject,
         }), 'utf8'));
+      } else if (script.authOkFalse) {
+        framed.writeMessage(Buffer.from(JSON.stringify({
+          jsonrpc: '2.0', id: req.id, result: { ok: false },
+        }), 'utf8'));
       } else {
         framed.writeMessage(Buffer.from(JSON.stringify({
           jsonrpc: '2.0', id: req.id, result: { ok: true },
@@ -61,6 +69,12 @@ function startFakeDaemon(serverSide: Duplex, script: ServerScript = {}): () => v
       return;
     }
     if (req.method === 'server.info') {
+      if (script.serverInfoReject) {
+        framed.writeMessage(Buffer.from(JSON.stringify({
+          jsonrpc: '2.0', id: req.id, error: script.serverInfoReject,
+        }), 'utf8'));
+        return;
+      }
       const info = script.info ?? { protocolVersion: PROTOCOL_VERSION };
       framed.writeMessage(Buffer.from(JSON.stringify({
         jsonrpc: '2.0', id: req.id,
@@ -111,6 +125,26 @@ describe('establishRpcConnection', () => {
       expect(e).toBeInstanceOf(RpcError);
       expect((e as RpcError).code).toBe(ErrorCode.ProtocolVersionTooOld);
     }
+    stop();
+  });
+
+  it('rejects with AuthInvalid when auth returns ok:false (not an error envelope)', async () => {
+    const pair = duplexPair();
+    const stop = startFakeDaemon(pair.serverSide, { authOkFalse: true });
+    await expect(
+      establishRpcConnection({ stream: pair.clientSide, token: 'stale' }),
+    ).rejects.toMatchObject({ code: ErrorCode.AuthInvalid });
+    stop();
+  });
+
+  it('rejects and cleans up when server.info call returns an error', async () => {
+    const pair = duplexPair();
+    const stop = startFakeDaemon(pair.serverSide, {
+      serverInfoReject: { code: -32603, message: 'internal server error' },
+    });
+    await expect(
+      establishRpcConnection({ stream: pair.clientSide, token: 'good' }),
+    ).rejects.toBeInstanceOf(RpcError);
     stop();
   });
 });
