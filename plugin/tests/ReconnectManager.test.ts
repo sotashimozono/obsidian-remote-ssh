@@ -262,6 +262,10 @@ describe('ReconnectManager', () => {
     });
 
     const runPromise = m.run();
+    // One microtask tick is sufficient: run() reaches sleep() without any
+    // intermediate awaits (all work before the first sleep() call is
+    // synchronous). If an await is ever added before sleep() in a future
+    // refactor, this one-tick assumption must be revisited.
     await Promise.resolve();
 
     m.cancel();

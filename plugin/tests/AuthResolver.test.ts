@@ -107,7 +107,8 @@ describe('AuthResolver.buildAuthConfig — privateKey', () => {
     const profile: SshProfile = {
       ...baseProfile,
       authMethod: 'privateKey',
-      privateKeyPath: '/home/alice/.ssh/id_ed25519',
+      // Use tilde prefix so expandHome is exercised; readFileSync is mocked.
+      privateKeyPath: '~/.ssh/id_ed25519',
     };
     const cfg = r.buildAuthConfig(profile);
     expect(cfg).toMatchObject({ privateKey: expect.any(Buffer) });
@@ -120,7 +121,7 @@ describe('AuthResolver.buildAuthConfig — privateKey', () => {
     const profile: SshProfile = {
       ...baseProfile,
       authMethod: 'privateKey',
-      privateKeyPath: '/home/alice/.ssh/id_ed25519',
+      privateKeyPath: '~/.ssh/id_ed25519',
       passphraseRef: 'pp-ref',
     };
     const cfg = r.buildAuthConfig(profile);
@@ -139,7 +140,8 @@ describe('AuthResolver.buildAuthConfig — privateKey', () => {
     const profile: SshProfile = {
       ...baseProfile,
       authMethod: 'privateKey',
-      privateKeyPath: '/nonexistent/key',
+      // Path value doesn't matter; readFileSync is mocked to throw.
+      privateKeyPath: 'nonexistent-key',
     };
     expect(() => r.buildAuthConfig(profile)).toThrow(/Cannot read private key/);
   });
@@ -163,20 +165,20 @@ describe('AuthResolver.buildAuthConfig — agent', () => {
     const profile: SshProfile = {
       ...baseProfile,
       authMethod: 'agent',
-      agentSocket: '/run/user/1000/ssh-agent.socket',
+      agentSocket: 'test-ssh-agent.socket',
     };
     const cfg = r.buildAuthConfig(profile);
-    expect(cfg).toEqual({ agent: '/run/user/1000/ssh-agent.socket' });
+    expect(cfg).toEqual({ agent: 'test-ssh-agent.socket' });
   });
 
   it('falls back to SSH_AUTH_SOCK env var when agentSocket is not set', () => {
     const orig = process.env.SSH_AUTH_SOCK;
-    process.env.SSH_AUTH_SOCK = '/tmp/ssh-auth.sock';
+    process.env.SSH_AUTH_SOCK = 'test-ssh-auth.sock';
     try {
       const r = new AuthResolver(makeStore());
       const profile: SshProfile = { ...baseProfile, authMethod: 'agent', agentSocket: undefined };
       const cfg = r.buildAuthConfig(profile);
-      expect(cfg).toEqual({ agent: '/tmp/ssh-auth.sock' });
+      expect(cfg).toEqual({ agent: 'test-ssh-auth.sock' });
     } finally {
       if (orig === undefined) delete process.env.SSH_AUTH_SOCK;
       else process.env.SSH_AUTH_SOCK = orig;
