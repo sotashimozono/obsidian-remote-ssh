@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -439,5 +439,148 @@ describe('ShadowVaultBootstrap.bootstrap', () => {
     const result = await r.bootstrap(profile, [profile]);
     const installed = fs.readFileSync(path.join(result.layout.pluginDir, 'main.js'), 'utf-8');
     expect(installed).toContain('updated bundle');
+  });
+});
+
+describe('ShadowVaultBootstrap: seedCommunityPlugins error branches', () => {
+  let scratch: ReturnType<typeof makeScratch>;
+  beforeEach(() => { scratch = makeScratch(); });
+  afterEach(() => { scratch.cleanup(); });
+
+  it('rewrites shadow community-plugins.json when the existing file contains invalid JSON', async () => {
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+
+    // First bootstrap creates the shadow config dir and community-plugins.json.
+    const first = await r.bootstrap(profile, [profile]);
+
+    // Corrupt the file so the next parse fails.
+    fs.writeFileSync(
+      path.join(first.layout.configDir, 'community-plugins.json'),
+      '{not valid json!!!}',
+    );
+
+    // Second bootstrap should detect the parse failure, warn, and rewrite.
+    const second = await r.bootstrap(profile, [profile]);
+    const list = JSON.parse(
+      fs.readFileSync(path.join(second.layout.configDir, 'community-plugins.json'), 'utf-8'),
+    );
+    expect(list).toEqual(['remote-ssh']);
+  });
+
+  it('rewrites shadow community-plugins.json when the file is valid JSON but not an array', async () => {
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+
+    const first = await r.bootstrap(profile, [profile]);
+
+    // Valid JSON object — not an array.
+    fs.writeFileSync(
+      path.join(first.layout.configDir, 'community-plugins.json'),
+      JSON.stringify({ remote_ssh: true }),
+    );
+
+    const second = await r.bootstrap(profile, [profile]);
+    const list = JSON.parse(
+      fs.readFileSync(path.join(second.layout.configDir, 'community-plugins.json'), 'utf-8'),
+    );
+    expect(list).toEqual(['remote-ssh']);
+  });
+});
+
+describe('ShadowVaultBootstrap: collectPendingPluginSuggestions edge cases', () => {
+  let scratch: ReturnType<typeof makeScratch>;
+  beforeEach(() => { scratch = makeScratch(); });
+  afterEach(() => { scratch.cleanup(); });
+
+  it('omits suggestions when source community-plugins.json is valid JSON but not an array', async () => {
+    fs.writeFileSync(
+      path.join(scratch.sourceConfigDir, 'community-plugins.json'),
+      JSON.stringify({ corrupted: true }),
+    );
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const result = await r.bootstrap(profile, [profile]);
+
+    const data = JSON.parse(fs.readFileSync(result.layout.pluginDataFile, 'utf-8'));
+    expect(data.pendingPluginSuggestions).toEqual([]);
+  });
+
+  it('omits suggestions when source community-plugins.json is invalid JSON', async () => {
+    fs.writeFileSync(
+      path.join(scratch.sourceConfigDir, 'community-plugins.json'),
+      '{invalid!}',
+    );
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const result = await r.bootstrap(profile, [profile]);
+
+    const data = JSON.parse(fs.readFileSync(result.layout.pluginDataFile, 'utf-8'));
+    expect(data.pendingPluginSuggestions).toEqual([]);
+  });
+
+  it('still lists a plugin suggestion even when its data.json is invalid JSON (sourceData is null)', async () => {
+    fs.writeFileSync(
+      path.join(scratch.sourceConfigDir, 'community-plugins.json'),
+      JSON.stringify(['dataview']),
+    );
+    const dataviewDir = path.join(scratch.sourceConfigDir, 'plugins', 'dataview');
+    fs.mkdirSync(dataviewDir, { recursive: true });
+    fs.writeFileSync(path.join(dataviewDir, 'data.json'), '{invalid!}');
+
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const result = await r.bootstrap(profile, [profile]);
+
+    const data = JSON.parse(fs.readFileSync(result.layout.pluginDataFile, 'utf-8'));
+    expect(data.pendingPluginSuggestions).toHaveLength(1);
+    expect(data.pendingPluginSuggestions[0].id).toBe('dataview');
+    expect(data.pendingPluginSuggestions[0].sourceData).toBeNull();
+  });
+});
+
+describe('ShadowVaultBootstrap: readBaseDataJson parse-failure fallback', () => {
+  let scratch: ReturnType<typeof makeScratch>;
+  beforeEach(() => { scratch = makeScratch(); });
+  afterEach(() => { scratch.cleanup(); });
+
+  it('starts from {} when shadow data.json exists but contains invalid JSON', async () => {
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+
+    const first = await r.bootstrap(profile, [profile]);
+
+    // Corrupt the shadow data.json.
+    fs.writeFileSync(first.layout.pluginDataFile, '{not json!}');
+
+    // Second bootstrap should discard the corrupted file and rebuild from source or {}.
+    const second = await r.bootstrap(profile, [profile]);
+    const data = JSON.parse(fs.readFileSync(second.layout.pluginDataFile, 'utf-8'));
+    // profiles and activeProfileId are always written — just assert they're present
+    // and no crash occurred despite the corrupted input.
+    expect(data.profiles).toEqual([profile]);
+    expect(data.activeProfileId).toBe('p1');
+  });
+});
+
+describe('ShadowVaultBootstrap: installPlugin symlink fallback', () => {
+  let scratch: ReturnType<typeof makeScratch>;
+  beforeEach(() => { scratch = makeScratch(); });
+  afterEach(() => { scratch.cleanup(); vi.restoreAllMocks(); });
+
+  it('falls back to copyFileSync when symlinkSync throws, and plugin files are still present', async () => {
+    // Simulate an environment where symlinks are not permitted (e.g. restricted Windows).
+    vi.spyOn(fs, 'symlinkSync').mockImplementation(() => {
+      throw Object.assign(new Error('EPERM: operation not permitted, symlink'), { code: 'EPERM' });
+    });
+
+    const r = new ShadowVaultBootstrap(scratch.baseDir, scratch.sourceDir, new ObsidianRegistry(scratch.configPath));
+    const profile = makeProfile({ id: 'p1' });
+    const result = await r.bootstrap(profile, [profile]);
+
+    expect(result.pluginInstallMethod).toBe('copy');
+    // The files should have been copied successfully.
+    expect(fs.existsSync(path.join(result.layout.pluginDir, 'main.js'))).toBe(true);
+    expect(fs.existsSync(path.join(result.layout.pluginDir, 'manifest.json'))).toBe(true);
   });
 });
