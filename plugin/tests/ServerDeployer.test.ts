@@ -231,6 +231,16 @@ describe('ServerDeployer', () => {
     })).rejects.toThrow(/did not write/);
   });
 
+  it('includes the last readRemoteFile error in the deadline-exceeded message', async () => {
+    const { ssh } = fakeSsh({
+      onReadFile: () => { throw new Error('SFTP: permission denied on token file'); },
+    });
+    await expect(new ServerDeployer(ssh).deploy({
+      localBinaryPath: BIN.path, remoteVaultRoot: '/y',
+      waitForTokenTimeoutMs: 200,
+    })).rejects.toThrow(/last error: SFTP: permission denied on token file/);
+  });
+
   it('stop() reuses the deploy()-time kill pattern and cleans up binary + socket + token', async () => {
     const { ssh, execLog } = fakeSsh({ onReadFile: () => Buffer.from('tok') });
     const deployer = new ServerDeployer(ssh);

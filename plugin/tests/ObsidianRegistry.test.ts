@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -135,5 +135,45 @@ describe('ObsidianRegistry', () => {
     const dir = path.dirname(configPath);
     const tmps = fs.readdirSync(dir).filter(f => f.startsWith(path.basename(configPath) + '.tmp-'));
     expect(tmps).toEqual([]);
+  });
+});
+
+// ── writeAtomic error propagation ────────────────────────────────────────
+
+describe('ObsidianRegistry writeAtomic error propagation', () => {
+  let configPath: string;
+
+  beforeEach(() => {
+    configPath = makeTmpConfigPath();
+    fs.writeFileSync(configPath, JSON.stringify({ vaults: {} }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    // Clean up the config file and any leftover tmp files.
+    const tmpPrefix = path.basename(configPath) + '.tmp-remote-ssh-';
+    const dir = path.dirname(configPath);
+    try {
+      fs.readdirSync(dir)
+        .filter(f => f.startsWith(tmpPrefix))
+        .forEach(f => { try { fs.unlinkSync(path.join(dir, f)); } catch { /* ignore */ } });
+    } catch { /* ignore */ }
+    try { fs.unlinkSync(configPath); } catch { /* may not exist */ }
+  });
+
+  it('propagates an error thrown by fs.writeFileSync inside writeAtomic', () => {
+    vi.spyOn(fs, 'writeFileSync').mockImplementationOnce(() => {
+      throw new Error('ENOSPC: no space left on device');
+    });
+    expect(() => new ObsidianRegistry(configPath).register('/new/vault'))
+      .toThrow('ENOSPC: no space left on device');
+  });
+
+  it('propagates an error thrown by fs.renameSync inside writeAtomic', () => {
+    vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw new Error('EXDEV: cross-device link not permitted');
+    });
+    expect(() => new ObsidianRegistry(configPath).register('/new/vault'))
+      .toThrow('EXDEV: cross-device link not permitted');
   });
 });
