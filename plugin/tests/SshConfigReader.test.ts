@@ -49,6 +49,28 @@ describe('readSshConfig: missing / empty file', () => {
   });
 });
 
+describe('readSshConfig: Port edge cases', () => {
+  it('falls back port to 22 when Port value is non-numeric', () => {
+    const p = write([
+      'Host srv',
+      '  HostName srv.example.com',
+      '  Port notanumber',
+    ].join('\n'));
+    expect(readSshConfig(p)[0].port).toBe(22);
+  });
+
+  it('applies a Port set in Host * defaults to hosts that do not override it', () => {
+    const p = write([
+      'Host *',
+      '  Port 2222',
+      '',
+      'Host srv',
+      '  HostName srv.example.com',
+    ].join('\n'));
+    expect(readSshConfig(p)[0].port).toBe(2222);
+  });
+});
+
 describe('readSshConfig: single host', () => {
   it('reads HostName / User / Port / IdentityFile', () => {
     const p = write([

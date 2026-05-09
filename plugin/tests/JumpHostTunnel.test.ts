@@ -171,6 +171,32 @@ describe('createJumpTunnel: failure paths', () => {
 });
 
 describe('createJumpTunnel: auth handling', () => {
+  it('errors when the private key file cannot be read', async () => {
+    const jump: JumpHostConfig = {
+      ...baseJump,
+      authMethod: 'privateKey',
+      // Use os.tmpdir() so the path is valid on both POSIX and Windows.
+      privateKeyPath: path.join(os.tmpdir(), 'remote-ssh-test-nonexistent-key-does-not-exist'),
+    };
+    await expect(createJumpTunnel(
+      jump, 'target.example.com', 22, authResolver,
+      { clientFactory: () => fake },
+    )).rejects.toThrow(/Cannot read jump host private key/);
+  });
+
+  it('throws for an unrecognised auth method', async () => {
+    const jump = {
+      ...baseJump,
+      // Double cast: explicit unsound widening so tsc stays happy if
+      // type-checking is ever enabled for tests.
+      authMethod: 'kerberos' as unknown as JumpHostConfig['authMethod'],
+    };
+    await expect(createJumpTunnel(
+      jump, 'target.example.com', 22, authResolver,
+      { clientFactory: () => fake },
+    )).rejects.toThrow(/Unknown jump host auth method/);
+  });
+
   it('errors clearly when password auth has no stored secret', async () => {
     const jump: JumpHostConfig = {
       ...baseJump,
@@ -351,5 +377,32 @@ describe('createJumpTunnel: host-key mismatch handler (#132 follow-up)', () => {
     await new Promise<void>((r) => setImmediate(() => r()));
     expect(handler).toHaveBeenCalledTimes(1);
     expect(verifyCb).toHaveBeenCalledWith(false);
+  });
+
+  it('async hostVerifier calls verify(false) when verifyAsync itself rejects (defence-in-depth)', async () => {
+    const store = new HostKeyStore();
+    // Simulate an unexpected rejection from verifyAsync (defence-in-depth path).
+    vi.spyOn(store, 'verifyAsync').mockRejectedValueOnce(new Error('unexpected internal failure'));
+
+    const handler = vi.fn(async () => 'trust' as const);
+    await createJumpTunnel(
+      baseJump, 'target.example.com', 22, authResolver,
+      {
+        clientFactory: () => fake,
+        hostKeyStore: store,
+        hostKeyMismatchHandler: handler,
+      },
+    );
+    const cfg = fake.connectConfig as {
+      hostVerifier: (k: Buffer, verify: (v: boolean) => void) => void;
+    };
+    const verifyCb = vi.fn();
+    cfg.hostVerifier(Buffer.from('some-key'), verifyCb);
+    // Allow the rejection handler microtask to settle.
+    await new Promise<void>((r) => setImmediate(() => r()));
+    // The catch branch must call verify(false) even though the promise rejected.
+    expect(verifyCb).toHaveBeenCalledWith(false);
+    // The handler was never reached since verifyAsync rejected before consulting it.
+    expect(handler).not.toHaveBeenCalled();
   });
 });

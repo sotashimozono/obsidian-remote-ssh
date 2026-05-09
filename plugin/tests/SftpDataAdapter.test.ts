@@ -1282,3 +1282,72 @@ describe('SftpDataAdapter (offline queue while reconnecting)', () => {
     expect(result).toMatchObject({ result: 'error' });
   });
 });
+
+describe('SftpDataAdapter: getResourcePath', () => {
+  let readCache: ReadCache;
+  let dirCache: DirCache;
+  beforeEach(() => {
+    readCache = new ReadCache({ maxBytes: 1024 });
+    dirCache = new DirCache({ ttlMs: 10000 });
+  });
+
+  it('returns a data: fallback URL when no resourceBridge is wired', () => {
+    const fake = makeFakeClient();
+    const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+    expect(adapter.getResourcePath('img.png')).toBe('data:application/octet-stream;base64,');
+  });
+
+  it('returns the bridge URL when the bridge is running', () => {
+    const fake = makeFakeClient();
+    const fakeBridge = {
+      isRunning: () => true,
+      urlFor: (p: string, _opts?: unknown) => `http://127.0.0.1:4567/r/token?p=${encodeURIComponent(p)}`,
+    };
+    const adapter = new SftpDataAdapter(
+      fake.client, '/v', readCache, dirCache, 'v',
+      null, fakeBridge as unknown as import('../src/adapter/ResourceBridge').ResourceBridge,
+    );
+    const url = adapter.getResourcePath('folder/photo.jpg');
+    expect(url).toContain('127.0.0.1:4567');
+    expect(url).toContain('photo.jpg');
+  });
+
+  it('returns the data: fallback when the bridge exists but is not running', () => {
+    const fake = makeFakeClient();
+    const fakeBridge = {
+      isRunning: () => false,
+      urlFor: (_p: string) => { throw new Error('should not be called'); },
+    };
+    const adapter = new SftpDataAdapter(
+      fake.client, '/v', readCache, dirCache, 'v',
+      null, fakeBridge as unknown as import('../src/adapter/ResourceBridge').ResourceBridge,
+    );
+    expect(adapter.getResourcePath('img.png')).toBe('data:application/octet-stream;base64,');
+  });
+});
+
+describe('SftpDataAdapter: readBuffer stat-after-read failure', () => {
+  let readCache: ReadCache;
+  let dirCache: DirCache;
+  beforeEach(() => {
+    readCache = new ReadCache({ maxBytes: 1024 });
+    dirCache = new DirCache({ ttlMs: 10000 });
+  });
+
+  it('still returns data and caches with mtime=0 when stat-after-read throws', async () => {
+    const fake = makeFakeClient({
+      files: { '/v/note.md': { data: Buffer.from('content'), mtime: 42 } },
+    });
+    // Make stat always reject so the post-read stat path throws.
+    fake.spies.stat.mockRejectedValue(new Error('stat unavailable'));
+
+    const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+    const result = await adapter.read('note.md');
+
+    expect(result).toBe('content');
+    // Cache should be populated with mtime=0 because the stat failed.
+    const cached = readCache.peek('/v/note.md');
+    expect(cached).not.toBeNull();
+    expect(cached?.mtime).toBe(0);
+  });
+});
