@@ -40,7 +40,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
         working-directory: docs-site
         env:
-          QUARTZ_BASE_URL: sotashimozono.github.io/obsidian-remote-ssh
+          QUARTZ_BASE_URL: codes.sota-shimozono.com/obsidian-remote-ssh
         run: npx quartz build -d ../docs
 
       - name: Deploy — stable → gh-pages root
@@ -59,7 +59,7 @@ jobs:
         if: github.ref == 'refs/heads/next'
         working-directory: docs-site
         env:
-          QUARTZ_BASE_URL: sotashimozono.github.io/obsidian-remote-ssh/dev
+          QUARTZ_BASE_URL: codes.sota-shimozono.com/obsidian-remote-ssh/dev
         run: npx quartz build -d ../docs
 
       - name: Deploy — dev → gh-pages /dev/

@@ -14,7 +14,7 @@ const config: QuartzConfig = {
     // the dev preview (…/dev).
     baseUrl:
       process.env["QUARTZ_BASE_URL"] ??
-      "sotashimozono.github.io/obsidian-remote-ssh",
+      "codes.sota-shimozono.com/obsidian-remote-ssh",
     ignorePatterns: ["private", "templates", ".obsidian", "ai"],
     defaultDateType: "modified",
     theme: {
