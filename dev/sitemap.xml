@@ -11,6 +11,9 @@
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/filesystem</loc>
     <lastmod>2026-05-10T05:31:54.000Z</lastmod>
   </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/</loc>
+    <lastmod>2026-05-10T12:39:14.000Z</lastmod>
+  </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/overview</loc>
     <lastmod>2026-05-10T11:15:42.000Z</lastmod>
   </url><url>
@@ -44,6 +47,9 @@
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/configuration/advanced</loc>
     <lastmod>2026-05-10T05:31:54.000Z</lastmod>
   </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/configuration/</loc>
+    <lastmod>2026-05-10T12:39:14.000Z</lastmod>
+  </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/configuration/profiles</loc>
     <lastmod>2026-05-10T11:51:15.000Z</lastmod>
   </url><url>
@@ -58,6 +64,9 @@
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/documentation</loc>
     <lastmod>2026-05-09T00:00:00.000Z</lastmod>
+  </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/</loc>
+    <lastmod>2026-05-10T12:39:14.000Z</lastmod>
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/release-flow</loc>
     <lastmod>2026-05-10T10:54:08.000Z</lastmod>
@@ -101,6 +110,9 @@
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/first-connect</loc>
     <lastmod>2026-05-10T10:24:04.000Z</lastmod>
   </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/</loc>
+    <lastmod>2026-05-10T12:39:14.000Z</lastmod>
+  </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/install</loc>
     <lastmod>2026-05-10T05:18:52.000Z</lastmod>
   </url><url>
@@ -111,13 +123,19 @@
     <lastmod>2026-05-10T05:59:41.000Z</lastmod>
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/</loc>
-    <lastmod>2026-05-10T11:51:15.000Z</lastmod>
+    <lastmod>2026-05-10T12:39:14.000Z</lastmod>
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/migration/from-obsidian-sync</loc>
     <lastmod>2026-05-10T11:24:48.000Z</lastmod>
   </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/migration/</loc>
+    <lastmod>2026-05-10T12:39:14.000Z</lastmod>
+  </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/daemon-panel</loc>
     <lastmod>2026-05-10T04:22:26.000Z</lastmod>
+  </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/</loc>
+    <lastmod>2026-05-10T12:39:14.000Z</lastmod>
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/logs</loc>
     <lastmod>2026-05-10T05:31:54.000Z</lastmod>
@@ -146,6 +164,9 @@
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/reference/data-json</loc>
     <lastmod>2026-05-10T11:51:15.000Z</lastmod>
   </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/reference/</loc>
+    <lastmod>2026-05-10T12:39:14.000Z</lastmod>
+  </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/roadmap</loc>
     <lastmod>2026-05-10T05:59:41.000Z</lastmod>
   </url><url>
@@ -154,6 +175,9 @@
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/security/host-keys</loc>
     <lastmod>2026-05-10T05:31:54.000Z</lastmod>
+  </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/security/</loc>
+    <lastmod>2026-05-10T12:39:14.000Z</lastmod>
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/security/model</loc>
     <lastmod>2026-05-10T04:22:26.000Z</lastmod>
@@ -169,6 +193,9 @@
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/firewall</loc>
     <lastmod>2026-05-10T11:15:42.000Z</lastmod>
+  </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/</loc>
+    <lastmod>2026-05-10T12:39:14.000Z</lastmod>
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/multi-user</loc>
     <lastmod>2026-05-10T11:15:42.000Z</lastmod>
@@ -193,6 +220,9 @@
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/host-keys</loc>
     <lastmod>2026-05-10T10:24:04.000Z</lastmod>
+  </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/</loc>
+    <lastmod>2026-05-10T12:39:14.000Z</lastmod>
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/jump-host</loc>
     <lastmod>2026-05-10T10:24:04.000Z</lastmod>
