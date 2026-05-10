@@ -6,65 +6,65 @@
       <description>Last 10 notes on obsidian-remote-ssh</description>
       <generator>Quartz -- quartz.jzhao.xyz</generator>
       <item>
-    <title>Error codes</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/errors</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/errors</guid>
-    <description><![CDATA[ Error codes JSON-RPC errors return: { &quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: &lt;request id&gt;, &quot;error&quot;: { &quot;code&quot;: -32601, &quot;message&quot;: &quot;method not found: fs.banana&quot; } } (The spec reserves an optional data field too, but the current daemon never ... ]]></description>
-    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
+    <title>Authentication</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/authentication</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/authentication</guid>
+    <description><![CDATA[ Authentication Two methods. auth MUST be the first call on every connection. ]]></description>
+    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
   </item><item>
-    <title>Filesystem operations</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/filesystem</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/filesystem</guid>
-    <description><![CDATA[ Filesystem operations All fs.* methods are client→server, JSON-RPC over the daemon socket. All paths are vault-relative, forward-slash, no . ]]></description>
-    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
+    <title>systemd-managed daemon</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/systemd-managed-daemon</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/systemd-managed-daemon</guid>
+    <description><![CDATA[ systemd-managed daemon (with cosign verification) Goal: run a cosign-verified daemon binary you control under systemd, so the daemon survives plugin restarts and OS reboots. ]]></description>
+    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
   </item><item>
-    <title>Advanced</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/configuration/advanced</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/configuration/advanced</guid>
-    <description><![CDATA[ Configuration reference — Advanced Lower-level toggles, mostly for debugging or unusual deployment topologies. ]]></description>
-    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
+    <title>FAQ</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/faq</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/faq</guid>
+    <description><![CDATA[ FAQ Recurring questions, with the shortest useful answer. ]]></description>
+    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
   </item><item>
-    <title>First connect</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/first-connect</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/first-connect</guid>
-    <description><![CDATA[ First connect — what’s actually happening The five-minute Quickstart glosses over what “connect” does. ]]></description>
-    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
+    <title>Troubleshooting</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/troubleshooting</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/troubleshooting</guid>
+    <description><![CDATA[ Troubleshooting Most failures fall into a small number of buckets. This page maps symptom to likely cause to fix. ]]></description>
+    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
   </item><item>
-    <title>Logs &amp; telemetry</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/logs</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/logs</guid>
-    <description><![CDATA[ Logs &amp; telemetry Three independent log streams. Knowing which one to look at is half the battle. 1. ]]></description>
-    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
+    <title>Plugin auto-deploy</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/auto-deploy</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/auto-deploy</guid>
+    <description><![CDATA[ Plugin auto-deploy This is the default. ]]></description>
+    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
   </item><item>
-    <title>Host-key trust</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/security/host-keys</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/security/host-keys</guid>
-    <description><![CDATA[ Host-key trust obsidian-remote-ssh uses its own known-host store, separate from ~/.ssh/known_hosts. ]]></description>
-    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
+    <title>Raspberry Pi</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/raspberry-pi</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/raspberry-pi</guid>
+    <description><![CDATA[ Raspberry Pi notes obsidian-remote-ssh runs comfortably on Raspberry Pi 4 / 5 / Zero 2 W. ]]></description>
+    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
   </item><item>
-    <title>Conflict handling</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/conflicts</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/conflicts</guid>
-    <description><![CDATA[ Conflict handling When the same file is edited locally (in Obsidian’s shadow vault) AND remotely (in a terminal, by another client, by a sync tool) at the same time, obsidian-remote-ssh detects the conflict and offers a resolution. ]]></description>
-    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
+    <title>systemd unit</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/systemd</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/systemd</guid>
+    <description><![CDATA[ systemd unit Run the daemon as a long-lived service so it survives plugin reconnects, OS reboots, and lets you pre-deploy across many hosts. ]]></description>
+    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
   </item><item>
-    <title>Host keys &amp; trust</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/host-keys</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/host-keys</guid>
-    <description><![CDATA[ Host keys &amp; trust obsidian-remote-ssh maintains its own known-host store, independent of ~/.ssh/known_hosts. ]]></description>
-    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
+    <title>API overview</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/overview</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/overview</guid>
+    <description><![CDATA[ API &amp; protocol — overview The daemon speaks JSON-RPC 2.0 with LSP-style framing on a Unix socket. ]]></description>
+    <pubDate>Sun, 10 May 2026 06:31:48 GMT</pubDate>
   </item><item>
-    <title>Architecture</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/</guid>
-    <description><![CDATA[ Architecture Design specs for the major subsystems. These document why decisions were made, not just what the code does. ]]></description>
-    <pubDate>Sun, 10 May 2026 05:18:52 GMT</pubDate>
+    <title>perf</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/perf</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/perf</guid>
+    <description><![CDATA[ Architecture: performance epic (E1) This doc is the design record for the performance epic that lands in v0.4.23 onwards. ]]></description>
+    <pubDate>Sun, 10 May 2026 06:29:42 GMT</pubDate>
   </item><item>
-    <title>Install</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/install</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/install</guid>
-    <description><![CDATA[ Install obsidian-remote-ssh You can install via the Obsidian Community Plugins store (stable) or BRAT (beta channel — features land here first). ]]></description>
-    <pubDate>Sun, 10 May 2026 05:18:52 GMT</pubDate>
+    <title>testing-strategy</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/testing-strategy</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/testing-strategy</guid>
+    <description><![CDATA[ Testing strategy This document records the test architecture for obsidian-remote-ssh, adopted in v0.4.19 (Phase A) and v0.4.22 (Phase B). ]]></description>
+    <pubDate>Sun, 10 May 2026 06:29:42 GMT</pubDate>
   </item>
     </channel>
   </rss>
