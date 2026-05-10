@@ -10,7 +10,13 @@
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/</guid>
     <description><![CDATA[ Architecture Design specs for the major subsystems. These document why decisions were made, not just what the code does. ]]></description>
-    <pubDate>Sun, 10 May 2026 06:54:38 GMT</pubDate>
+    <pubDate>Sun, 10 May 2026 10:06:45 GMT</pubDate>
+  </item><item>
+    <title>Release &amp; deploy pipeline</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/release-pipeline</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/release-pipeline</guid>
+    <description><![CDATA[ Release &amp; deploy pipeline End-to-end design of how a code change goes from a merged PR to a signed binary running on a user’s remote host. ]]></description>
+    <pubDate>Sun, 10 May 2026 10:06:45 GMT</pubDate>
   </item><item>
     <title>shadow-vault</title>
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/shadow-vault</link>
@@ -58,12 +64,6 @@
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/raspberry-pi</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/raspberry-pi</guid>
     <description><![CDATA[ Raspberry Pi notes obsidian-remote-ssh runs comfortably on Raspberry Pi 4 / 5 / Zero 2 W. ]]></description>
-    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
-  </item><item>
-    <title>systemd unit</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/systemd</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/systemd</guid>
-    <description><![CDATA[ systemd unit Run the daemon as a long-lived service so it survives plugin reconnects, OS reboots, and lets you pre-deploy across many hosts. ]]></description>
     <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
   </item>
     </channel>
