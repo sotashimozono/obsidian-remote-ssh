@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr"><head><title>architecture-shadow-vault — docs</title><meta charset="utf-8"/><link rel="preconnect" href="https://fonts.googleapis.com"/><link rel="preconnect" href="https://fonts.gstatic.com"/><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&amp;family=Inter:ital,wght@0,400;0,600;1,400;1,600&amp;family=JetBrains Mono:wght@400;600&amp;display=swap"/><link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin="anonymous"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><meta name="og:site_name" content="obsidian-remote-ssh"/><meta property="og:title" content="architecture-shadow-vault — docs"/><meta property="og:type" content="website"/><meta name="twitter:card" content="summary_large_image"/><meta name="twitter:title" content="architecture-shadow-vault — docs"/><meta name="twitter:description" content="Architecture: Shadow Vault Approach Status: Phases 0–6A shipped end-to-end (v0.4.14)."/><meta property="og:description" content="Architecture: Shadow Vault Approach Status: Phases 0–6A shipped end-to-end (v0.4.14)."/><meta property="og:image:alt" content="Architecture: Shadow Vault Approach Status: Phases 0–6A shipped end-to-end (v0.4.14)."/><meta property="og:image" content="https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/static/og-image.png"/><meta property="og:image:url" content="https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/static/og-image.png"/><meta name="twitter:image" content="https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/static/og-image.png"/><meta property="og:image:type" content="image/.png"/><meta property="twitter:domain" content="codes.sota-shimozono.com/obsidian-remote-ssh/dev"/><meta property="og:url" content="https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/architecture-shadow-vault"/><meta property="twitter:url" content="https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/architecture-shadow-vault"/><link rel="icon" href="./static/icon.png"/><meta name="description" content="Architecture: Shadow Vault Approach Status: Phases 0–6A shipped end-to-end (v0.4.14)."/><meta name="generator" content="Quartz"/><link href="./index.css" rel="stylesheet" type="text/css" data-persist="true"/><style>.expand-button {
+  position: absolute;
+  display: flex;
+  float: right;
+  padding: 0.4rem;
+  margin: 0.3rem;
+  right: 0;
+  color: var(--gray);
+  border-color: var(--dark);
+  background-color: var(--light);
+  border: 1px solid;
+  border-radius: 5px;
+  opacity: 0;
+  transition: 0.2s;
+}
+.expand-button > svg {
+  fill: var(--light);
+  filter: contrast(0.3);
+}
+.expand-button:hover {
+  cursor: pointer;
+  border-color: var(--secondary);
+}
+.expand-button:focus {
+  outline: 0;
+}
+
+pre:hover > .expand-button {
+  opacity: 1;
+  transition: 0.2s;
+}
+
+#mermaid-container {
+  position: fixed;
+  contain: layout;
+  z-index: 999;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  display: none;
+  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.5);
+}
+#mermaid-container.active {
+  display: inline-block;
+}
+#mermaid-container > #mermaid-space {
+  border: 1px solid var(--lightgray);
+  background-color: var(--light);
+  border-radius: 5px;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  height: 80vh;
+  width: 80vw;
+  overflow: hidden;
+}
+#mermaid-container > #mermaid-space > .mermaid-content {
+  position: relative;
+  transform-origin: 0 0;
+  transition: transform 0.1s ease;
+  overflow: visible;
+  min-height: 200px;
+  min-width: 200px;
+}
+#mermaid-container > #mermaid-space > .mermaid-content pre {
+  margin: 0;
+  border: none;
+}
+#mermaid-container > #mermaid-space > .mermaid-content svg {
+  max-width: none;
+  height: auto;
+}
+#mermaid-container > #mermaid-space > .mermaid-controls {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: var(--light);
+  border: 1px solid var(--lightgray);
+  border-radius: 6px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  z-index: 2;
+}
+#mermaid-container > #mermaid-space > .mermaid-controls .mermaid-control-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--lightgray);
+  background: var(--light);
+  color: var(--dark);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  font-family: var(--bodyFont);
+  transition: all 0.2s ease;
+}
+#mermaid-container > #mermaid-space > .mermaid-controls .mermaid-control-button:hover {
+  background: var(--lightgray);
+}
+#mermaid-container > #mermaid-space > .mermaid-controls .mermaid-control-button:active {
+  transform: translateY(1px);
+}
+#mermaid-container > #mermaid-space > .mermaid-controls .mermaid-control-button:nth-child(2) {
+  width: auto;
+  padding: 0 12px;
+  font-size: 14px;
+}
+/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VSb290IjoiL2hvbWUvcnVubmVyL3dvcmsvb2JzaWRpYW4tcmVtb3RlLXNzaC9vYnNpZGlhbi1yZW1vdGUtc3NoL2RvY3Mtc2l0ZS9xdWFydHovY29tcG9uZW50cy9zdHlsZXMiLCJzb3VyY2VzIjpbIm1lcm1haWQuaW5saW5lLnNjc3MiXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBQUE7RUFDRTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTs7QUFFQTtFQUNFO0VBQ0E7O0FBR0Y7RUFDRTtFQUNBOztBQUdGO0VBQ0U7OztBQUtGO0VBQ0U7RUFDQTs7O0FBSUo7RUFDRTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBOztBQUVBO0VBQ0U7O0FBR0Y7RUFDRTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTs7QUFFQTtFQUNFO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTs7QUFFQTtFQUNFO0VBQ0E7O0FBR0Y7RUFDRTtFQUNBOztBQUlKO0VBQ0U7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTs7QUFFQTtFQUNFO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7O0FBRUE7RUFDRTs7QUFHRjtFQUNFOztBQUlGO0VBQ0U7RUFDQTtFQUNBIiwic291cmNlc0NvbnRlbnQiOlsiLmV4cGFuZC1idXR0b24ge1xuICBwb3NpdGlvbjogYWJzb2x1dGU7XG4gIGRpc3BsYXk6IGZsZXg7XG4gIGZsb2F0OiByaWdodDtcbiAgcGFkZGluZzogMC40cmVtO1xuICBtYXJnaW46IDAuM3JlbTtcbiAgcmlnaHQ6IDA7IC8vIE5PVEU6IHJpZ2h0IHdpbGwgYmUgc2V0IGluIG1lcm1haWQuaW5saW5lLnRzXG4gIGNvbG9yOiB2YXIoLS1ncmF5KTtcbiAgYm9yZGVyLWNvbG9yOiB2YXIoLS1kYXJrKTtcbiAgYmFja2dyb3VuZC1jb2xvcjogdmFyKC0tbGlnaHQpO1xuICBib3JkZXI6IDFweCBzb2xpZDtcbiAgYm9yZGVyLXJhZGl1czogNXB4O1xuICBvcGFjaXR5OiAwO1xuICB0cmFuc2l0aW9uOiAwLjJzO1xuXG4gICYgPiBzdmcge1xuICAgIGZpbGw6IHZhcigtLWxpZ2h0KTtcbiAgICBmaWx0ZXI6IGNvbnRyYXN0KDAuMyk7XG4gIH1cblxuICAmOmhvdmVyIHtcbiAgICBjdXJzb3I6IHBvaW50ZXI7XG4gICAgYm9yZGVyLWNvbG9yOiB2YXIoLS1zZWNvbmRhcnkpO1xuICB9XG5cbiAgJjpmb2N1cyB7XG4gICAgb3V0bGluZTogMDtcbiAgfVxufVxuXG5wcmUge1xuICAmOmhvdmVyID4gLmV4cGFuZC1idXR0b24ge1xuICAgIG9wYWNpdHk6IDE7XG4gICAgdHJhbnNpdGlvbjogMC4ycztcbiAgfVxufVxuXG4jbWVybWFpZC1jb250YWluZXIge1xuICBwb3NpdGlvbjogZml4ZWQ7XG4gIGNvbnRhaW46IGxheW91dDtcbiAgei1pbmRleDogOTk5O1xuICBsZWZ0OiAwO1xuICB0b3A6IDA7XG4gIHdpZHRoOiAxMDB2dztcbiAgaGVpZ2h0OiAxMDB2aDtcbiAgb3ZlcmZsb3c6IGhpZGRlbjtcbiAgZGlzcGxheTogbm9uZTtcbiAgYmFja2Ryb3AtZmlsdGVyOiBibHVyKDRweCk7XG4gIGJhY2tncm91bmQ6IHJnYmEoMCwgMCwgMCwgMC41KTtcblxuICAmLmFjdGl2ZSB7XG4gICAgZGlzcGxheTogaW5saW5lLWJsb2NrO1xuICB9XG5cbiAgJiA+ICNtZXJtYWlkLXNwYWNlIHtcbiAgICBib3JkZXI6IDFweCBzb2xpZCB2YXIoLS1saWdodGdyYXkpO1xuICAgIGJhY2tncm91bmQtY29sb3I6IHZhcigtLWxpZ2h0KTtcbiAgICBib3JkZXItcmFkaXVzOiA1cHg7XG4gICAgcG9zaXRpb246IGZpeGVkO1xuICAgIHRvcDogNTAlO1xuICAgIGxlZnQ6IDUwJTtcbiAgICB0cmFuc2Zvcm06IHRyYW5zbGF0ZSgtNTAlLCAtNTAlKTtcbiAgICBoZWlnaHQ6IDgwdmg7XG4gICAgd2lkdGg6IDgwdnc7XG4gICAgb3ZlcmZsb3c6IGhpZGRlbjtcblxuICAgICYgPiAubWVybWFpZC1jb250ZW50IHtcbiAgICAgIHBvc2l0aW9uOiByZWxhdGl2ZTtcbiAgICAgIHRyYW5zZm9ybS1vcmlnaW46IDAgMDtcbiAgICAgIHRyYW5zaXRpb246IHRyYW5zZm9ybSAwLjFzIGVhc2U7XG4gICAgICBvdmVyZmxvdzogdmlzaWJsZTtcbiAgICAgIG1pbi1oZWlnaHQ6IDIwMHB4O1xuICAgICAgbWluLXdpZHRoOiAyMDBweDtcblxuICAgICAgcHJlIHtcbiAgICAgICAgbWFyZ2luOiAwO1xuICAgICAgICBib3JkZXI6IG5vbmU7XG4gICAgICB9XG5cbiAgICAgIHN2ZyB7XG4gICAgICAgIG1heC13aWR0aDogbm9uZTtcbiAgICAgICAgaGVpZ2h0OiBhdXRvO1xuICAgICAgfVxuICAgIH1cblxuICAgICYgPiAubWVybWFpZC1jb250cm9scyB7XG4gICAgICBwb3NpdGlvbjogYWJzb2x1dGU7XG4gICAgICBib3R0b206IDIwcHg7XG4gICAgICByaWdodDogMjBweDtcbiAgICAgIGRpc3BsYXk6IGZsZXg7XG4gICAgICBnYXA6IDhweDtcbiAgICAgIHBhZGRpbmc6IDhweDtcbiAgICAgIGJhY2tncm91bmQ6IHZhcigtLWxpZ2h0KTtcbiAgICAgIGJvcmRlcjogMXB4IHNvbGlkIHZhcigtLWxpZ2h0Z3JheSk7XG4gICAgICBib3JkZXItcmFkaXVzOiA2cHg7XG4gICAgICBib3gtc2hhZG93OiAwIDJweCA0cHggcmdiYSgwLCAwLCAwLCAwLjEpO1xuICAgICAgei1pbmRleDogMjtcblxuICAgICAgLm1lcm1haWQtY29udHJvbC1idXR0b24ge1xuICAgICAgICBkaXNwbGF5OiBmbGV4O1xuICAgICAgICBhbGlnbi1pdGVtczogY2VudGVyO1xuICAgICAgICBqdXN0aWZ5LWNvbnRlbnQ6IGNlbnRlcjtcbiAgICAgICAgd2lkdGg6IDMycHg7XG4gICAgICAgIGhlaWdodDogMzJweDtcbiAgICAgICAgcGFkZGluZzogMDtcbiAgICAgICAgYm9yZGVyOiAxcHggc29saWQgdmFyKC0tbGlnaHRncmF5KTtcbiAgICAgICAgYmFja2dyb3VuZDogdmFyKC0tbGlnaHQpO1xuICAgICAgICBjb2xvcjogdmFyKC0tZGFyayk7XG4gICAgICAgIGJvcmRlci1yYWRpdXM6IDRweDtcbiAgICAgICAgY3Vyc29yOiBwb2ludGVyO1xuICAgICAgICBmb250LXNpemU6IDE2cHg7XG4gICAgICAgIGZvbnQtZmFtaWx5OiB2YXIoLS1ib2R5Rm9udCk7XG4gICAgICAgIHRyYW5zaXRpb246IGFsbCAwLjJzIGVhc2U7XG5cbiAgICAgICAgJjpob3ZlciB7XG4gICAgICAgICAgYmFja2dyb3VuZDogdmFyKC0tbGlnaHRncmF5KTtcbiAgICAgICAgfVxuXG4gICAgICAgICY6YWN0aXZlIHtcbiAgICAgICAgICB0cmFuc2Zvcm06IHRyYW5zbGF0ZVkoMXB4KTtcbiAgICAgICAgfVxuXG4gICAgICAgIC8vIFN0eWxlIHRoZSByZXNldCBidXR0b24gZGlmZmVyZW50bHlcbiAgICAgICAgJjpudGgtY2hpbGQoMikge1xuICAgICAgICAgIHdpZHRoOiBhdXRvO1xuICAgICAgICAgIHBhZGRpbmc6IDAgMTJweDtcbiAgICAgICAgICBmb250LXNpemU6IDE0cHg7XG4gICAgICAgIH1cbiAgICAgIH1cbiAgICB9XG4gIH1cbn1cbiJdfQ== */</style><link href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" rel="stylesheet" type="text/css" data-persist="true"/><script src="./prescript.js" type="application/javascript" data-persist="true"></script><script type="application/javascript" data-persist="true">const fetchData = fetch("./static/contentIndex.json").then(data => data.json())</script><link rel="alternate" type="application/rss+xml" title="RSS Feed" href="https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/index.xml"/></head><body data-slug="architecture-shadow-vault"><div id="quartz-root" class="page"><div id="quartz-body"><div class="left sidebar"><h2 class="page-title"><a href=".">obsidian-remote-ssh</a></h2><div class="spacer mobile-only"></div><div class="flex-component" style="flex-direction: row; flex-wrap: nowrap; gap: 1rem;"><div style="flex-grow: 1; flex-shrink: 1; flex-basis: auto; order: 0; align-self: center; justify-self: center;"><div class="search"><button class="search-button"><svg role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 19.9 19.7"><title>Search</title><g class="search-path" fill="none"><path stroke-linecap="square" d="M18.5 18.3l-5.4-5.4"></path><circle cx="8" cy="8" r="7"></circle></g></svg><p>Search</p></button><div class="search-container"><div class="search-space"><input autocomplete="off" class="search-bar" name="search" type="text" aria-label="Search for something" placeholder="Search for something"/><div class="search-layout" data-preview="true"></div></div></div></div></div><div style="flex-grow: 0; flex-shrink: 1; flex-basis: auto; order: 0; align-self: center; justify-self: center;"><button class="darkmode"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" class="dayIcon" x="0px" y="0px" viewBox="0 0 35 35" style="enable-background:new 0 0 35 35" xml:space="preserve" aria-label="Dark mode"><title>Dark mode</title><path d="M6,17.5C6,16.672,5.328,16,4.5,16h-3C0.672,16,0,16.672,0,17.5    S0.672,19,1.5,19h3C5.328,19,6,18.328,6,17.5z M7.5,26c-0.414,0-0.789,0.168-1.061,0.439l-2,2C4.168,28.711,4,29.086,4,29.5    C4,30.328,4.671,31,5.5,31c0.414,0,0.789-0.168,1.06-0.44l2-2C8.832,28.289,9,27.914,9,27.5C9,26.672,8.329,26,7.5,26z M17.5,6    C18.329,6,19,5.328,19,4.5v-3C19,0.672,18.329,0,17.5,0S16,0.672,16,1.5v3C16,5.328,16.671,6,17.5,6z M27.5,9    c0.414,0,0.789-0.168,1.06-0.439l2-2C30.832,6.289,31,5.914,31,5.5C31,4.672,30.329,4,29.5,4c-0.414,0-0.789,0.168-1.061,0.44    l-2,2C26.168,6.711,26,7.086,26,7.5C26,8.328,26.671,9,27.5,9z M6.439,8.561C6.711,8.832,7.086,9,7.5,9C8.328,9,9,8.328,9,7.5    c0-0.414-0.168-0.789-0.439-1.061l-2-2C6.289,4.168,5.914,4,5.5,4C4.672,4,4,4.672,4,5.5c0,0.414,0.168,0.789,0.439,1.06    L6.439,8.561z M33.5,16h-3c-0.828,0-1.5,0.672-1.5,1.5s0.672,1.5,1.5,1.5h3c0.828,0,1.5-0.672,1.5-1.5S34.328,16,33.5,16z     M28.561,26.439C28.289,26.168,27.914,26,27.5,26c-0.828,0-1.5,0.672-1.5,1.5c0,0.414,0.168,0.789,0.439,1.06l2,2    C28.711,30.832,29.086,31,29.5,31c0.828,0,1.5-0.672,1.5-1.5c0-0.414-0.168-0.789-0.439-1.061L28.561,26.439z M17.5,29    c-0.829,0-1.5,0.672-1.5,1.5v3c0,0.828,0.671,1.5,1.5,1.5s1.5-0.672,1.5-1.5v-3C19,29.672,18.329,29,17.5,29z M17.5,7    C11.71,7,7,11.71,7,17.5S11.71,28,17.5,28S28,23.29,28,17.5S23.29,7,17.5,7z M17.5,25c-4.136,0-7.5-3.364-7.5-7.5    c0-4.136,3.364-7.5,7.5-7.5c4.136,0,7.5,3.364,7.5,7.5C25,21.636,21.636,25,17.5,25z"></path></svg><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" class="nightIcon" x="0px" y="0px" viewBox="0 0 100 100" style="enable-background:new 0 0 100 100" xml:space="preserve" aria-label="Light mode"><title>Light mode</title><path d="M96.76,66.458c-0.853-0.852-2.15-1.064-3.23-0.534c-6.063,2.991-12.858,4.571-19.655,4.571  C62.022,70.495,50.88,65.88,42.5,57.5C29.043,44.043,25.658,23.536,34.076,6.47c0.532-1.08,0.318-2.379-0.534-3.23  c-0.851-0.852-2.15-1.064-3.23-0.534c-4.918,2.427-9.375,5.619-13.246,9.491c-9.447,9.447-14.65,22.008-14.65,35.369  c0,13.36,5.203,25.921,14.65,35.368s22.008,14.65,35.368,14.65c13.361,0,25.921-5.203,35.369-14.65  c3.872-3.871,7.064-8.328,9.491-13.246C97.826,68.608,97.611,67.309,96.76,66.458z"></path></svg></button></div><div style="flex-grow: 0; flex-shrink: 1; flex-basis: auto; order: 0; align-self: center; justify-self: center;"><button class="readermode"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" class="readerIcon" fill="currentColor" stroke="currentColor" stroke-width="0.2" stroke-linecap="round" stroke-linejoin="round" width="64px" height="64px" viewBox="0 0 24 24" aria-label="Reader mode"><title>Reader mode</title><g transform="translate(-1.8, -1.8) scale(1.15, 1.2)"><path d="M8.9891247,2.5 C10.1384702,2.5 11.2209868,2.96705384 12.0049645,3.76669482 C12.7883914,2.96705384 13.8709081,2.5 15.0202536,2.5 L18.7549359,2.5 C19.1691495,2.5 19.5049359,2.83578644 19.5049359,3.25 L19.5046891,4.004 L21.2546891,4.00457396 C21.6343849,4.00457396 21.9481801,4.28672784 21.9978425,4.6528034 L22.0046891,4.75457396 L22.0046891,20.25 C22.0046891,20.6296958 21.7225353,20.943491 21.3564597,20.9931534 L21.2546891,21 L2.75468914,21 C2.37499337,21 2.06119817,20.7178461 2.01153575,20.3517706 L2.00468914,20.25 L2.00468914,4.75457396 C2.00468914,4.37487819 2.28684302,4.061083 2.65291858,4.01142057 L2.75468914,4.00457396 L4.50368914,4.004 L4.50444233,3.25 C4.50444233,2.87030423 4.78659621,2.55650904 5.15267177,2.50684662 L5.25444233,2.5 L8.9891247,2.5 Z M4.50368914,5.504 L3.50468914,5.504 L3.50468914,19.5 L10.9478955,19.4998273 C10.4513189,18.9207296 9.73864328,18.5588115 8.96709342,18.5065584 L8.77307039,18.5 L5.25444233,18.5 C4.87474657,18.5 4.56095137,18.2178461 4.51128895,17.8517706 L4.50444233,17.75 L4.50368914,5.504 Z M19.5049359,17.75 C19.5049359,18.1642136 19.1691495,18.5 18.7549359,18.5 L15.2363079,18.5 C14.3910149,18.5 13.5994408,18.8724714 13.0614828,19.4998273 L20.5046891,19.5 L20.5046891,5.504 L19.5046891,5.504 L19.5049359,17.75 Z M18.0059359,3.999 L15.0202536,4 L14.8259077,4.00692283 C13.9889509,4.06666544 13.2254227,4.50975805 12.7549359,5.212 L12.7549359,17.777 L12.7782651,17.7601316 C13.4923805,17.2719483 14.3447024,17 15.2363079,17 L18.0059359,16.999 L18.0056891,4.798 L18.0033792,4.75457396 L18.0056891,4.71 L18.0059359,3.999 Z M8.9891247,4 L6.00368914,3.999 L6.00599909,4.75457396 L6.00599909,4.75457396 L6.00368914,4.783 L6.00368914,16.999 L8.77307039,17 C9.57551536,17 10.3461406,17.2202781 11.0128313,17.6202194 L11.2536891,17.776 L11.2536891,5.211 C10.8200889,4.56369974 10.1361548,4.13636104 9.37521067,4.02745763 L9.18347055,4.00692283 L8.9891247,4 Z"></path></g></svg></button></div></div><div class="explorer" data-behavior="link" data-collapsed="collapsed" data-savestate="true" data-data-fns="{&quot;order&quot;:[&quot;filter&quot;,&quot;map&quot;,&quot;sort&quot;],&quot;sortFn&quot;:&quot;(a,b)=>!a.isFolder&amp;&amp;!b.isFolder||a.isFolder&amp;&amp;b.isFolder?a.displayName.localeCompare(b.displayName,void 0,{numeric:!0,sensitivity:\&quot;base\&quot;}):!a.isFolder&amp;&amp;b.isFolder?1:-1&quot;,&quot;filterFn&quot;:&quot;node=>node.slugSegment!==\&quot;tags\&quot;&quot;,&quot;mapFn&quot;:&quot;node=>node&quot;}"><button type="button" class="explorer-toggle mobile-explorer hide-until-loaded" data-mobile="true" aria-controls="explorer-7"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide-menu"><line x1="4" x2="20" y1="12" y2="12"></line><line x1="4" x2="20" y1="6" y2="6"></line><line x1="4" x2="20" y1="18" y2="18"></line></svg></button><button type="button" class="title-button explorer-toggle desktop-explorer" data-mobile="false" aria-expanded="true"><h2>Explorer</h2><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="5 8 14 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="fold"><polyline points="6 9 12 15 18 9"></polyline></svg></button><div id="explorer-7" class="explorer-content" aria-expanded="false" role="group"><ul class="explorer-ul overflow" id="list-0"><li class="overflow-end"></li></ul></div><template id="template-file"><li><a href="#"></a></li></template><template id="template-folder"><li><div class="folder-container"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="5 8 14 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><polyline points="6 9 12 15 18 9"></polyline></svg><div><button class="folder-button"><span class="folder-title"></span></button></div></div><div class="folder-outer"><ul class="content"></ul></div></li></template></div></div><div class="center"><div class="page-header"><div class="popover-hint"><nav class="breadcrumb-container" aria-label="breadcrumbs"><div class="breadcrumb-element"><a href="./">Home</a><p> ❯ </p></div><div class="breadcrumb-element"><a href>architecture shadow vault</a></div></nav><h1 class="article-title">architecture-shadow-vault</h1><p show-comma="true" class="content-meta"><time datetime="2026-04-29T13:07:51.000Z">Apr 29, 2026</time><span>18 min read</span></p><ul class="tags"><li><a href="./tags/62/63/68" class="internal tag-link">62/63/68</a></li></ul></div></div><article class="popover-hint"><h1 id="architecture-shadow-vault-approach">Architecture: Shadow Vault Approach<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#architecture-shadow-vault-approach" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h1>
+<p><strong>Status:</strong> Phases 0–6A shipped end-to-end (v0.4.14). Phase 6B (this docs polish) in flight; Phase 6C (plugin compatibility re-verification) pending.
+<strong>Decided:</strong> 2026-04-27
+<strong>Supersedes:</strong> the monkey-patch-and-reconcile approach used through v0.4.3</p>
+<h2 id="tldr">TL;DR<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#tldr" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<p>To deliver a VS Code Remote-SSH-like experience for Obsidian, we open the
+remote vault as a <strong>second Obsidian window</strong> rooted at a local “shadow”
+directory that’s empty on disk but whose plugin loads the file model
+from the remote daemon at startup. This replaces the in-place
+<code>monkey-patch app.vault.adapter + reconcileVaultRoot</code> flow used through
+v0.4.3, which is fundamentally blocked on this Obsidian build (see
+<strong>Why we pivoted</strong> below).</p>
+<p>The transport stack — <code>RpcRemoteFsClient</code>, <code>SftpRemoteFsClient</code>,
+<code>ServerDeployer</code>, <code>ResourceBridge</code>, <code>ReconnectManager</code>, <code>JumpHostTunnel</code>,
+<code>AuthResolver</code>, <code>HostKeyStore</code>, the Go daemon, <code>fs.watch</code> — is unchanged.
+What gets replaced is the surface that connects the patched adapter to
+Obsidian’s vault model.</p>
+<hr/>
+<h2 id="1-why-we-pivoted">1. Why we pivoted<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#1-why-we-pivoted" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<p>Through v0.4.3 the design was: user opens any local vault, clicks
+Connect, the plugin monkey-patches <code>app.vault.adapter</code> to route through
+<code>RpcRemoteFsClient</code>, then <code>reconcileVaultRoot()</code> walks the remote tree
+and calls <code>app.vault.adapter.reconcileFile(path)</code> for every file so
+Obsidian’s vault model picks up the new contents.</p>
+<p>PRs #52, #54, #57 each tried a variation of this. None of them work on
+the user’s Obsidian build (1.5+ era, FileSystemAdapter on desktop). The
+2026-04-27 smoke session ran end-to-end devtools experiments and
+established:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="table-container"><table><thead><tr><th>API tried</th><th>Result on this build</th></tr></thead><tbody><tr><td><code>reconcileFile(vaultPath)</code> (PR #57)</td><td>subscriber throws <code>Cannot read properties of undefined (reading 'startsWith')</code></td></tr><tr><td><code>reconcileFile(getRealPath(vaultPath))</code> (constructed via Obsidian’s own helper)</td><td>same throw</td></tr><tr><td><code>reconcileFileInternal(vaultPath)</code></td><td>different throw — <code>lastIndexOf of undefined</code></td></tr><tr><td><code>vault.generateFiles()</code></td><td>returns an async iterator that does nothing useful for our purpose</td></tr><tr><td><code>vault.load()</code> after clearing <code>vault.fileMap</code></td><td>runs in 1.7s and completes, but rebuilds <strong>zero</strong> files; <code>vault.load()</code> does not walk the adapter</td></tr></tbody></table></div>
+<p>Catastrophic-mismatch state from a real connect attempt:</p>
+<ul>
+<li>Adapter is patched and points at remote.</li>
+<li>Vault model still reflects local files (the reconcile attempts were
+no-ops: 0 added, 0 pruned).</li>
+<li>File Explorer therefore shows the local layout.</li>
+<li>Any read attempt — Templater scanning, Dataview indexing, the user
+clicking a file — flows through the patched adapter to remote, which
+doesn’t have those local paths, producing an <code>unhandledrejection: no such file: …</code> storm.</li>
+</ul>
+<p>Conclusion: Obsidian does not expose a public path to “rebuild the
+vault model from a different adapter mid-session.” The reconcile
+methods exist but their event subscribers are coupled to internal state
+the patched adapter can’t satisfy after the vault has already been
+constructed against a different basePath.</p>
+<p>So we stop trying to update the vault in place, and instead spin up a
+<strong>fresh</strong> vault whose adapter is set up from the very first read.</p>
+<h2 id="2-architecture">2. Architecture<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#2-architecture" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<pre><button class="expand-button" aria-label="Expand mermaid diagram" data-view-component="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M3.72 3.72a.75.75 0 011.06 1.06L2.56 7h10.88l-2.22-2.22a.75.75 0 011.06-1.06l3.5 3.5a.75.75 0 010 1.06l-3.5 3.5a.75.75 0 11-1.06-1.06l2.22-2.22H2.56l2.22 2.22a.75.75 0 11-1.06 1.06l-3.5-3.5a.75.75 0 010-1.06l3.5-3.5z"></path></svg></button><code class="mermaid" data-clipboard="&quot;flowchart TD\n    subgraph \&quot;Original window  (any local vault)\&quot;\n      O1[User opens Settings → Remote SSH] --> O2[Click Connect on profile P]\n      O2 --> Boot[Bootstrap shadow vault for P]\n    end\n\n    Boot --> Ensure[\&quot;Ensure ~/.obsidian-remote/vaults/&amp;lt;P-id&amp;gt;/&lt;br/>.obsidian/community-plugins.json: ['remote-ssh']&lt;br/>.obsidian/plugins/remote-ssh/  (copy of plugin)&lt;br/>data.json: { autoConnectProfileId: P-id, …copy of profile }\&quot;]\n    Ensure --> Spawn[Open that path as a new Obsidian window&lt;br/>via internal IPC or fallback to user-driven Open Vault]\n\n    subgraph \&quot;Shadow window\&quot;\n      S1[Vault loads — empty dir, files = 0] --> S2[Remote SSH plugin onload]\n      S2 --> S3{data.json has&lt;br/>autoConnectProfileId?}\n      S3 -->|yes| S4[Connect to remote profile]\n      S4 --> S5[Patch adapter to RpcRemoteFsClient]\n      S5 --> S6[VaultModelBuilder: walk remote vault →&lt;br/>construct TFile / TFolder objects →&lt;br/>insert into vault.fileMap + parent.children]\n      S6 --> S7[vault.trigger 'create' / 'folder-created' for each]\n      S7 --> S8[File Explorer renders remote tree.&lt;br/>Templater / Dataview / etc see a normal vault]\n    end\n\n    Spawn -.spawn new window.-> S1\n\n    style Boot fill:#ffd\n    style S6 fill:#fdd\n    style Spawn fill:#fdd&quot;">flowchart TD
+    subgraph &quot;Original window  (any local vault)&quot;
+      O1[User opens Settings → Remote SSH] --> O2[Click Connect on profile P]
+      O2 --> Boot[Bootstrap shadow vault for P]
+    end
+
+    Boot --> Ensure[&quot;Ensure ~/.obsidian-remote/vaults/&amp;lt;P-id&amp;gt;/&lt;br/>.obsidian/community-plugins.json: ['remote-ssh']&lt;br/>.obsidian/plugins/remote-ssh/  (copy of plugin)&lt;br/>data.json: { autoConnectProfileId: P-id, …copy of profile }&quot;]
+    Ensure --> Spawn[Open that path as a new Obsidian window&lt;br/>via internal IPC or fallback to user-driven Open Vault]
+
+    subgraph &quot;Shadow window&quot;
+      S1[Vault loads — empty dir, files = 0] --> S2[Remote SSH plugin onload]
+      S2 --> S3{data.json has&lt;br/>autoConnectProfileId?}
+      S3 -->|yes| S4[Connect to remote profile]
+      S4 --> S5[Patch adapter to RpcRemoteFsClient]
+      S5 --> S6[VaultModelBuilder: walk remote vault →&lt;br/>construct TFile / TFolder objects →&lt;br/>insert into vault.fileMap + parent.children]
+      S6 --> S7[vault.trigger 'create' / 'folder-created' for each]
+      S7 --> S8[File Explorer renders remote tree.&lt;br/>Templater / Dataview / etc see a normal vault]
+    end
+
+    Spawn -.spawn new window.-> S1
+
+    style Boot fill:#ffd
+    style S6 fill:#fdd
+    style Spawn fill:#fdd
+</code><div id="mermaid-container" role="dialog"><div id="mermaid-space"><div class="mermaid-content"></div></div></div></pre>
+<p>Yellow = new component.
+Red = open question / unverified mechanism (see §4).</p>
+<h2 id="3-components">3. Components<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#3-components" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="table-container"><table><thead><tr><th>Module</th><th>Status</th><th>Responsibility</th></tr></thead><tbody><tr><td><code>ShadowVaultBootstrap</code></td><td>shipped (PR #64, MERGE strategy in #65 + #67)</td><td>Materialise <code>~/.obsidian-remote/vaults/&lt;profile-id>/</code> for a profile: ensure <code>.obsidian/</code>, install plugin (per-file symlink chain — see OQ4), write <code>data.json</code> with the profile config and <code>autoConnectProfileId</code> marker.</td></tr><tr><td><code>ShadowVaultManager</code></td><td>shipped (PR #64)</td><td>High-level: given a profile, decide whether shadow vault already exists, bootstrap if not, then ask <code>WindowSpawner</code> to open it.</td></tr><tr><td><code>WindowSpawner</code></td><td>shipped (PR #64)</td><td>Fires <code>obsidian://open?path=&lt;vaultPath></code> via <code>window.open</code>. Obsidian’s URL handler accepts the path because <code>ObsidianRegistry</code> registered it (see OQ1).</td></tr><tr><td><code>ObsidianRegistry</code></td><td>shipped (PR #64)</td><td>Reads/atomically rewrites <code>obsidian.json</code> (Obsidian’s per-user vault list). Idempotent register; preserves unknown top-level keys; per-OS resolution via <code>os.homedir()</code> / env vars.</td></tr><tr><td><code>VaultModelBuilder</code></td><td>shipped (PR #61, fixes <a href="./tags/62/63/68" class="tag-link internal alias" data-slug="tags/62/63/68">68</a>; mutators in #70)</td><td>The single source of truth for vault-model writes. <code>build(entries)</code> for the bulk initial fill on connect; <code>insertOne</code> / <code>removeOne</code> / <code>modifyOne</code> / <code>renameOne</code> for incremental fs.watch-driven updates. Constructs <code>TFile</code> / <code>TFolder</code> via injected constructors (see OQ2).</td></tr><tr><td><code>RpcRemoteFsClient</code></td><td>unchanged</td><td>Existing α (Go daemon) RPC transport.</td></tr><tr><td><code>SftpRemoteFsClient</code></td><td>unchanged</td><td>Existing direct-SFTP fallback.</td></tr><tr><td><code>ServerDeployer</code></td><td>unchanged</td><td>Auto-deploys the daemon (0.4.2 absolute paths + 0.4.3 suffix-pkill fixes both apply).</td></tr><tr><td><code>ResourceBridge</code></td><td>unchanged</td><td>localhost HTTP server for binaries, with Range support.</td></tr><tr><td><code>ReconnectManager</code></td><td>unchanged</td><td>Exp-backoff reconnect; runs inside the shadow window the same way.</td></tr><tr><td><code>JumpHostTunnel</code>, <code>AuthResolver</code>, <code>HostKeyStore</code></td><td>unchanged</td><td>All transport-layer, profile-driven.</td></tr><tr><td><code>reconcileVaultRoot</code> (main.ts)</td><td><strong>deleted</strong> (PR #69)</td><td>Replaced by <code>VaultModelBuilder.build</code>.</td></tr><tr><td><code>reconcileVaultPath</code> + <code>lookupIsFolder</code> + <code>ReconcileCapableAdapter</code> (main.ts)</td><td><strong>deleted</strong> (PR #70)</td><td>Replaced by <code>VaultModelBuilder.{insertOne,removeOne,modifyOne,renameOne}</code>; killed the last live caller of the broken Obsidian private API.</td></tr><tr><td><code>autoPatchAdapter</code> setting + flow (Tier 1-A, PR #46)</td><td><strong>deleted</strong> (PR #69)</td><td>The shadow window patches its own adapter at onload; there’s no “auto-patch on first connect” anymore — the shadow window IS the connect.</td></tr><tr><td><code>debugDumpVaultAdapterAPI</code> + <code>debug-dump-api</code> command (PR #54)</td><td><strong>deleted</strong> (PR #69)</td><td>Diagnostic served its purpose during the v0.4.x smoke.</td></tr><tr><td><code>debugBuildVaultFromRemote</code> + <code>debug-build-vault-from-remote</code> command (Phase 1 POC)</td><td><strong>deleted</strong> (PR #69)</td><td>Replaced by the always-on auto-connect path inside the shadow window.</td></tr><tr><td><code>debugOpenShadowVault</code> + <code>debug-open-shadow-vault</code> command (Phase 2 POC)</td><td><strong>deleted</strong> (PR #69)</td><td>Replaced by the Settings UI Connect button.</td></tr></tbody></table></div>
+<h2 id="4-open-questions">4. Open questions<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#4-open-questions" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<p>These need to be answered before or during early-phase implementation.
+Each has a concrete way to verify.</p>
+<h3 id="oq1--how-does-obsidian-programmatically-open-a-vault-path-in-a-new-window">OQ1 — How does Obsidian programmatically open a vault path in a new window?<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#oq1--how-does-obsidian-programmatically-open-a-vault-path-in-a-new-window" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p><strong>Risk:</strong> High. If there’s no public/internal API, the UX degrades to
+“click Open Vault, pick this folder”, which hurts the
+remote-SSH-feels-magical effect.</p>
+<p><strong>Status (2026-04-27):</strong> ✅ <strong>Answered.</strong> Use Obsidian’s documented
+<code>obsidian://open?path=&lt;absolute-path></code> URL scheme. For an
+<em>unregistered</em> path the URL falls back to the vault picker dialog;
+for a <em>registered</em> path Obsidian opens it directly in a new window.
+So <code>ShadowVaultBootstrap</code> registers the shadow vault in
+<code>obsidian.json</code> (Obsidian’s per-user vault list) before
+<code>WindowSpawner</code> fires the URL.</p>
+<p><code>obsidian.json</code> schema (only the parts we touch):</p>
+<figure data-rehype-pretty-code-figure><pre tabindex="0" data-language="json" data-theme="github-light github-dark"><code data-language="json" data-theme="github-light github-dark" style="display:grid;"><span data-line><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">{</span></span>
+<span data-line><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">  &quot;vaults&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">: {</span></span>
+<span data-line><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">    &quot;&lt;hex16>&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">: { </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">&quot;path&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">&quot;...&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">&quot;ts&quot;</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">: </span><span style="--shiki-light:#B31D28;--shiki-light-font-style:italic;--shiki-dark:#FDAEB7;--shiki-dark-font-style:italic;">&lt;millis></span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">&quot;open&quot;</span><span style="--shiki-light:#B31D28;--shiki-light-font-style:italic;--shiki-dark:#FDAEB7;--shiki-dark-font-style:italic;">?</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">: </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">true</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> }</span></span>
+<span data-line><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">  }</span></span>
+<span data-line><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">}</span></span></code></pre></figure>
+<p>Path per OS — <code>ObsidianRegistry.defaultConfigPath()</code> resolves at
+runtime via env vars / <code>os.homedir()</code>:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="table-container"><table><thead><tr><th>OS</th><th>Path</th></tr></thead><tbody><tr><td>Windows</td><td><code>%APPDATA%\obsidian\obsidian.json</code></td></tr><tr><td>macOS</td><td><code>~/Library/Application Support/obsidian/obsidian.json</code></td></tr><tr><td>Linux</td><td><code>$XDG_CONFIG_HOME/obsidian/obsidian.json</code> (default <code>~/.config</code>)</td></tr></tbody></table></div>
+<p><code>register()</code> is idempotent (returns the existing id if the path is
+already there) and case-insensitive on Windows; writes are atomic
+(temp file + rename) so Obsidian can’t read a half-written config.</p>
+<h3 id="oq2--can-we-construct-tfile--tfolder-from-the-public-obsidian-module">OQ2 — Can we construct <code>TFile</code> / <code>TFolder</code> from the public <code>obsidian</code> module?<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#oq2--can-we-construct-tfile--tfolder-from-the-public-obsidian-module" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p><strong>Risk:</strong> Medium. If the constructors throw or require properties we
+can’t supply, we have to construct quack-typed plain objects, and
+plugin compatibility (<code>instanceof TFile</code> checks) gets fragile.</p>
+<p><strong>Status (2026-04-27):</strong> ✅ <strong>Answered.</strong> Construct as
+<code>new TFile(vault, path)</code> and <code>new TFolder(vault, path)</code>, then
+override the fields we control (<code>name</code>, <code>basename</code>, <code>extension</code>,
+<code>parent</code>, <code>stat</code>).</p>
+<p><code>require('obsidian')</code> is not available in the devtools console (the
+<code>obsidian</code> module is only resolved inside the esbuild-bundled plugin
+code), so the verification grabs the class via an existing instance:</p>
+<figure data-rehype-pretty-code-figure><pre tabindex="0" data-language="js" data-theme="github-light github-dark"><code data-language="js" data-theme="github-light github-dark" style="display:grid;"><span data-line><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">const</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> TFile</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">   =</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> Object.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;">getPrototypeOf</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(app.vault.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;">getFiles</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">()[</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">0</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">]).</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">constructor</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">;</span></span>
+<span data-line><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">const</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;"> TFolder</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;"> =</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> Object.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;">getPrototypeOf</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(app.vault.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;">getRoot</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">()).</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF;">constructor</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">;</span></span>
+<span data-line><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">new</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;"> TFile</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">();                       </span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D;">// appeared OK in initial test</span></span>
+<span data-line><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">new</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;"> TFolder</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">();                     </span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D;">// → throws Cannot read properties of undefined (reading 'lastIndexOf')</span></span>
+<span data-line><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">new</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;"> TFolder</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(app.vault, </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">'.test'</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">);   </span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D;">// OK; auto-fills [parent, deleted, vault, path, name, children]</span></span></code></pre></figure>
+<p>The TFolder constructor calls <code>path.lastIndexOf('/')</code> to derive
+<code>name</code>; without an arg <code>path</code> is <code>undefined</code>. The TFile no-arg form
+<em>appeared</em> OK in the OQ2 minimal test only because we never read the
+auto-derived fields after construction. <strong>Both must be constructed
+with <code>(vault, path)</code></strong> — <code>VaultModelBuilder</code> does this.</p>
+<p>From inside the bundled plugin we import the classes the normal way
+(<code>import { TFile, TFolder } from 'obsidian'</code>) — only the devtools
+probe needs the prototype trick. The constructors are dependency-
+injected into <code>VaultModelBuilder</code> so unit tests can pass <code>FakeTFile</code>/
+<code>FakeTFolder</code> (the <code>obsidian</code> package ships only <code>.d.ts</code>, no runtime).</p>
+<h3 id="oq3--does-inserting-into-vaultfilemap--firing-vaulttriggercreate-file-make-file-explorer-render-and-downstream-plugins-templater-dataview-treat-the-file-as-real">OQ3 — Does inserting into <code>vault.fileMap</code> + firing <code>vault.trigger('create', file)</code> make File Explorer render and downstream plugins (Templater, Dataview) treat the file as real?<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#oq3--does-inserting-into-vaultfilemap--firing-vaulttriggercreate-file-make-file-explorer-render-and-downstream-plugins-templater-dataview-treat-the-file-as-real" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p><strong>Risk:</strong> Medium. The “broken subscribers” we saw earlier listened to
+<code>change</code>/<code>raw</code> events on the <strong>adapter</strong>, not <code>create</code> on the vault.
+But we should verify they don’t also listen to <code>create</code>.</p>
+<p><strong>Status (2026-04-27):</strong> ✅ <strong>Answered for File Explorer.</strong> The
+mechanism works — File Explorer renders the injected file at root.
+There is a <strong>plugin-compat caveat</strong> for plugins that bypass the
+adapter and read files via Node <code>fs</code> directly; this is now
+documented in §6.5 and is acceptable as a known limitation.</p>
+<p>The minimal test (run on a real vault, no remote connection):</p>
+<figure data-rehype-pretty-code-figure><pre tabindex="0" data-language="js" data-theme="github-light github-dark"><code data-language="js" data-theme="github-light github-dark" style="display:grid;"><span data-line><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D;">// after constructing `fake` per OQ2 above</span></span>
+<span data-line><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">app.vault.fileMap[fake.path] </span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583;">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> fake;</span></span>
+<span data-line><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">app.vault.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;">getRoot</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">().children.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;">push</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(fake);</span></span>
+<span data-line><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">app.vault.</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0;">trigger</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">(</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF;">'create'</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">, fake);</span></span></code></pre></figure>
+<p>Observed:</p>
+<ul>
+<li><code>app.vault.getFiles()</code> includes the new file ✅</li>
+<li><code>app.vault.getAbstractFileByPath('POC-fake-file.md')</code> returns it ✅</li>
+<li>File Explorer renders <code>POC-fake-file.md</code> at root ✅</li>
+<li>The earlier <code>iu</code>/<code>nu</code> storm-throwing subscribers (which were on
+adapter <code>change</code>/<code>raw</code>) did <strong>not</strong> fire ✅</li>
+<li>2 subscriber errors fired during <code>create</code> from Omnisearch trying
+to <code>fs.readFile('&lt;basePath>/POC-fake-file.md')</code> and getting
+ENOENT — see §6.5 for handling.</li>
+</ul>
+<p><strong>Open click-to-open:</strong> the test was run on a disconnected vault, so
+clicking the injected file failed (no patched adapter, file does not
+exist on disk). We expect that with a patched adapter pointing at
+remote, <code>vault.read()</code> → <code>adapter.read()</code> → remote round-trip will
+succeed. To be re-verified during Phase 1.</p>
+<h3 id="oq4--plugin-install-in-shadow-vault-symlink-vs-copy">OQ4 — Plugin install in shadow vault: symlink vs copy?<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#oq4--plugin-install-in-shadow-vault-symlink-vs-copy" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p><strong>Risk:</strong> Low. Mostly a Windows-vs-*nix split.</p>
+<p><strong>Status (2026-04-27):</strong> ✅ <strong>Answered.</strong> Per-file install with a
+symlink-then-copy fallback chain.</p>
+<p>The first cut symlinked the WHOLE plugin directory (PR #64) and
+caused the worst regression of the pivot: when the shadow vault’s
+plugin wrote its own per-vault <code>data.json</code>, the write followed the
+symlink and clobbered the source vault’s settings (hostKeyStore,
+secrets). Fix in PR #65: <code>pluginDir</code> is a real directory; code +
+assets (<code>main.js</code>, <code>manifest.json</code>, <code>styles.css</code>, <code>server-bin/</code>)
+are symlinked <strong>individually</strong> — <code>data.json</code> is never touched by
+install, so each vault keeps its own per-vault settings.</p>
+<p>The symlink chain is <code>fs.symlinkSync(src, dst, type)</code> with <code>type</code>
+= <code>'file'</code> for files, <code>'junction'</code> on Windows (works without admin
+for directories under the user’s control) and <code>'dir'</code> elsewhere
+for directories. If <code>symlinkSync</code> fails for any entry, install
+falls back to <code>fs.copyFileSync</code> / <code>fs.cpSync</code>. Stale prior
+installs are detected via <code>lstatSync</code> and unlinked (NOT
+<code>rmSync</code> — that would follow the link).</p>
+<h3 id="oq5--when-the-same-profiles-datajson-is-opened-by-two-windows-original--shadow-do-edits-in-one-window-race-with-the-other">OQ5 — When the same profile’s <code>data.json</code> is opened by two windows (original + shadow), do edits in one window race with the other?<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#oq5--when-the-same-profiles-datajson-is-opened-by-two-windows-original--shadow-do-edits-in-one-window-race-with-the-other" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p><strong>Risk:</strong> Medium. Worst case the user changes a profile in the
+original window’s settings tab while the shadow window’s plugin is
+mid-flight reading the same file.</p>
+<p><strong>Status (2026-04-27):</strong> ✅ <strong>Answered (by isolation, not by
+locking).</strong> With per-file install (OQ4) the shadow vault has its
+<strong>own</strong> <code>data.json</code>, separate from the source vault’s. The two
+files never touch each other; both windows can write freely
+without races.</p>
+<p><code>ShadowVaultBootstrap</code> does seed shadow data.json from source on
+the very first bootstrap (so a new shadow inherits the source’s
+already-trusted host keys instead of TOFU-prompting), but
+re-bootstrap MERGES rather than overwrites — the shadow’s
+accumulated state survives. The source vault’s data.json is
+never written to by the shadow window.</p>
+<h3 id="oq6--what-does-obsidian-write-to-a-fresh-vault-directory-when-first-opened">OQ6 — What does Obsidian write to a fresh vault directory when first opened?<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#oq6--what-does-obsidian-write-to-a-fresh-vault-directory-when-first-opened" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p><strong>Risk:</strong> Low.</p>
+<p><strong>Status (2026-04-27):</strong> ✅ <strong>Answered by smoke.</strong> Obsidian creates
+<code>app.json</code>, <code>appearance.json</code>, <code>core-plugins.json</code>,
+<code>workspace.json</code>, and a <code>plugins/</code> directory inside <code>.obsidian/</code>
+on first open. Bootstrap’s pre-created
+<code>.obsidian/community-plugins.json</code> (<code>[&quot;remote-ssh&quot;]</code>) and
+<code>plugins/remote-ssh/</code> (per-file install) coexist with these
+without conflict — Obsidian writes the others fresh on first
+open and leaves our pre-created files alone.</p>
+<h2 id="5-phased-implementation-plan">5. Phased implementation plan<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#5-phased-implementation-plan" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<pre><button class="expand-button" aria-label="Expand mermaid diagram" data-view-component="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M3.72 3.72a.75.75 0 011.06 1.06L2.56 7h10.88l-2.22-2.22a.75.75 0 011.06-1.06l3.5 3.5a.75.75 0 010 1.06l-3.5 3.5a.75.75 0 11-1.06-1.06l2.22-2.22H2.56l2.22 2.22a.75.75 0 11-1.06 1.06l-3.5-3.5a.75.75 0 010-1.06l3.5-3.5z"></path></svg></button><code class="mermaid" data-clipboard="&quot;flowchart LR\n    P0[Phase 0 ✅ devtools verification&lt;br/>OQ1 OQ2 OQ3 OQ6 answered] --> P1[Phase 1 ✅ VaultModelBuilder POC&lt;br/>PR #61 + #62 + #63]\n    P1 --> P2[Phase 2 ✅ ShadowVaultBootstrap +&lt;br/>Manager + WindowSpawner +&lt;br/>ObsidianRegistry — PR #64 + #65]\n    P2 --> P3[Phase 3 ✅ Settings UI rewires Connect&lt;br/>button to spawn shadow vault — PR #66]\n    P3 --> P4[Phase 4 ✅ shadow window plugin onload&lt;br/>reads marker, auto-connects,&lt;br/>calls VaultModelBuilder — PR #67 + #68]\n    P4 --> P5[Phase 5 ✅ delete reconcileVaultRoot,&lt;br/>autoPatchAdapter, debug-dump,&lt;br/>data.json migration — PR #69]\n    P5 --> P6A[Phase 6A ✅ fs.watch live updates via&lt;br/>VaultModelBuilder mutators,&lt;br/>iu/nu storm gone — PR #70]\n    P6A --> P6B[Phase 6B 🚧 docs polish + plan rewrite +&lt;br/>F1/F2 backlog — this PR]\n    P6B --> P6C[Phase 6C ⏳ plugin-compatibility.md&lt;br/>re-verified across 11 plugins]&quot;">flowchart LR
+    P0[Phase 0 ✅ devtools verification&lt;br/>OQ1 OQ2 OQ3 OQ6 answered] --> P1[Phase 1 ✅ VaultModelBuilder POC&lt;br/>PR #61 + #62 + #63]
+    P1 --> P2[Phase 2 ✅ ShadowVaultBootstrap +&lt;br/>Manager + WindowSpawner +&lt;br/>ObsidianRegistry — PR #64 + #65]
+    P2 --> P3[Phase 3 ✅ Settings UI rewires Connect&lt;br/>button to spawn shadow vault — PR #66]
+    P3 --> P4[Phase 4 ✅ shadow window plugin onload&lt;br/>reads marker, auto-connects,&lt;br/>calls VaultModelBuilder — PR #67 + #68]
+    P4 --> P5[Phase 5 ✅ delete reconcileVaultRoot,&lt;br/>autoPatchAdapter, debug-dump,&lt;br/>data.json migration — PR #69]
+    P5 --> P6A[Phase 6A ✅ fs.watch live updates via&lt;br/>VaultModelBuilder mutators,&lt;br/>iu/nu storm gone — PR #70]
+    P6A --> P6B[Phase 6B 🚧 docs polish + plan rewrite +&lt;br/>F1/F2 backlog — this PR]
+    P6B --> P6C[Phase 6C ⏳ plugin-compatibility.md&lt;br/>re-verified across 11 plugins]
+</code><div id="mermaid-container" role="dialog"><div id="mermaid-space"><div class="mermaid-content"></div></div></div></pre>
+<p>Total shipped: 11 PRs (#61–#70 + this one), v0.4.5 through v0.4.14.
+Comparable in scope to the Tier 1+2 roadmap that landed through v0.4.3.</p>
+<h3 id="phase-0-deliverable">Phase 0 deliverable<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#phase-0-deliverable" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p>A devtools session that records the answers to OQ1, OQ2, OQ3, OQ6.
+The answers updated §4 of this document. No code shipped from Phase 0.</p>
+<h3 id="phase-1-deliverable-shipped">Phase 1 deliverable (shipped)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#phase-1-deliverable-shipped" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p><code>VaultModelBuilder.build</code> plus a hidden debug command
+<code>debug-build-vault-from-remote</code>. Three quick fixes followed:</p>
+<ul>
+<li>PR #62 — <code>(vault, path)</code> constructor args required for both TFile and TFolder.</li>
+<li>PR #63 — RPC <code>path</code> was double-prefixed at the daemon (<code>work/VaultDev/work/VaultDev</code>); switch to vault-relative paths in RPC mode.</li>
+<li>PR #68 — fire <code>create</code> for folders too (File Explorer needs <code>view.onCreate(folder)</code> to register the folder DOM, even though the source-of-truth is <code>vault.fileMap</code>).</li>
+</ul>
+<h3 id="phase-2-deliverable-shipped">Phase 2 deliverable (shipped)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#phase-2-deliverable-shipped" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p><code>ShadowVaultBootstrap</code> + <code>ShadowVaultManager</code> + <code>WindowSpawner</code> +
+<code>ObsidianRegistry</code>. Per-file plugin install added in PR #65 after
+the whole-dir-symlink approach clobbered the source vault’s
+data.json.</p>
+<h3 id="phase-3-deliverable-shipped">Phase 3 deliverable (shipped)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#phase-3-deliverable-shipped" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p>Settings UI Connect button rewired from in-place patch to
+<code>openShadowVaultFor</code>. Same pre-1.0 click path as the Phase 2 debug
+command.</p>
+<h3 id="phase-4-deliverable-shipped">Phase 4 deliverable (shipped)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#phase-4-deliverable-shipped" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p><code>onLayoutReady</code> hook in <code>main.ts</code> reads <code>autoConnectProfileId</code> and
+runs <code>runAutoConnect</code>. The new shadow window self-connects, patches
+its own adapter, runs <code>populateVaultFromRemote</code>, and File Explorer
+fills with the remote tree without further user input. The
+<code>Reconnect</code> command lets the user retry from inside the shadow
+window after a transient connect failure.</p>
+<h3 id="phase-5-deliverable-shipped">Phase 5 deliverable (shipped)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#phase-5-deliverable-shipped" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p>Deleted <code>reconcileVaultRoot</code>, <code>autoPatchAdapter</code> setting + branch,
+<code>debugDumpVaultAdapterAPI</code> + <code>debug-dump-api</code> command,
+<code>debugBuildVaultFromRemote</code> + <code>debug-build-vault-from-remote</code>
+command, <code>debugOpenShadowVault</code> + <code>debug-open-shadow-vault</code>
+command, “Auto-patch adapter on connect” toggle UI. <code>promptConnect</code>
+(used by the <code>connect</code> command palette command + status bar) now
+calls <code>openShadowVaultFor</code> so the CLI entry point is uniform with
+the Settings UI. data.json migration drops <code>autoPatchAdapter</code> on
+load.</p>
+<h3 id="phase-6a-deliverable-shipped">Phase 6A deliverable (shipped)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#phase-6a-deliverable-shipped" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p><code>VaultModelBuilder</code> gained <code>insertOne</code> / <code>removeOne</code> / <code>modifyOne</code>
+/ <code>renameOne</code>. <code>main.ts:applyFsChange</code> dispatches fs.watch
+notifications to those mutators, replacing the
+<code>reconcileVaultPath</code> chain that had been the last user of the
+broken Obsidian private API. The <code>iu</code>/<code>nu</code> subscriber storm is
+gone; live creates / deletes / renames / modifies on the remote
+land in the shadow window’s File Explorer in ~1s.</p>
+<h3 id="phase-6b-deliverable-this-pr">Phase 6B deliverable (this PR)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#phase-6b-deliverable-this-pr" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p>Docs only. Marks every shipped phase, fills in OQ statuses,
+records the post-MVP backlog (§9), and rewrites the maintainer’s
+plan file (<code>self-archive-obsidian-staged-nova.md</code>) to reflect the
+post-pivot reality.</p>
+<h3 id="phase-6c-deliverable-pending">Phase 6C deliverable (pending)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#phase-6c-deliverable-pending" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p>Manual smoke through the 11 plugins in
+<a href="./plugin-compatibility" class="internal" data-slug="plugin-compatibility">plugin-compatibility.md</a>. Each row
+moves from 🟡 → ✅ verified or ❌ broken (with category — fs-direct
+reader, etc.). User-driven; ~30–60 min.</p>
+<h2 id="6-backwards-compatibility">6. Backwards compatibility<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#6-backwards-compatibility" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<p>Pre-1.0, so we don’t promise stability across this pivot.</p>
+<ul>
+<li><strong>Removed (PR #69)</strong>: <code>data.json:autoPatchAdapter</code> setting
+(Tier 1-A). The shadow vault always-on model replaces it. On
+first load under v0.4.13+ <code>loadSettings</code> strips the field from
+saved data; next <code>saveSettings</code> writes the cleaned shape back.</li>
+<li><strong>Removed (PR #69)</strong>: command palette commands
+<code>debug-dump-api</code>, <code>debug-build-vault-from-remote</code>,
+<code>debug-open-shadow-vault</code>. The Settings Connect button does
+what the Phase-2 POC command did; the auto-connect path replaces
+the Phase-1 POC command; the debug-dump diagnostic is no longer
+needed.</li>
+<li><strong>Removed (PR #69)</strong>: “Auto-patch adapter on connect” toggle
+in the Settings UI.</li>
+<li><strong>Added</strong>: <code>data.json:autoConnectProfileId</code> (string | null,
+default null). Set only by <code>ShadowVaultBootstrap</code>; ignored
+outside a shadow vault. Shadow window’s <code>onLayoutReady</code> reads
+it and triggers the connect.</li>
+<li><strong>Preserved</strong>: every profile field — <code>host</code>, <code>port</code>, <code>username</code>,
+<code>authMethod</code>, <code>privateKeyPath</code>, <code>transport</code>, <code>remotePath</code>,
+<code>connectTimeoutMs</code>, <code>keepaliveIntervalMs</code>, <code>keepaliveCountMax</code>,
+<code>clientId</code>, <code>userName</code>, <code>reconnectMaxRetries</code>,
+<code>rpcSocketPath</code>/<code>rpcTokenPath</code>, <code>jumpHost</code>, <code>hostKeyStore</code>,
+<code>secrets</code>. All used by the transport stack which doesn’t
+change.</li>
+<li><strong>Settings UI (PR #66)</strong>: the Connect button’s behaviour
+changed from in-place patch to “open in new window”. One-line
+copy under the SSH Profiles header explains this.</li>
+<li><strong>Command palette (PR #69)</strong>: <code>connect</code> and <code>disconnect</code>
+commands kept but rewired — <code>connect</code> now opens the chosen
+profile as a shadow vault (same flow as the Settings button);
+<code>disconnect</code> only meaningful when run from inside a shadow
+window with an active session. New <code>reconnect</code> command added
+for shadow windows whose connect failed transiently.</li>
+</ul>
+<h3 id="65-plugin-compatibility--fs-direct-readers">6.5 Plugin compatibility — <code>fs</code>-direct readers<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#65-plugin-compatibility--fs-direct-readers" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p>The OQ3 verification surfaced a class of plugins that read file
+contents via Node’s <code>fs.promises.readFile</code> directly against the local
+basePath, instead of going through <code>app.vault.read()</code> /
+<code>app.vault.cachedRead()</code>. The minimal-test injection of
+<code>POC-fake-file.md</code> triggered Omnisearch to attempt
+<code>fs.readFile('&lt;vault-basePath>/POC-fake-file.md')</code> and log
+<code>ENOENT: no such file or directory</code> (twice — once for its live cache,
+once for indexing).</p>
+<p>In the shadow-vault world this matters because the shadow vault’s
+basePath on disk has <strong>only</strong> <code>.obsidian/</code> — none of the actual files.
+Any plugin that bypasses the adapter and reads via <code>fs</code> will see ENOENT
+for every file in the model.</p>
+<p><strong>Triage rule for the plugin-compatibility matrix:</strong></p>
+<ul>
+<li>Plugins that read via <code>app.vault.read()</code> / <code>cachedRead()</code> work
+unchanged (Templater, Dataview core, the file editor, link
+resolution, etc.).</li>
+<li>Plugins that hit <code>fs</code> directly (Omnisearch, possibly some media
+indexers) cannot be made to work without mirroring the file content
+to a real local path. Mark these <code>❌ broken (fs-direct)</code> in
+<a href="./plugin-compatibility" class="internal alias" data-slug="plugin-compatibility">plugin-compatibility.md</a>, with a
+one-line note pointing here.</li>
+<li>A future enhancement (out of scope for the initial pivot) could
+shadow-write actual file content to the local basePath as a
+read-only mirror for these plugins. Big disk cost, defer until the
+base architecture is stable.</li>
+</ul>
+<p>Phase 6C will walk the existing 11 plugins in the matrix and
+re-categorise each.</p>
+<h2 id="7-glossary">7. Glossary<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#7-glossary" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="table-container"><table><thead><tr><th>Term</th><th>Meaning here</th></tr></thead><tbody><tr><td><strong>Shadow vault</strong></td><td>A directory <code>~/.obsidian-remote/vaults/&lt;profile-id>/</code> containing only <code>.obsidian/</code>, used as a vault root by Obsidian to give us a clean window to populate from remote.</td></tr><tr><td><strong>Original window</strong></td><td>The Obsidian window the user clicked Connect from. Holds whatever local vault they were in. Stays untouched by Connect.</td></tr><tr><td><strong>Shadow window</strong></td><td>The new Obsidian window opened on the shadow vault path. Hosts the patched adapter and the live RPC session.</td></tr><tr><td><strong>Profile P</strong></td><td>The <code>SshProfile</code> the user clicked Connect on. Identified by its <code>id</code>.</td></tr><tr><td><strong>Auto-connect marker</strong></td><td>A field <code>autoConnectProfileId</code> in the shadow vault’s <code>data.json</code>, telling the plugin in the shadow window which profile to connect to at onload.</td></tr></tbody></table></div>
+<h2 id="8-references">8. References<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#8-references" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<h3 id="shadow-vault-pr-chain">Shadow-vault PR chain<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#shadow-vault-pr-chain" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="table-container"><table><thead><tr><th>PR</th><th>Subject</th><th>Version</th></tr></thead><tbody><tr><td>#58</td><td>abs $HOME socket path (RPC handshake unblocked)</td><td>0.4.2</td></tr><tr><td>#59</td><td>pkill suffix + binary rm before upload (upgrade past prior daemon)</td><td>0.4.3</td></tr><tr><td>#60</td><td>this design doc, initial cut</td><td>0.4.4</td></tr><tr><td>#61</td><td>Phase 1 — VaultModelBuilder POC</td><td>0.4.5</td></tr><tr><td>#62</td><td>Phase 1 fix — <code>(vault, path)</code> constructor args</td><td>0.4.6</td></tr><tr><td>#63</td><td>Phase 1 fix — RPC path double-prefix</td><td>0.4.7</td></tr><tr><td>#64</td><td>Phase 2 — ShadowVaultBootstrap + Manager + WindowSpawner + ObsidianRegistry</td><td>0.4.8</td></tr><tr><td>#65</td><td>Phase 2 fix — per-file plugin install (source data.json no longer clobbered)</td><td>0.4.9</td></tr><tr><td>#66</td><td>Phase 3 — Settings Connect button → shadow vault</td><td>0.4.10</td></tr><tr><td>#67</td><td>Phase 4 — auto-connect on layout-ready</td><td>0.4.11</td></tr><tr><td>#68</td><td>Phase 4 fix — fire <code>create</code> for folders too</td><td>0.4.12</td></tr><tr><td>#69</td><td>Phase 5 — delete legacy reconcile / autoPatchAdapter / debug commands</td><td>0.4.13</td></tr><tr><td>#70</td><td>Phase 6A — fs.watch live updates via VaultModelBuilder mutators</td><td>0.4.14</td></tr></tbody></table></div>
+<h3 id="pre-pivot-in-place-reconcile-attempts-now-deleted">Pre-pivot in-place-reconcile attempts (now deleted)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#pre-pivot-in-place-reconcile-attempts-now-deleted" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p>PR #46 (autoPatchAdapter), PR #52 (broken <code>reconcileFolder</code> call),
+PR #54 (debug dump + multi-hook fallback), PR #57 (per-file walk).
+None of them worked on the maintainer’s Obsidian build. PR #57’s
+walk is what <code>VaultModelBuilder.build</code> replaced; PR #46’s auto-patch
+was the conditional <code>connectProfile</code> removed in #69.</p>
+<h3 id="smoke-transcript">Smoke transcript<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#smoke-transcript" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p>The 2026-04-27 session console.log generations in
+<code>&lt;dev-vault>/.obsidian/plugins/remote-ssh/</code> are the source of truth
+for OQ status updates and the per-PR fixes. Devtools probe outputs
+captured <code>view.fileItems</code> before/after manual <code>view.onCreate(folder)</code>
+calls, which is what surfaced the “fire create for folders too”
+fix in PR #68.</p>
+<h2 id="9-post-mvp-backlog">9. Post-MVP backlog<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#9-post-mvp-backlog" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<p>Captured during the Phase 4 verification session — both items
+significantly improve the experience but are out of scope for the
+initial pivot.</p>
+<h3 id="f1--dedicated-remote-vaults-ui-panel">F1 — Dedicated “Remote vaults” UI panel<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#f1--dedicated-remote-vaults-ui-panel" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p>Today the user discovers shadow vaults via Obsidian’s vault picker
+(<code>保管庫を変更…</code>) — same UI as for any local vault. Mixing remote
+profiles in with personal local vaults makes the picker noisy.</p>
+<p>A dedicated left-sidebar panel (or a separate workspace tab) that
+lists configured profiles, their connection state (“connected /
+disconnected / never opened”), and offers Open / Edit / Delete
+actions per profile would make the remote-vault concept first-class.</p>
+<p>Non-goals for F1: replacing Obsidian’s vault picker entirely.
+Shadow vaults remain registered in <code>obsidian.json</code> and reachable
+through the picker for users who prefer that.</p>
+<h3 id="f2--first-time-auto-connect-prompt-inherit-settings-from-source">F2 — First-time auto-connect prompt: inherit settings from source<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#f2--first-time-auto-connect-prompt-inherit-settings-from-source" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p><strong>Status (2026-04-29, post-#129 investigation): partially shipped.</strong></p>
+<p>The community plugin half is fully wired and lives in production today:</p>
+<figure data-rehype-pretty-code-figure><pre tabindex="0" data-language="text" data-theme="github-light github-dark"><code data-language="text" data-theme="github-light github-dark" style="display:grid;"><span data-line><span>ShadowVaultBootstrap.bootstrap (first-bootstrap branch)</span></span>
+<span data-line><span>  ├─ collectPendingPluginSuggestions()</span></span>
+<span data-line><span>  │    walks the source vault's enabled community plugins, snapshots</span></span>
+<span data-line><span>  │    each one's `data.json` content, returns PendingPluginSuggestion[]</span></span>
+<span data-line><span>  └─ writes data.pendingPluginSuggestions to the shadow's data.json</span></span>
+<span data-line> </span>
+<span data-line><span>main.ts onLayoutReady (shadow window)</span></span>
+<span data-line><span>  └─ runShadowStartup → ShadowStartupCoordinator.prepareForAutoConnect</span></span>
+<span data-line><span>        ├─ handlePendingPluginSuggestions</span></span>
+<span data-line><span>        │    └─ if data.pendingPluginSuggestions non-empty:</span></span>
+<span data-line><span>        │         new PendingPluginsModal(...).prompt()</span></span>
+<span data-line><span>        │         decision === 'install' →</span></span>
+<span data-line><span>        │           PluginMarketplaceInstaller.installMissing(ids)</span></span>
+<span data-line><span>        │             → app.plugins.installPlugin(repo, ver, manifest)</span></span>
+<span data-line><span>        │             → app.plugins.enablePluginAndSave(id)</span></span>
+<span data-line><span>        │           if copyConfig: copyPluginConfigsForInstalled(...)</span></span>
+<span data-line><span>        │             → writes &lt;configDir>/plugins/&lt;id>/data.json</span></span>
+<span data-line><span>        │               from the snapshot</span></span>
+<span data-line><span>        │         decision === 'skip'   → clear field (no re-prompt)</span></span>
+<span data-line><span>        │         decision === 'later'  → keep field (re-prompt next reload)</span></span>
+<span data-line><span>        └─ installMissingShadowPlugins (re-bootstrap safety net)</span></span>
+<span data-line><span>             reads shadow's community-plugins.json, downloads any</span></span>
+<span data-line><span>             still-missing binaries from the marketplace</span></span></code></pre></figure>
+<p>Failure surfaces (master-list fetch, manifest fetch, id mismatch,
+install crash) are caught per-id and reported via <code>Notice</code> + JSONL log.</p>
+<p>What’s NOT shipped yet (the F2 backlog):</p>
+<ul>
+<li><strong>Hotkeys</strong> (<code>hotkeys.json</code>)</li>
+<li><strong>Themes</strong> (<code>themes/</code>, plus the <code>cssTheme</code> field in <code>appearance.json</code>)</li>
+<li><strong>Custom snippets</strong> (<code>snippets/</code>, <code>appearance.json#enabledCssSnippets</code>)</li>
+<li><strong>Workspace layout</strong> (<code>workspace.json</code>) — partially intentional;
+PathMapper already routes layout to the per-client subtree, but
+initial layout from source still doesn’t seed.</li>
+</ul>
+<p>These are independent features; each can ship as its own PR
+mirroring the community-plugin pattern (collect snapshot at
+bootstrap, prompt at first layout-ready, copy on accept).</p></article><hr/><div class="page-footer"></div></div><div class="right sidebar"><div class="graph"><h3>Graph View</h3><div class="graph-outer"><div class="graph-container" data-cfg="{&quot;drag&quot;:true,&quot;zoom&quot;:true,&quot;depth&quot;:1,&quot;scale&quot;:1.1,&quot;repelForce&quot;:0.5,&quot;centerForce&quot;:0.3,&quot;linkDistance&quot;:30,&quot;fontSize&quot;:0.6,&quot;opacityScale&quot;:1,&quot;showTags&quot;:true,&quot;removeTags&quot;:[],&quot;focusOnHover&quot;:false,&quot;enableRadial&quot;:false}"></div><button class="global-graph-icon" aria-label="Global Graph"><svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 55 55" fill="currentColor" xml:space="preserve"><path d="M49,0c-3.309,0-6,2.691-6,6c0,1.035,0.263,2.009,0.726,2.86l-9.829,9.829C32.542,17.634,30.846,17,29,17
+                s-3.542,0.634-4.898,1.688l-7.669-7.669C16.785,10.424,17,9.74,17,9c0-2.206-1.794-4-4-4S9,6.794,9,9s1.794,4,4,4
+                c0.74,0,1.424-0.215,2.019-0.567l7.669,7.669C21.634,21.458,21,23.154,21,25s0.634,3.542,1.688,4.897L10.024,42.562
+                C8.958,41.595,7.549,41,6,41c-3.309,0-6,2.691-6,6s2.691,6,6,6s6-2.691,6-6c0-1.035-0.263-2.009-0.726-2.86l12.829-12.829
+                c1.106,0.86,2.44,1.436,3.898,1.619v10.16c-2.833,0.478-5,2.942-5,5.91c0,3.309,2.691,6,6,6s6-2.691,6-6c0-2.967-2.167-5.431-5-5.91
+                v-10.16c1.458-0.183,2.792-0.759,3.898-1.619l7.669,7.669C41.215,39.576,41,40.26,41,41c0,2.206,1.794,4,4,4s4-1.794,4-4
+                s-1.794-4-4-4c-0.74,0-1.424,0.215-2.019,0.567l-7.669-7.669C36.366,28.542,37,26.846,37,25s-0.634-3.542-1.688-4.897l9.665-9.665
+                C46.042,11.405,47.451,12,49,12c3.309,0,6-2.691,6-6S52.309,0,49,0z M11,9c0-1.103,0.897-2,2-2s2,0.897,2,2s-0.897,2-2,2
+                S11,10.103,11,9z M6,51c-2.206,0-4-1.794-4-4s1.794-4,4-4s4,1.794,4,4S8.206,51,6,51z M33,49c0,2.206-1.794,4-4,4s-4-1.794-4-4
+                s1.794-4,4-4S33,46.794,33,49z M29,31c-3.309,0-6-2.691-6-6s2.691-6,6-6s6,2.691,6,6S32.309,31,29,31z M47,41c0,1.103-0.897,2-2,2
+                s-2-0.897-2-2s0.897-2,2-2S47,39.897,47,41z M49,10c-2.206,0-4-1.794-4-4s1.794-4,4-4s4,1.794,4,4S51.206,10,49,10z"></path></svg></button></div><div class="global-graph-outer"><div class="global-graph-container" data-cfg="{&quot;drag&quot;:true,&quot;zoom&quot;:true,&quot;depth&quot;:-1,&quot;scale&quot;:0.9,&quot;repelForce&quot;:0.5,&quot;centerForce&quot;:0.2,&quot;linkDistance&quot;:30,&quot;fontSize&quot;:0.6,&quot;opacityScale&quot;:1,&quot;showTags&quot;:true,&quot;removeTags&quot;:[],&quot;focusOnHover&quot;:true,&quot;enableRadial&quot;:true}"></div></div></div><div class="toc desktop-only"><button type="button" class="toc-header" aria-controls="toc-2" aria-expanded="true"><h3>Table of Contents</h3><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="fold"><polyline points="6 9 12 15 18 9"></polyline></svg></button><ul id="list-1" class="toc-content overflow"><li class="depth-0"><a href="#architecture-shadow-vault-approach" data-for="architecture-shadow-vault-approach">Architecture: Shadow Vault Approach</a></li><li class="depth-1"><a href="#tldr" data-for="tldr">TL;DR</a></li><li class="depth-1"><a href="#1-why-we-pivoted" data-for="1-why-we-pivoted">1. Why we pivoted</a></li><li class="depth-1"><a href="#2-architecture" data-for="2-architecture">2. Architecture</a></li><li class="depth-1"><a href="#3-components" data-for="3-components">3. Components</a></li><li class="depth-1"><a href="#4-open-questions" data-for="4-open-questions">4. Open questions</a></li><li class="depth-2"><a href="#oq1--how-does-obsidian-programmatically-open-a-vault-path-in-a-new-window" data-for="oq1--how-does-obsidian-programmatically-open-a-vault-path-in-a-new-window">OQ1 — How does Obsidian programmatically open a vault path in a new window?</a></li><li class="depth-2"><a href="#oq2--can-we-construct-tfile--tfolder-from-the-public-obsidian-module" data-for="oq2--can-we-construct-tfile--tfolder-from-the-public-obsidian-module">OQ2 — Can we construct TFile / TFolder from the public obsidian module?</a></li><li class="depth-2"><a href="#oq3--does-inserting-into-vaultfilemap--firing-vaulttriggercreate-file-make-file-explorer-render-and-downstream-plugins-templater-dataview-treat-the-file-as-real" data-for="oq3--does-inserting-into-vaultfilemap--firing-vaulttriggercreate-file-make-file-explorer-render-and-downstream-plugins-templater-dataview-treat-the-file-as-real">OQ3 — Does inserting into vault.fileMap + firing vault.trigger('create', file) make File Explorer render and downstream plugins (Templater, Dataview) treat the file as real?</a></li><li class="depth-2"><a href="#oq4--plugin-install-in-shadow-vault-symlink-vs-copy" data-for="oq4--plugin-install-in-shadow-vault-symlink-vs-copy">OQ4 — Plugin install in shadow vault: symlink vs copy?</a></li><li class="depth-2"><a href="#oq5--when-the-same-profiles-datajson-is-opened-by-two-windows-original--shadow-do-edits-in-one-window-race-with-the-other" data-for="oq5--when-the-same-profiles-datajson-is-opened-by-two-windows-original--shadow-do-edits-in-one-window-race-with-the-other">OQ5 — When the same profile’s data.json is opened by two windows (original + shadow), do edits in one window race with the other?</a></li><li class="depth-2"><a href="#oq6--what-does-obsidian-write-to-a-fresh-vault-directory-when-first-opened" data-for="oq6--what-does-obsidian-write-to-a-fresh-vault-directory-when-first-opened">OQ6 — What does Obsidian write to a fresh vault directory when first opened?</a></li><li class="depth-1"><a href="#5-phased-implementation-plan" data-for="5-phased-implementation-plan">5. Phased implementation plan</a></li><li class="depth-2"><a href="#phase-0-deliverable" data-for="phase-0-deliverable">Phase 0 deliverable</a></li><li class="depth-2"><a href="#phase-1-deliverable-shipped" data-for="phase-1-deliverable-shipped">Phase 1 deliverable (shipped)</a></li><li class="depth-2"><a href="#phase-2-deliverable-shipped" data-for="phase-2-deliverable-shipped">Phase 2 deliverable (shipped)</a></li><li class="depth-2"><a href="#phase-3-deliverable-shipped" data-for="phase-3-deliverable-shipped">Phase 3 deliverable (shipped)</a></li><li class="depth-2"><a href="#phase-4-deliverable-shipped" data-for="phase-4-deliverable-shipped">Phase 4 deliverable (shipped)</a></li><li class="depth-2"><a href="#phase-5-deliverable-shipped" data-for="phase-5-deliverable-shipped">Phase 5 deliverable (shipped)</a></li><li class="depth-2"><a href="#phase-6a-deliverable-shipped" data-for="phase-6a-deliverable-shipped">Phase 6A deliverable (shipped)</a></li><li class="depth-2"><a href="#phase-6b-deliverable-this-pr" data-for="phase-6b-deliverable-this-pr">Phase 6B deliverable (this PR)</a></li><li class="depth-2"><a href="#phase-6c-deliverable-pending" data-for="phase-6c-deliverable-pending">Phase 6C deliverable (pending)</a></li><li class="depth-1"><a href="#6-backwards-compatibility" data-for="6-backwards-compatibility">6. Backwards compatibility</a></li><li class="depth-2"><a href="#65-plugin-compatibility--fs-direct-readers" data-for="65-plugin-compatibility--fs-direct-readers">6.5 Plugin compatibility — fs-direct readers</a></li><li class="depth-1"><a href="#7-glossary" data-for="7-glossary">7. Glossary</a></li><li class="depth-1"><a href="#8-references" data-for="8-references">8. References</a></li><li class="depth-2"><a href="#shadow-vault-pr-chain" data-for="shadow-vault-pr-chain">Shadow-vault PR chain</a></li><li class="depth-2"><a href="#pre-pivot-in-place-reconcile-attempts-now-deleted" data-for="pre-pivot-in-place-reconcile-attempts-now-deleted">Pre-pivot in-place-reconcile attempts (now deleted)</a></li><li class="depth-2"><a href="#smoke-transcript" data-for="smoke-transcript">Smoke transcript</a></li><li class="depth-1"><a href="#9-post-mvp-backlog" data-for="9-post-mvp-backlog">9. Post-MVP backlog</a></li><li class="depth-2"><a href="#f1--dedicated-remote-vaults-ui-panel" data-for="f1--dedicated-remote-vaults-ui-panel">F1 — Dedicated “Remote vaults” UI panel</a></li><li class="depth-2"><a href="#f2--first-time-auto-connect-prompt-inherit-settings-from-source" data-for="f2--first-time-auto-connect-prompt-inherit-settings-from-source">F2 — First-time auto-connect prompt: inherit settings from source</a></li><li class="overflow-end"></li></ul></div><div class="backlinks"><h3>Backlinks</h3><ul id="list-2" class="overflow"><li><a href="./architecture-collab" class="internal">architecture-collab</a></li><li><a href="./architecture-perf" class="internal">architecture-perf</a></li><li><a href="./testing-strategy" class="internal">testing-strategy</a></li><li class="overflow-end"></li></ul></div></div><footer class><p>Created with <a href="https://quartz.jzhao.xyz/">Quartz v4.5.2</a> © 2026</p><ul><li><a href="https://github.com/sotashimozono/obsidian-remote-ssh">GitHub</a></li><li><a href="https://github.com/sotashimozono/obsidian-remote-ssh/issues">Issues / Q&amp;A</a></li></ul></footer></div></div></body><script type="application/javascript" data-persist="true">function n(){let t=this.parentElement;t.classList.toggle("is-collapsed");let e=t.getElementsByClassName("callout-content")[0];if(!e)return;let l=t.classList.contains("is-collapsed");e.style.gridTemplateRows=l?"0fr":"1fr"}function c(){let t=document.getElementsByClassName("callout is-collapsible");for(let e of t){let l=e.getElementsByClassName("callout-title")[0],s=e.getElementsByClassName("callout-content")[0];if(!l||!s)continue;l.addEventListener("click",n),window.addCleanup(()=>l.removeEventListener("click",n));let o=e.classList.contains("is-collapsed");s.style.gridTemplateRows=o?"0fr":"1fr"}}document.addEventListener("nav",c);
+</script><script type="module" data-persist="true">function E(a,e){if(!a)return;function t(o){o.target===this&&(o.preventDefault(),o.stopPropagation(),e())}function n(o){o.key.startsWith("Esc")&&(o.preventDefault(),e())}a?.addEventListener("click",t),window.addCleanup(()=>a?.removeEventListener("click",t)),document.addEventListener("keydown",n),window.addCleanup(()=>document.removeEventListener("keydown",n))}function f(a){for(;a.firstChild;)a.removeChild(a.firstChild)}var m=class{constructor(e,t){this.container=e;this.content=t;this.setupEventListeners(),this.setupNavigationControls(),this.resetTransform()}isDragging=!1;startPan={x:0,y:0};currentPan={x:0,y:0};scale=1;MIN_SCALE=.5;MAX_SCALE=3;cleanups=[];setupEventListeners(){let e=this.onMouseDown.bind(this),t=this.onMouseMove.bind(this),n=this.onMouseUp.bind(this),o=this.onTouchStart.bind(this),r=this.onTouchMove.bind(this),i=this.onTouchEnd.bind(this),s=this.resetTransform.bind(this);this.container.addEventListener("mousedown",e),document.addEventListener("mousemove",t),document.addEventListener("mouseup",n),this.container.addEventListener("touchstart",o,{passive:!1}),document.addEventListener("touchmove",r,{passive:!1}),document.addEventListener("touchend",i),window.addEventListener("resize",s),this.cleanups.push(()=>this.container.removeEventListener("mousedown",e),()=>document.removeEventListener("mousemove",t),()=>document.removeEventListener("mouseup",n),()=>this.container.removeEventListener("touchstart",o),()=>document.removeEventListener("touchmove",r),()=>document.removeEventListener("touchend",i),()=>window.removeEventListener("resize",s))}cleanup(){for(let e of this.cleanups)e()}setupNavigationControls(){let e=document.createElement("div");e.className="mermaid-controls";let t=this.createButton("+",()=>this.zoom(.1)),n=this.createButton("-",()=>this.zoom(-.1)),o=this.createButton("Reset",()=>this.resetTransform());e.appendChild(n),e.appendChild(o),e.appendChild(t),this.container.appendChild(e)}createButton(e,t){let n=document.createElement("button");return n.textContent=e,n.className="mermaid-control-button",n.addEventListener("click",t),window.addCleanup(()=>n.removeEventListener("click",t)),n}onMouseDown(e){e.button===0&&(this.isDragging=!0,this.startPan={x:e.clientX-this.currentPan.x,y:e.clientY-this.currentPan.y},this.container.style.cursor="grabbing")}onMouseMove(e){this.isDragging&&(e.preventDefault(),this.currentPan={x:e.clientX-this.startPan.x,y:e.clientY-this.startPan.y},this.updateTransform())}onMouseUp(){this.isDragging=!1,this.container.style.cursor="grab"}onTouchStart(e){if(e.touches.length!==1)return;this.isDragging=!0;let t=e.touches[0];this.startPan={x:t.clientX-this.currentPan.x,y:t.clientY-this.currentPan.y}}onTouchMove(e){if(!this.isDragging||e.touches.length!==1)return;e.preventDefault();let t=e.touches[0];this.currentPan={x:t.clientX-this.startPan.x,y:t.clientY-this.startPan.y},this.updateTransform()}onTouchEnd(){this.isDragging=!1}zoom(e){let t=Math.min(Math.max(this.scale+e,this.MIN_SCALE),this.MAX_SCALE),n=this.content.getBoundingClientRect(),o=n.width/2,r=n.height/2,i=t-this.scale;this.currentPan.x-=o*i,this.currentPan.y-=r*i,this.scale=t,this.updateTransform()}updateTransform(){this.content.style.transform=`translate(${this.currentPan.x}px, ${this.currentPan.y}px) scale(${this.scale})`}resetTransform(){let t=this.content.querySelector("svg").getBoundingClientRect(),n=t.width/this.scale,o=t.height/this.scale;this.scale=1,this.currentPan={x:(this.container.clientWidth-n)/2,y:(this.container.clientHeight-o)/2},this.updateTransform()}},T=["--secondary","--tertiary","--gray","--light","--lightgray","--highlight","--dark","--darkgray","--codeFont"],y;document.addEventListener("nav",async()=>{let e=document.querySelector(".center").querySelectorAll("code.mermaid");if(e.length===0)return;y||=await import("https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.4.0/mermaid.esm.min.mjs");let t=y.default,n=new WeakMap;for(let r of e)n.set(r,r.innerText);async function o(){for(let s of e){s.removeAttribute("data-processed");let c=n.get(s);c&&(s.innerHTML=c)}let r=T.reduce((s,c)=>(s[c]=window.getComputedStyle(document.documentElement).getPropertyValue(c),s),{}),i=document.documentElement.getAttribute("saved-theme")==="dark";t.initialize({startOnLoad:!1,securityLevel:"loose",theme:i?"dark":"base",themeVariables:{fontFamily:r["--codeFont"],primaryColor:r["--light"],primaryTextColor:r["--darkgray"],primaryBorderColor:r["--tertiary"],lineColor:r["--darkgray"],secondaryColor:r["--secondary"],tertiaryColor:r["--tertiary"],clusterBkg:r["--light"],edgeLabelBackground:r["--highlight"]}}),await t.run({nodes:e})}await o(),document.addEventListener("themechange",o),window.addCleanup(()=>document.removeEventListener("themechange",o));for(let r=0;r<e.length;r++){let v=function(){let g=l.querySelector("#mermaid-space"),h=l.querySelector(".mermaid-content");if(!h)return;f(h);let w=i.querySelector("svg").cloneNode(!0);h.appendChild(w),l.classList.add("active"),g.style.cursor="grab",u=new m(g,h)},M=function(){l.classList.remove("active"),u?.cleanup(),u=null},i=e[r],s=i.parentElement,c=s.querySelector(".clipboard-button"),d=s.querySelector(".expand-button"),p=window.getComputedStyle(c),L=c.offsetWidth+parseFloat(p.marginLeft||"0")+parseFloat(p.marginRight||"0");d.style.right=`calc(${L}px + 0.3rem)`,s.prepend(d);let l=s.querySelector("#mermaid-container");if(!l)return;let u=null;d.addEventListener("click",v),E(l,M),window.addCleanup(()=>{u?.cleanup(),d.removeEventListener("click",v)})}});
+</script><script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/copy-tex.min.js" type="application/javascript" data-persist="true"></script><script src="./postscript.js" type="module" data-persist="true"></script></html>
