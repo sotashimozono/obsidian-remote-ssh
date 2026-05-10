@@ -6,53 +6,65 @@
       <description>Last 10 notes on obsidian-remote-ssh</description>
       <generator>Quartz -- quartz.jzhao.xyz</generator>
       <item>
-    <title>obsidian-remote-ssh</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/</guid>
-    <description><![CDATA[ obsidian-remote-ssh Edit remote Obsidian vaults over SSH/SFTP — like VS Code Remote-SSH, but for Obsidian. ]]></description>
-    <pubDate>Sun, 10 May 2026 00:33:17 GMT</pubDate>
+    <title>Error codes</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/errors</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/errors</guid>
+    <description><![CDATA[ Error codes JSON-RPC errors return: { &quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: &lt;request id&gt;, &quot;error&quot;: { &quot;code&quot;: -32601, &quot;message&quot;: &quot;method not found: fs.banana&quot; } } (The spec reserves an optional data field too, but the current daemon never ... ]]></description>
+    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
   </item><item>
-    <title>obsidian-remote-ssh docs</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/</guid>
-    <description><![CDATA[  English docs → . ]]></description>
-    <pubDate>Sun, 10 May 2026 00:33:17 GMT</pubDate>
+    <title>Filesystem operations</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/filesystem</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/filesystem</guid>
+    <description><![CDATA[ Filesystem operations All fs.* methods are client→server, JSON-RPC over the daemon socket. All paths are vault-relative, forward-slash, no . ]]></description>
+    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
   </item><item>
-    <title>Documentation strategy &amp; requirements</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/documentation</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/documentation</guid>
-    <description><![CDATA[  What this page is The single source of truth for how documentation is built, hosted, structured, and authored in this project. ]]></description>
-    <pubDate>Sat, 09 May 2026 00:00:00 GMT</pubDate>
+    <title>Advanced</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/configuration/advanced</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/configuration/advanced</guid>
+    <description><![CDATA[ Configuration reference — Advanced Lower-level toggles, mostly for debugging or unusual deployment topologies. ]]></description>
+    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
   </item><item>
-    <title>plugin-compatibility</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/plugin-compatibility</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/plugin-compatibility</guid>
-    <description><![CDATA[ Plugin compatibility How well each Obsidian community plugin holds up when the vault is served by obsidian-remote-ssh. ]]></description>
-    <pubDate>Sun, 03 May 2026 22:15:51 GMT</pubDate>
+    <title>First connect</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/first-connect</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/first-connect</guid>
+    <description><![CDATA[ First connect — what’s actually happening The five-minute Quickstart glosses over what “connect” does. ]]></description>
+    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
   </item><item>
-    <title>architecture-shadow-vault</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/architecture-shadow-vault</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/architecture-shadow-vault</guid>
-    <description><![CDATA[ Architecture: Shadow Vault Approach Status: Phases 0–6A shipped end-to-end (v0.4.14). ]]></description>
-    <pubDate>Wed, 29 Apr 2026 13:07:51 GMT</pubDate>
+    <title>Logs &amp; telemetry</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/logs</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/logs</guid>
+    <description><![CDATA[ Logs &amp; telemetry Three independent log streams. Knowing which one to look at is half the battle. 1. ]]></description>
+    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
   </item><item>
-    <title>architecture-collab</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/architecture-collab</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/architecture-collab</guid>
-    <description><![CDATA[ Architecture: collab safety epic (E2) This doc records the design for the conflict + offline-resilience epic landing in v0.4.29 onwards. ]]></description>
-    <pubDate>Tue, 28 Apr 2026 05:28:50 GMT</pubDate>
+    <title>Host-key trust</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/security/host-keys</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/security/host-keys</guid>
+    <description><![CDATA[ Host-key trust obsidian-remote-ssh uses its own known-host store, separate from ~/.ssh/known_hosts. ]]></description>
+    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
   </item><item>
-    <title>architecture-perf</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/architecture-perf</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/architecture-perf</guid>
-    <description><![CDATA[ Architecture: performance epic (E1) This doc is the design record for the performance epic that lands in v0.4.23 onwards. ]]></description>
-    <pubDate>Tue, 28 Apr 2026 03:14:24 GMT</pubDate>
+    <title>Conflict handling</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/conflicts</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/conflicts</guid>
+    <description><![CDATA[ Conflict handling When the same file is edited locally (in Obsidian’s shadow vault) AND remotely (in a terminal, by another client, by a sync tool) at the same time, obsidian-remote-ssh detects the conflict and offers a resolution. ]]></description>
+    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
   </item><item>
-    <title>testing-strategy</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/testing-strategy</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/testing-strategy</guid>
-    <description><![CDATA[ Testing strategy This document records the test architecture for obsidian-remote-ssh, adopted in v0.4.19 (Phase A) and v0.4.22 (Phase B). ]]></description>
-    <pubDate>Tue, 28 Apr 2026 01:51:08 GMT</pubDate>
+    <title>Host keys &amp; trust</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/host-keys</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/host-keys</guid>
+    <description><![CDATA[ Host keys &amp; trust obsidian-remote-ssh maintains its own known-host store, independent of ~/.ssh/known_hosts. ]]></description>
+    <pubDate>Sun, 10 May 2026 05:31:54 GMT</pubDate>
+  </item><item>
+    <title>Architecture</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/</guid>
+    <description><![CDATA[ Architecture Design specs for the major subsystems. These document why decisions were made, not just what the code does. ]]></description>
+    <pubDate>Sun, 10 May 2026 05:18:52 GMT</pubDate>
+  </item><item>
+    <title>Install</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/install</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/install</guid>
+    <description><![CDATA[ Install obsidian-remote-ssh You can install via the Obsidian Community Plugins store (stable) or BRAT (beta channel — features land here first). ]]></description>
+    <pubDate>Sun, 10 May 2026 05:18:52 GMT</pubDate>
   </item>
     </channel>
   </rss>
