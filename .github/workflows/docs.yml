@@ -41,7 +41,9 @@ jobs:
         working-directory: docs-site
         env:
           QUARTZ_BASE_URL: codes.sota-shimozono.com/obsidian-remote-ssh
-        run: npx quartz build -d ../docs
+        # Invoke via node directly — bypasses bin-shim/exec-bit issues
+        # (npx fell back to a non-executable shim on the main-branch run).
+        run: node ./quartz/bootstrap-cli.mjs build -d ../docs
 
       - name: Deploy — stable → gh-pages root
         if: github.ref == 'refs/heads/main'
@@ -60,7 +62,9 @@ jobs:
         working-directory: docs-site
         env:
           QUARTZ_BASE_URL: codes.sota-shimozono.com/obsidian-remote-ssh/dev
-        run: npx quartz build -d ../docs
+        # Invoke via node directly — bypasses bin-shim/exec-bit issues
+        # (npx fell back to a non-executable shim on the main-branch run).
+        run: node ./quartz/bootstrap-cli.mjs build -d ../docs
 
       - name: Deploy — dev → gh-pages /dev/
         if: github.ref == 'refs/heads/next'
