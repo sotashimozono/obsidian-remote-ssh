@@ -32,3 +32,11 @@ docker/keys/id_test.pub
 docker/test-vault/*
 !docker/test-vault/.gitkeep
 !docker/test-vault/remote_demo*.md
+
+# Quartz docs site build artifacts and Quartz's own bundled content/docs
+docs-site/node_modules/
+docs-site/.quartz-cache/
+docs-site/public/
+docs-site/docs/
+docs-site/.github/
+docs-site/content/

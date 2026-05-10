@@ -1,0 +1,72 @@
+name: Docs
+
+on:
+  push:
+    branches: [main, next]
+    paths:
+      - "docs/**"
+      - "docs-site/**"
+      - ".github/workflows/docs.yml"
+
+# gh-pages deploy requires write access to contents
+permissions:
+  contents: write
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so Quartz CreatedModifiedDate plugin can read git log
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install Quartz dependencies
+        working-directory: docs-site
+        run: npm ci
+
+      # ── Stable build (main → root of gh-pages) ───────────────────────────
+      - name: Build docs — stable
+        if: github.ref == 'refs/heads/main'
+        working-directory: docs-site
+        env:
+          QUARTZ_BASE_URL: sotashimozono.github.io/obsidian-remote-ssh
+        run: npx quartz build -d ../docs
+
+      - name: Deploy — stable → gh-pages root
+        if: github.ref == 'refs/heads/main'
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: docs-site/public
+          branch: gh-pages
+          clean: true
+          # Preserve the /dev/ subtree when cleaning the root deployment
+          clean-exclude: |
+            dev/
+
+      # ── Dev build (next → /dev/ on gh-pages) ─────────────────────────────
+      - name: Build docs — dev
+        if: github.ref == 'refs/heads/next'
+        working-directory: docs-site
+        env:
+          QUARTZ_BASE_URL: sotashimozono.github.io/obsidian-remote-ssh/dev
+        run: npx quartz build -d ../docs
+
+      - name: Deploy — dev → gh-pages /dev/
+        if: github.ref == 'refs/heads/next'
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: docs-site/public
+          branch: gh-pages
+          target-folder: dev
+          clean: true
