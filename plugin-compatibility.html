@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr"><head><title>plugin-compatibility — docs</title><meta charset="utf-8"/><link rel="preconnect" href="https://fonts.googleapis.com"/><link rel="preconnect" href="https://fonts.gstatic.com"/><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&amp;family=Inter:ital,wght@0,400;0,600;1,400;1,600&amp;family=JetBrains Mono:wght@400;600&amp;display=swap"/><link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin="anonymous"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><meta name="og:site_name" content="obsidian-remote-ssh"/><meta property="og:title" content="plugin-compatibility — docs"/><meta property="og:type" content="website"/><meta name="twitter:card" content="summary_large_image"/><meta name="twitter:title" content="plugin-compatibility — docs"/><meta name="twitter:description" content="Plugin compatibility How well each Obsidian community plugin holds up when the vault is served by obsidian-remote-ssh."/><meta property="og:description" content="Plugin compatibility How well each Obsidian community plugin holds up when the vault is served by obsidian-remote-ssh."/><meta property="og:image:alt" content="Plugin compatibility How well each Obsidian community plugin holds up when the vault is served by obsidian-remote-ssh."/><meta property="og:image" content="https://codes.sota-shimozono.com/obsidian-remote-ssh/static/og-image.png"/><meta property="og:image:url" content="https://codes.sota-shimozono.com/obsidian-remote-ssh/static/og-image.png"/><meta name="twitter:image" content="https://codes.sota-shimozono.com/obsidian-remote-ssh/static/og-image.png"/><meta property="og:image:type" content="image/.png"/><meta property="twitter:domain" content="codes.sota-shimozono.com/obsidian-remote-ssh"/><meta property="og:url" content="https://codes.sota-shimozono.com/obsidian-remote-ssh/plugin-compatibility"/><meta property="twitter:url" content="https://codes.sota-shimozono.com/obsidian-remote-ssh/plugin-compatibility"/><link rel="icon" href="./static/icon.png"/><meta name="description" content="Plugin compatibility How well each Obsidian community plugin holds up when the vault is served by obsidian-remote-ssh."/><meta name="generator" content="Quartz"/><link href="./index.css" rel="stylesheet" type="text/css" data-persist="true"/><style>.expand-button {
+  position: absolute;
+  display: flex;
+  float: right;
+  padding: 0.4rem;
+  margin: 0.3rem;
+  right: 0;
+  color: var(--gray);
+  border-color: var(--dark);
+  background-color: var(--light);
+  border: 1px solid;
+  border-radius: 5px;
+  opacity: 0;
+  transition: 0.2s;
+}
+.expand-button > svg {
+  fill: var(--light);
+  filter: contrast(0.3);
+}
+.expand-button:hover {
+  cursor: pointer;
+  border-color: var(--secondary);
+}
+.expand-button:focus {
+  outline: 0;
+}
+
+pre:hover > .expand-button {
+  opacity: 1;
+  transition: 0.2s;
+}
+
+#mermaid-container {
+  position: fixed;
+  contain: layout;
+  z-index: 999;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  display: none;
+  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.5);
+}
+#mermaid-container.active {
+  display: inline-block;
+}
+#mermaid-container > #mermaid-space {
+  border: 1px solid var(--lightgray);
+  background-color: var(--light);
+  border-radius: 5px;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  height: 80vh;
+  width: 80vw;
+  overflow: hidden;
+}
+#mermaid-container > #mermaid-space > .mermaid-content {
+  position: relative;
+  transform-origin: 0 0;
+  transition: transform 0.1s ease;
+  overflow: visible;
+  min-height: 200px;
+  min-width: 200px;
+}
+#mermaid-container > #mermaid-space > .mermaid-content pre {
+  margin: 0;
+  border: none;
+}
+#mermaid-container > #mermaid-space > .mermaid-content svg {
+  max-width: none;
+  height: auto;
+}
+#mermaid-container > #mermaid-space > .mermaid-controls {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: var(--light);
+  border: 1px solid var(--lightgray);
+  border-radius: 6px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  z-index: 2;
+}
+#mermaid-container > #mermaid-space > .mermaid-controls .mermaid-control-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--lightgray);
+  background: var(--light);
+  color: var(--dark);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  font-family: var(--bodyFont);
+  transition: all 0.2s ease;
+}
+#mermaid-container > #mermaid-space > .mermaid-controls .mermaid-control-button:hover {
+  background: var(--lightgray);
+}
+#mermaid-container > #mermaid-space > .mermaid-controls .mermaid-control-button:active {
+  transform: translateY(1px);
+}
+#mermaid-container > #mermaid-space > .mermaid-controls .mermaid-control-button:nth-child(2) {
+  width: auto;
+  padding: 0 12px;
+  font-size: 14px;
+}
+/*# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VSb290IjoiL2hvbWUvcnVubmVyL3dvcmsvb2JzaWRpYW4tcmVtb3RlLXNzaC9vYnNpZGlhbi1yZW1vdGUtc3NoL2RvY3Mtc2l0ZS9xdWFydHovY29tcG9uZW50cy9zdHlsZXMiLCJzb3VyY2VzIjpbIm1lcm1haWQuaW5saW5lLnNjc3MiXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBQUE7RUFDRTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTs7QUFFQTtFQUNFO0VBQ0E7O0FBR0Y7RUFDRTtFQUNBOztBQUdGO0VBQ0U7OztBQUtGO0VBQ0U7RUFDQTs7O0FBSUo7RUFDRTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBOztBQUVBO0VBQ0U7O0FBR0Y7RUFDRTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTs7QUFFQTtFQUNFO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTs7QUFFQTtFQUNFO0VBQ0E7O0FBR0Y7RUFDRTtFQUNBOztBQUlKO0VBQ0U7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTs7QUFFQTtFQUNFO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7RUFDQTtFQUNBO0VBQ0E7O0FBRUE7RUFDRTs7QUFHRjtFQUNFOztBQUlGO0VBQ0U7RUFDQTtFQUNBIiwic291cmNlc0NvbnRlbnQiOlsiLmV4cGFuZC1idXR0b24ge1xuICBwb3NpdGlvbjogYWJzb2x1dGU7XG4gIGRpc3BsYXk6IGZsZXg7XG4gIGZsb2F0OiByaWdodDtcbiAgcGFkZGluZzogMC40cmVtO1xuICBtYXJnaW46IDAuM3JlbTtcbiAgcmlnaHQ6IDA7IC8vIE5PVEU6IHJpZ2h0IHdpbGwgYmUgc2V0IGluIG1lcm1haWQuaW5saW5lLnRzXG4gIGNvbG9yOiB2YXIoLS1ncmF5KTtcbiAgYm9yZGVyLWNvbG9yOiB2YXIoLS1kYXJrKTtcbiAgYmFja2dyb3VuZC1jb2xvcjogdmFyKC0tbGlnaHQpO1xuICBib3JkZXI6IDFweCBzb2xpZDtcbiAgYm9yZGVyLXJhZGl1czogNXB4O1xuICBvcGFjaXR5OiAwO1xuICB0cmFuc2l0aW9uOiAwLjJzO1xuXG4gICYgPiBzdmcge1xuICAgIGZpbGw6IHZhcigtLWxpZ2h0KTtcbiAgICBmaWx0ZXI6IGNvbnRyYXN0KDAuMyk7XG4gIH1cblxuICAmOmhvdmVyIHtcbiAgICBjdXJzb3I6IHBvaW50ZXI7XG4gICAgYm9yZGVyLWNvbG9yOiB2YXIoLS1zZWNvbmRhcnkpO1xuICB9XG5cbiAgJjpmb2N1cyB7XG4gICAgb3V0bGluZTogMDtcbiAgfVxufVxuXG5wcmUge1xuICAmOmhvdmVyID4gLmV4cGFuZC1idXR0b24ge1xuICAgIG9wYWNpdHk6IDE7XG4gICAgdHJhbnNpdGlvbjogMC4ycztcbiAgfVxufVxuXG4jbWVybWFpZC1jb250YWluZXIge1xuICBwb3NpdGlvbjogZml4ZWQ7XG4gIGNvbnRhaW46IGxheW91dDtcbiAgei1pbmRleDogOTk5O1xuICBsZWZ0OiAwO1xuICB0b3A6IDA7XG4gIHdpZHRoOiAxMDB2dztcbiAgaGVpZ2h0OiAxMDB2aDtcbiAgb3ZlcmZsb3c6IGhpZGRlbjtcbiAgZGlzcGxheTogbm9uZTtcbiAgYmFja2Ryb3AtZmlsdGVyOiBibHVyKDRweCk7XG4gIGJhY2tncm91bmQ6IHJnYmEoMCwgMCwgMCwgMC41KTtcblxuICAmLmFjdGl2ZSB7XG4gICAgZGlzcGxheTogaW5saW5lLWJsb2NrO1xuICB9XG5cbiAgJiA+ICNtZXJtYWlkLXNwYWNlIHtcbiAgICBib3JkZXI6IDFweCBzb2xpZCB2YXIoLS1saWdodGdyYXkpO1xuICAgIGJhY2tncm91bmQtY29sb3I6IHZhcigtLWxpZ2h0KTtcbiAgICBib3JkZXItcmFkaXVzOiA1cHg7XG4gICAgcG9zaXRpb246IGZpeGVkO1xuICAgIHRvcDogNTAlO1xuICAgIGxlZnQ6IDUwJTtcbiAgICB0cmFuc2Zvcm06IHRyYW5zbGF0ZSgtNTAlLCAtNTAlKTtcbiAgICBoZWlnaHQ6IDgwdmg7XG4gICAgd2lkdGg6IDgwdnc7XG4gICAgb3ZlcmZsb3c6IGhpZGRlbjtcblxuICAgICYgPiAubWVybWFpZC1jb250ZW50IHtcbiAgICAgIHBvc2l0aW9uOiByZWxhdGl2ZTtcbiAgICAgIHRyYW5zZm9ybS1vcmlnaW46IDAgMDtcbiAgICAgIHRyYW5zaXRpb246IHRyYW5zZm9ybSAwLjFzIGVhc2U7XG4gICAgICBvdmVyZmxvdzogdmlzaWJsZTtcbiAgICAgIG1pbi1oZWlnaHQ6IDIwMHB4O1xuICAgICAgbWluLXdpZHRoOiAyMDBweDtcblxuICAgICAgcHJlIHtcbiAgICAgICAgbWFyZ2luOiAwO1xuICAgICAgICBib3JkZXI6IG5vbmU7XG4gICAgICB9XG5cbiAgICAgIHN2ZyB7XG4gICAgICAgIG1heC13aWR0aDogbm9uZTtcbiAgICAgICAgaGVpZ2h0OiBhdXRvO1xuICAgICAgfVxuICAgIH1cblxuICAgICYgPiAubWVybWFpZC1jb250cm9scyB7XG4gICAgICBwb3NpdGlvbjogYWJzb2x1dGU7XG4gICAgICBib3R0b206IDIwcHg7XG4gICAgICByaWdodDogMjBweDtcbiAgICAgIGRpc3BsYXk6IGZsZXg7XG4gICAgICBnYXA6IDhweDtcbiAgICAgIHBhZGRpbmc6IDhweDtcbiAgICAgIGJhY2tncm91bmQ6IHZhcigtLWxpZ2h0KTtcbiAgICAgIGJvcmRlcjogMXB4IHNvbGlkIHZhcigtLWxpZ2h0Z3JheSk7XG4gICAgICBib3JkZXItcmFkaXVzOiA2cHg7XG4gICAgICBib3gtc2hhZG93OiAwIDJweCA0cHggcmdiYSgwLCAwLCAwLCAwLjEpO1xuICAgICAgei1pbmRleDogMjtcblxuICAgICAgLm1lcm1haWQtY29udHJvbC1idXR0b24ge1xuICAgICAgICBkaXNwbGF5OiBmbGV4O1xuICAgICAgICBhbGlnbi1pdGVtczogY2VudGVyO1xuICAgICAgICBqdXN0aWZ5LWNvbnRlbnQ6IGNlbnRlcjtcbiAgICAgICAgd2lkdGg6IDMycHg7XG4gICAgICAgIGhlaWdodDogMzJweDtcbiAgICAgICAgcGFkZGluZzogMDtcbiAgICAgICAgYm9yZGVyOiAxcHggc29saWQgdmFyKC0tbGlnaHRncmF5KTtcbiAgICAgICAgYmFja2dyb3VuZDogdmFyKC0tbGlnaHQpO1xuICAgICAgICBjb2xvcjogdmFyKC0tZGFyayk7XG4gICAgICAgIGJvcmRlci1yYWRpdXM6IDRweDtcbiAgICAgICAgY3Vyc29yOiBwb2ludGVyO1xuICAgICAgICBmb250LXNpemU6IDE2cHg7XG4gICAgICAgIGZvbnQtZmFtaWx5OiB2YXIoLS1ib2R5Rm9udCk7XG4gICAgICAgIHRyYW5zaXRpb246IGFsbCAwLjJzIGVhc2U7XG5cbiAgICAgICAgJjpob3ZlciB7XG4gICAgICAgICAgYmFja2dyb3VuZDogdmFyKC0tbGlnaHRncmF5KTtcbiAgICAgICAgfVxuXG4gICAgICAgICY6YWN0aXZlIHtcbiAgICAgICAgICB0cmFuc2Zvcm06IHRyYW5zbGF0ZVkoMXB4KTtcbiAgICAgICAgfVxuXG4gICAgICAgIC8vIFN0eWxlIHRoZSByZXNldCBidXR0b24gZGlmZmVyZW50bHlcbiAgICAgICAgJjpudGgtY2hpbGQoMikge1xuICAgICAgICAgIHdpZHRoOiBhdXRvO1xuICAgICAgICAgIHBhZGRpbmc6IDAgMTJweDtcbiAgICAgICAgICBmb250LXNpemU6IDE0cHg7XG4gICAgICAgIH1cbiAgICAgIH1cbiAgICB9XG4gIH1cbn1cbiJdfQ== */</style><link href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" rel="stylesheet" type="text/css" data-persist="true"/><script src="./prescript.js" type="application/javascript" data-persist="true"></script><script type="application/javascript" data-persist="true">const fetchData = fetch("./static/contentIndex.json").then(data => data.json())</script><link rel="alternate" type="application/rss+xml" title="RSS Feed" href="https://codes.sota-shimozono.com/obsidian-remote-ssh/index.xml"/></head><body data-slug="plugin-compatibility"><div id="quartz-root" class="page"><div id="quartz-body"><div class="left sidebar"><h2 class="page-title"><a href=".">obsidian-remote-ssh</a></h2><div class="spacer mobile-only"></div><div class="flex-component" style="flex-direction: row; flex-wrap: nowrap; gap: 1rem;"><div style="flex-grow: 1; flex-shrink: 1; flex-basis: auto; order: 0; align-self: center; justify-self: center;"><div class="search"><button class="search-button"><svg role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 19.9 19.7"><title>Search</title><g class="search-path" fill="none"><path stroke-linecap="square" d="M18.5 18.3l-5.4-5.4"></path><circle cx="8" cy="8" r="7"></circle></g></svg><p>Search</p></button><div class="search-container"><div class="search-space"><input autocomplete="off" class="search-bar" name="search" type="text" aria-label="Search for something" placeholder="Search for something"/><div class="search-layout" data-preview="true"></div></div></div></div></div><div style="flex-grow: 0; flex-shrink: 1; flex-basis: auto; order: 0; align-self: center; justify-self: center;"><button class="darkmode"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" class="dayIcon" x="0px" y="0px" viewBox="0 0 35 35" style="enable-background:new 0 0 35 35" xml:space="preserve" aria-label="Dark mode"><title>Dark mode</title><path d="M6,17.5C6,16.672,5.328,16,4.5,16h-3C0.672,16,0,16.672,0,17.5    S0.672,19,1.5,19h3C5.328,19,6,18.328,6,17.5z M7.5,26c-0.414,0-0.789,0.168-1.061,0.439l-2,2C4.168,28.711,4,29.086,4,29.5    C4,30.328,4.671,31,5.5,31c0.414,0,0.789-0.168,1.06-0.44l2-2C8.832,28.289,9,27.914,9,27.5C9,26.672,8.329,26,7.5,26z M17.5,6    C18.329,6,19,5.328,19,4.5v-3C19,0.672,18.329,0,17.5,0S16,0.672,16,1.5v3C16,5.328,16.671,6,17.5,6z M27.5,9    c0.414,0,0.789-0.168,1.06-0.439l2-2C30.832,6.289,31,5.914,31,5.5C31,4.672,30.329,4,29.5,4c-0.414,0-0.789,0.168-1.061,0.44    l-2,2C26.168,6.711,26,7.086,26,7.5C26,8.328,26.671,9,27.5,9z M6.439,8.561C6.711,8.832,7.086,9,7.5,9C8.328,9,9,8.328,9,7.5    c0-0.414-0.168-0.789-0.439-1.061l-2-2C6.289,4.168,5.914,4,5.5,4C4.672,4,4,4.672,4,5.5c0,0.414,0.168,0.789,0.439,1.06    L6.439,8.561z M33.5,16h-3c-0.828,0-1.5,0.672-1.5,1.5s0.672,1.5,1.5,1.5h3c0.828,0,1.5-0.672,1.5-1.5S34.328,16,33.5,16z     M28.561,26.439C28.289,26.168,27.914,26,27.5,26c-0.828,0-1.5,0.672-1.5,1.5c0,0.414,0.168,0.789,0.439,1.06l2,2    C28.711,30.832,29.086,31,29.5,31c0.828,0,1.5-0.672,1.5-1.5c0-0.414-0.168-0.789-0.439-1.061L28.561,26.439z M17.5,29    c-0.829,0-1.5,0.672-1.5,1.5v3c0,0.828,0.671,1.5,1.5,1.5s1.5-0.672,1.5-1.5v-3C19,29.672,18.329,29,17.5,29z M17.5,7    C11.71,7,7,11.71,7,17.5S11.71,28,17.5,28S28,23.29,28,17.5S23.29,7,17.5,7z M17.5,25c-4.136,0-7.5-3.364-7.5-7.5    c0-4.136,3.364-7.5,7.5-7.5c4.136,0,7.5,3.364,7.5,7.5C25,21.636,21.636,25,17.5,25z"></path></svg><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" class="nightIcon" x="0px" y="0px" viewBox="0 0 100 100" style="enable-background:new 0 0 100 100" xml:space="preserve" aria-label="Light mode"><title>Light mode</title><path d="M96.76,66.458c-0.853-0.852-2.15-1.064-3.23-0.534c-6.063,2.991-12.858,4.571-19.655,4.571  C62.022,70.495,50.88,65.88,42.5,57.5C29.043,44.043,25.658,23.536,34.076,6.47c0.532-1.08,0.318-2.379-0.534-3.23  c-0.851-0.852-2.15-1.064-3.23-0.534c-4.918,2.427-9.375,5.619-13.246,9.491c-9.447,9.447-14.65,22.008-14.65,35.369  c0,13.36,5.203,25.921,14.65,35.368s22.008,14.65,35.368,14.65c13.361,0,25.921-5.203,35.369-14.65  c3.872-3.871,7.064-8.328,9.491-13.246C97.826,68.608,97.611,67.309,96.76,66.458z"></path></svg></button></div><div style="flex-grow: 0; flex-shrink: 1; flex-basis: auto; order: 0; align-self: center; justify-self: center;"><button class="readermode"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" class="readerIcon" fill="currentColor" stroke="currentColor" stroke-width="0.2" stroke-linecap="round" stroke-linejoin="round" width="64px" height="64px" viewBox="0 0 24 24" aria-label="Reader mode"><title>Reader mode</title><g transform="translate(-1.8, -1.8) scale(1.15, 1.2)"><path d="M8.9891247,2.5 C10.1384702,2.5 11.2209868,2.96705384 12.0049645,3.76669482 C12.7883914,2.96705384 13.8709081,2.5 15.0202536,2.5 L18.7549359,2.5 C19.1691495,2.5 19.5049359,2.83578644 19.5049359,3.25 L19.5046891,4.004 L21.2546891,4.00457396 C21.6343849,4.00457396 21.9481801,4.28672784 21.9978425,4.6528034 L22.0046891,4.75457396 L22.0046891,20.25 C22.0046891,20.6296958 21.7225353,20.943491 21.3564597,20.9931534 L21.2546891,21 L2.75468914,21 C2.37499337,21 2.06119817,20.7178461 2.01153575,20.3517706 L2.00468914,20.25 L2.00468914,4.75457396 C2.00468914,4.37487819 2.28684302,4.061083 2.65291858,4.01142057 L2.75468914,4.00457396 L4.50368914,4.004 L4.50444233,3.25 C4.50444233,2.87030423 4.78659621,2.55650904 5.15267177,2.50684662 L5.25444233,2.5 L8.9891247,2.5 Z M4.50368914,5.504 L3.50468914,5.504 L3.50468914,19.5 L10.9478955,19.4998273 C10.4513189,18.9207296 9.73864328,18.5588115 8.96709342,18.5065584 L8.77307039,18.5 L5.25444233,18.5 C4.87474657,18.5 4.56095137,18.2178461 4.51128895,17.8517706 L4.50444233,17.75 L4.50368914,5.504 Z M19.5049359,17.75 C19.5049359,18.1642136 19.1691495,18.5 18.7549359,18.5 L15.2363079,18.5 C14.3910149,18.5 13.5994408,18.8724714 13.0614828,19.4998273 L20.5046891,19.5 L20.5046891,5.504 L19.5046891,5.504 L19.5049359,17.75 Z M18.0059359,3.999 L15.0202536,4 L14.8259077,4.00692283 C13.9889509,4.06666544 13.2254227,4.50975805 12.7549359,5.212 L12.7549359,17.777 L12.7782651,17.7601316 C13.4923805,17.2719483 14.3447024,17 15.2363079,17 L18.0059359,16.999 L18.0056891,4.798 L18.0033792,4.75457396 L18.0056891,4.71 L18.0059359,3.999 Z M8.9891247,4 L6.00368914,3.999 L6.00599909,4.75457396 L6.00599909,4.75457396 L6.00368914,4.783 L6.00368914,16.999 L8.77307039,17 C9.57551536,17 10.3461406,17.2202781 11.0128313,17.6202194 L11.2536891,17.776 L11.2536891,5.211 C10.8200889,4.56369974 10.1361548,4.13636104 9.37521067,4.02745763 L9.18347055,4.00692283 L8.9891247,4 Z"></path></g></svg></button></div></div><div class="explorer" data-behavior="link" data-collapsed="collapsed" data-savestate="true" data-data-fns="{&quot;order&quot;:[&quot;filter&quot;,&quot;map&quot;,&quot;sort&quot;],&quot;sortFn&quot;:&quot;(a,b)=>!a.isFolder&amp;&amp;!b.isFolder||a.isFolder&amp;&amp;b.isFolder?a.displayName.localeCompare(b.displayName,void 0,{numeric:!0,sensitivity:\&quot;base\&quot;}):!a.isFolder&amp;&amp;b.isFolder?1:-1&quot;,&quot;filterFn&quot;:&quot;node=>node.slugSegment!==\&quot;tags\&quot;&quot;,&quot;mapFn&quot;:&quot;node=>node&quot;}"><button type="button" class="explorer-toggle mobile-explorer hide-until-loaded" data-mobile="true" aria-controls="explorer-13"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide-menu"><line x1="4" x2="20" y1="12" y2="12"></line><line x1="4" x2="20" y1="6" y2="6"></line><line x1="4" x2="20" y1="18" y2="18"></line></svg></button><button type="button" class="title-button explorer-toggle desktop-explorer" data-mobile="false" aria-expanded="true"><h2>Explorer</h2><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="5 8 14 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="fold"><polyline points="6 9 12 15 18 9"></polyline></svg></button><div id="explorer-13" class="explorer-content" aria-expanded="false" role="group"><ul class="explorer-ul overflow" id="list-0"><li class="overflow-end"></li></ul></div><template id="template-file"><li><a href="#"></a></li></template><template id="template-folder"><li><div class="folder-container"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="5 8 14 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="folder-icon"><polyline points="6 9 12 15 18 9"></polyline></svg><div><button class="folder-button"><span class="folder-title"></span></button></div></div><div class="folder-outer"><ul class="content"></ul></div></li></template></div></div><div class="center"><div class="page-header"><div class="popover-hint"><nav class="breadcrumb-container" aria-label="breadcrumbs"><div class="breadcrumb-element"><a href="./">Home</a><p> ❯ </p></div><div class="breadcrumb-element"><a href>plugin compatibility</a></div></nav><h1 class="article-title">plugin-compatibility</h1><p show-comma="true" class="content-meta"><time datetime="2026-05-03T22:15:51.000Z">May 03, 2026</time><span>17 min read</span></p></div></div><article class="popover-hint"><h1 id="plugin-compatibility">Plugin compatibility<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#plugin-compatibility" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h1>
+<p>How well each Obsidian community plugin holds up when the vault is
+served by <code>obsidian-remote-ssh</code>. Updated as we test in the dev vault.</p>
+<h2 id="how-to-read-this-table">How to read this table<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#how-to-read-this-table" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<p>The plugin patches <code>app.vault.adapter</code> and routes filesystem calls
+through the remote daemon. A plugin <strong>works</strong> if every operation
+that touches vault files goes through <code>app.vault.read / write / list / watch / getResourcePath</code>. A plugin <strong>breaks</strong> if it bypasses those —
+typically by importing Node’s <code>fs</code> directly, by reading
+<code>app.vault.adapter.basePath</code> and joining file paths against it, or by
+using internal Obsidian APIs we don’t intercept.</p>
+<p>We can usually predict each plugin’s status from its access pattern
+without running it; the <strong>Status</strong> column distinguishes:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="table-container"><table><thead><tr><th>Status</th><th>Meaning</th></tr></thead><tbody><tr><td>✅ verified</td><td>smoke-tested in the dev vault, the typical workflow works</td></tr><tr><td>🟡 expected</td><td>architectural read says it should work, not yet smoke-tested</td></tr><tr><td>⚠️ degraded</td><td>works but has a known UX problem (latency, full-vault reads, etc.)</td></tr><tr><td>❌ broken</td><td>known to bypass the patched adapter; remote vault unreachable</td></tr><tr><td>❔ unknown</td><td>haven’t looked at the source / haven’t tested</td></tr></tbody></table></div>
+<p>Numbers in the table reflect a <code>~/work/VaultDev</code>-class remote
+(SSH RTT under ~30 ms, vault under a few hundred files).</p>
+<h2 id="compatibility-matrix">Compatibility matrix<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#compatibility-matrix" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="table-container"><table><thead><tr><th>Plugin</th><th>Access pattern</th><th>Status</th><th>Notes</th></tr></thead><tbody><tr><td>Dataview</td><td>reads every MD file via <code>app.vault.cachedRead</code> for the index, then queries against <code>app.metadataCache</code></td><td>✅ verified-by-harness (#124 F11)</td><td>Initial index build does N reads on connect. ReadCache absorbs subsequent queries. Watch for noticeable startup delay on bigger vaults. F11 harness scenario (<code>plugin/tests/compat/dataview.test.ts</code>) drives <code>dv.pages()</code>-shape queries against a 5-page fixture and asserts frontmatter scalars + aggregations round-trip through <code>metadataCache.getFileCache()</code>.</td></tr><tr><td>Templater</td><td>reads templates from a configured folder, evaluates JS, writes through <code>app.vault.modify</code> / <code>create</code>. <code>tp.file.path(false)</code> and the <code>child_process.exec</code> cwd path read <code>adapter.basePath</code>.</td><td>✅ verified-by-harness (#124 F12)</td><td><code>basePath</code> now resolves to the shadow-vault local root via #170, so <code>tp.file.path(false)</code> returns a path whose <code>fs.readFileSync</code> finds mirrored content. JS user functions that import Node <code>fs</code> and write under <code>basePath</code> land in the shadow dir, which propagates to the remote. F12 harness scenario (<code>plugin/tests/compat/templater.test.ts</code>) drives <code>tp.file.create_new</code> against 3 fixture templates (date placeholder, frontmatter + title, no-date) and asserts <code>vault.create</code> + <code>vault.modify</code> round-trip with <code>metadataCache</code> reflecting the new frontmatter.</td></tr><tr><td>Kanban</td><td>stores boards as MD files with YAML frontmatter; standard vault read/write on every drag. Clipboard image paste joins <code>(adapter as any).basePath</code> with the attachment path and calls <code>fs.copyFile</code>.</td><td>🟡 expected (smoke pending after #170)</td><td>Each card move = 1 write. Network latency may show as a noticeable lag on big boards; otherwise fine. Clipboard paste is fixed by #170: <code>basePath</code> now resolves to the shadow-vault local root, so <code>fs.copyFile</code> lands in the shadow dir.</td></tr><tr><td>Thino</td><td>reads/writes daily-note-style files; standard vault API</td><td>🟡 expected</td><td>Pure vault API user. No special concerns.</td></tr><tr><td>Commander</td><td>UI plugin: ribbon icons, hotkeys, command macros. Doesn’t touch vault files for its own state (uses plugin data via <code>loadData</code>/<code>saveData</code>, which goes through the patched adapter)</td><td>🟡 expected</td><td>If a custom command invokes a different plugin, the wrapped plugin’s compatibility applies.</td></tr><tr><td>Emoji Shortcodes</td><td>pure UI typing helper. No filesystem access</td><td>✅ verified-by-architecture</td><td>Not affected by adapter patching at all.</td></tr><tr><td>Heatmap Calendar</td><td>reads MD files to count occurrences, aggregates frontmatter</td><td>🟡 expected (similar to Dataview)</td><td>Heavy first-pass read on connect. ReadCache mitigates re-renders.</td></tr><tr><td>Meta Bind</td><td>input bindings on YAML / inline frontmatter; reads / writes via vault API</td><td>🟡 expected</td><td>Each input change writes the host note. Latency is noticeable but functional.</td></tr><tr><td>Omnisearch</td><td>full-text indexer: reads every file in the vault on init + on changes</td><td>⚠️ degraded (expected)</td><td>This is the most network-bound plugin in the list. Initial index build on a remote vault can take seconds-to-minutes depending on size. After the warm cache, queries are local. Recommendation: only enable Omnisearch when the connection is stable.</td></tr><tr><td>QuickLatex</td><td>renders LaTeX inline. Pure UI, no FS access</td><td>✅ verified-by-architecture</td><td>Not affected.</td></tr><tr><td>Importer</td><td>converts external formats (Evernote <code>.enex</code>, etc.) to MD using <code>path.join(getBasePath(), folder.path)</code> as <code>outputDir</code> for the Yarle Evernote converter (Node <code>fs.writeFile</code>)</td><td>🟡 expected (smoke pending after #170)</td><td><code>getBasePath()</code> now returns the shadow-vault local root via #170, so the converter writes files into the shadow dir; the file-watcher propagates them to the remote. Initial conversion of a large <code>.enex</code> may produce many writes; watch for queue lag.</td></tr><tr><td>Copilot</td><td>reads <code>getBasePath?.()</code> then falls back to <code>basePath</code> for local-context AI indexing (<code>src/miyo/miyoUtils.ts</code>)</td><td>🟡 expected (smoke pending after #170)</td><td>Either form now resolves to the shadow-vault local root via #170, so Copilot’s local-context indexing operates against the synced copy. The remote is the source of truth; the index reflects whatever has been mirrored to the shadow dir.</td></tr><tr><td>Git (Vinzent03)</td><td>desktop hardcodes <code>SimpleGit</code> (spawns local <code>git</code> against <code>getBasePath()</code>); mobile uses <code>IsomorphicGit</code> via <code>MyAdapter(vault.adapter)</code> (pure JS, no shell-out)</td><td>❌ broken on desktop / fixable upstream</td><td>The desktop path silently mis-routes commits to the shadow git repo, not the remote. The isomorphic-git path <em>would</em> work transparently against our remote adapter but is gated behind <code>Platform.isDesktopApp</code> with no toggle. <strong>We won’t ship a workaround</strong> — see <a href="././../issues/150" class="internal alias" data-slug="issues/150">#150</a> for the rationale. Users wanting git on a remote vault should use the integrated terminal pane (<a href="././../issues/149" class="internal alias" data-slug="issues/149">#149</a>) or file a feature request at Vinzent03/obsidian-git for a <code>forceIsomorphicGit</code> toggle.</td></tr><tr><td>Excalidraw</td><td>drawings stored as <code>.excalidraw.md</code> (JSON) or embedded markdown; embedded images go through <code>getResourcePath</code>. <code>pathToFileURL(adapter.basePath)</code> is used as a vault-membership prefix check (<code>src/utils/fileUtils.ts:343</code>).</td><td>✅ verified-by-harness (#124 F13)</td><td>The <code>RPC</code> transport is required for the ResourceBridge to serve images. On <code>SFTP</code> transport, embedded images fall back to a broken <code>data:</code> URL. First read of a large <code>.excalidraw.md</code> pulls the whole JSON; subsequent edits stream cleanly. After #170 the prefix check stays internally consistent (both sides see the shadow path). F13 harness scenario (<code>plugin/tests/compat/excalidraw.test.ts</code>) covers <code>.excalidraw.md</code> text round-trip + binary attachment CRUD with byte-exact equality on a 1 KB cyclic blob and a 4 KB PNG-magic + xorshift32 payload.</td></tr><tr><td>Remotely Save</td><td><code>getBasePath().split(&quot;?&quot;)[0]</code> as a vault-instance ID for cloud-sync conflict detection (<code>src/main.ts:1736</code>)</td><td>🟡 expected</td><td>Shadow-vault path is fine: gives a stable per-machine ID after #170. Cloud-sync semantics aren’t affected.</td></tr><tr><td>Tasks</td><td>scans <code>metadataCache.getFileCache(file).listItems</code> across every markdown file for <code>- [ ]</code> checkboxes; aggregates open / done counts</td><td>✅ verified-by-harness (#124 F14)</td><td>Pure <code>metadataCache</code> reader, no <code>basePath</code> access. F14 harness scenario (<code>plugin/tests/compat/tasks.test.ts</code>) drives the per-file aggregation against a 10-file fixture vault (mixed open/done counts, frontmatter-tagged entries, empty/no-task negative-controls) and asserts vault-wide totals (18 open / 16 done / 34 total / 8 with-tasks) plus DataviewJS-shape filters (project-tag, completion ratio, top-3 by open count).</td></tr></tbody></table></div>
+<h2 id="updating-this-table">Updating this table<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#updating-this-table" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<p>When you actually exercise a plugin in the dev vault:</p>
+<ol>
+<li>Connect to the remote, patch the adapter (auto-patch is on by default).</li>
+<li>Enable the plugin.</li>
+<li>Run the operations listed under <strong>What to test</strong> below for that
+plugin.</li>
+<li>Move the row’s status from 🟡 / ❔ to ✅ if it worked, or ❌ /
+⚠️ if it didn’t, with a one-line note about what failed and what
+you saw in <code>&lt;vault>/.obsidian/plugins/remote-ssh/console.log</code>.</li>
+</ol>
+<h2 id="what-to-test-per-plugin">What to test (per plugin)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#what-to-test-per-plugin" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<p>Quick smoke checklists. None of these are exhaustive — the goal is to
+catch the obvious “the plugin doesn’t see remote files” or “the plugin
+fights the adapter” failure modes.</p>
+<h3 id="dataview">Dataview<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#dataview" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" disabled/> First connect: open a note that has a <code>dataview</code> block — does it
+render?</li>
+<li class="task-list-item"><input type="checkbox" disabled/> Modify a referenced note from a different machine, watch the
+block re-render after the fs.changed → reconcile cycle.</li>
+</ul>
+<h3 id="templater">Templater<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#templater" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" disabled/> Insert a template that runs a JS user function. Does it execute?</li>
+<li class="task-list-item"><input type="checkbox" disabled/> Templates that read another vault file (via <code>tp.file.find_tfile</code>):
+do they resolve?</li>
+</ul>
+<h3 id="kanban">Kanban<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#kanban" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" disabled/> Create a new board, drag cards between lanes, save. Does the
+<code>.md</code> on the remote update?</li>
+<li class="task-list-item"><input type="checkbox" disabled/> Reload the vault — board state intact?</li>
+</ul>
+<h3 id="excalidraw">Excalidraw<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#excalidraw" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" disabled/> Create a new drawing. Does the <code>.excalidraw.md</code> land on the
+remote?</li>
+<li class="task-list-item"><input type="checkbox" disabled/> Embed an image — does the image render in the canvas? (Requires
+RPC transport.)</li>
+</ul>
+<h3 id="thino">Thino<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#thino" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" disabled/> Add a quick note, check the daily file on the remote.</li>
+<li class="task-list-item"><input type="checkbox" disabled/> Edit a past entry; does the modification land?</li>
+</ul>
+<h3 id="commander">Commander<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#commander" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" disabled/> Bind a custom command to a hotkey. Does invoking it work? (No
+vault-side test required since Commander itself doesn’t touch
+the FS.)</li>
+</ul>
+<h3 id="heatmap-calendar">Heatmap Calendar<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#heatmap-calendar" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" disabled/> Render a heatmap of notes-per-day. Does it count correctly on
+first load?</li>
+<li class="task-list-item"><input type="checkbox" disabled/> Modify a few past notes; does the heatmap refresh?</li>
+</ul>
+<h3 id="meta-bind">Meta Bind<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#meta-bind" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" disabled/> Place a <code>meta-bind</code> input in a note, change its value, confirm
+the host note’s frontmatter updates on the remote.</li>
+</ul>
+<h3 id="omnisearch">Omnisearch<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#omnisearch" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" disabled/> Trigger a search. Note startup time on initial index build.</li>
+<li class="task-list-item"><input type="checkbox" disabled/> Re-search; should be fast (hits the local index).</li>
+<li class="task-list-item"><input type="checkbox" disabled/> After remote-side edits, are new files findable within ~30 s?</li>
+</ul>
+<h3 id="quicklatex">QuickLatex<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#quicklatex" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" disabled/> Render an inline math formula. (No vault-side test required.)</li>
+</ul>
+<h3 id="emoji-shortcodes">Emoji Shortcodes<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#emoji-shortcodes" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul class="contains-task-list">
+<li class="task-list-item"><input type="checkbox" disabled/> Type <code>:smile:</code> in a note, expect the emoji to expand. (No
+vault-side test required.)</li>
+</ul>
+<h2 id="known-footguns-cross-plugin">Known footguns (cross-plugin)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#known-footguns-cross-plugin" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<p>Things that aren’t a specific plugin but trip plugins in general:</p>
+<ul>
+<li><strong><code>app.vault.adapter.basePath</code> and <code>getBasePath()</code></strong> resolve to the
+<strong>shadow vault’s</strong> local root (e.g. <code>~/.obsidian-remote/vaults/&lt;P-id>/</code>),
+not the remote SSH path. Plugins that join paths against <code>basePath</code>
+and feed them to Node <code>fs</code> directly read mirrored content and write
+into the shadow dir; the file-watcher then propagates writes back to
+the remote. This is the natural value of <code>FileSystemAdapter.basePath</code>
+in the shadow window, and #170 patches both forms onto the
+replacement adapter explicitly so the contract is stable across
+Obsidian version upgrades. See the <strong>basePath compat survey</strong> section
+below (#133, 2026-04-29) for the top-20 plugin survey, and #170 for
+the implementation. <strong>Exception:</strong> plugins that shell out to a local
+binary (notably obsidian-Git’s <code>SimpleGit</code> desktop path) operate on
+the shadow git repo rather than the remote one — patching can’t fix
+this from our side. obsidian-Git’s bundled <code>IsomorphicGit</code> mode
+<em>would</em> work transparently against our adapter but is gated to
+mobile-only by the upstream; see the table row on line 46 for the
+user-facing recommendation.</li>
+<li><strong>Worker threads</strong> spawned by plugins are independent JS contexts —
+they don’t see our patched <code>app.vault.adapter</code>. Plugins that pass file
+paths to a worker for parsing (some search-heavy plugins do this)
+will break against the remote. Same diagnosis: no general fix.</li>
+<li><strong><code>fs.watch</code> from Node</strong> doesn’t reach the remote. Our patched
+adapter feeds <code>app.vault.adapter.on('modify', …)</code>-style listeners
+through the daemon’s <code>fs.watch</code> notifications, but a plugin that
+installs its own <code>fs.watch</code> against <code>basePath</code> only watches the local
+empty directory.</li>
+<li><strong>Static asset URLs (<code>app://local/&lt;path></code>)</strong> — a few plugins build
+these manually instead of going through <code>getResourcePath</code>. The
+manually-built URL points at the local FS and won’t render. The
+ResourceBridge fixes this only when <code>getResourcePath</code> is the
+entry point. The <code>app://local</code> URL survey (#174, 2026-05-01)
+found <strong>zero usage across all top-20 plugins</strong>; only niche
+image-processing plugins outside the top-20 use this pattern
+(see survey section below). No webview-side URL rewriting is
+needed at this time.</li>
+</ul>
+<h2 id="why-we-cant-auto-test-all-of-this">Why we can’t auto-test all of this<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#why-we-cant-auto-test-all-of-this" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<p>Every plugin lives in its own JS context with its own internal state,
+and the meaningful failures only surface in interactive use (“I
+clicked X and it didn’t render”). A unit-test approximation would
+exercise our adapter, not the plugin’s actual code path. So this doc
+is maintained by hand from manual smoke testing — when something
+unexpected breaks, please update the row.</p>
+<h2 id="basepath-compat-survey-133-2026-04-29">basePath compat survey (#133, 2026-04-29)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#basepath-compat-survey-133-2026-04-29" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<p>Investigation tracker for issue #133. We surveyed the top-20
+most-installed community plugins (sorted by lifetime downloads from
+<code>obsidianmd/obsidian-releases</code>’s <code>community-plugin-stats.json</code> on
+2026-04-29) for direct reads of <code>app.vault.adapter.basePath</code> /
+<code>getBasePath()</code>. The goal is to decide what <code>basePath</code> should return
+on a remote vault — the issue is <strong>investigation only</strong>; no code
+changes ship with this survey.</p>
+<h3 id="headline">Headline<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#headline" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul>
+<li><strong>6 / 20</strong> plugins read <code>basePath</code> (or the equivalent
+<code>getBasePath()</code> method) from the adapter.</li>
+<li><strong>3 are high-risk</strong> (<code>fs-read</code>): Templater, Kanban, Importer.</li>
+<li><strong>1 is incompatible without an upstream change</strong>: Git (Vinzent03)
+hardcodes <code>SimpleGit</code> (shells out to local <code>git</code>) on desktop. Its
+bundled <code>IsomorphicGit</code> path uses a <code>vault.adapter</code> wrapper and
+would work against our remote adapter, but the gating
+(<code>Platform.isDesktopApp</code>) has no toggle. Tracked in <a href="././../issues/150" class="internal alias" data-slug="issues/150">#150</a>
+as won’t-do; see table row on line 46.</li>
+<li>The method form <code>getBasePath()</code> is more common in real usage than
+the property <code>.basePath</code> (Templater, Importer, Copilot, Remotely
+Save, Git all prefer it). <strong>Both must be patched</strong> if we ship a fix.</li>
+</ul>
+<h3 id="per-plugin-findings">Per-plugin findings<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#per-plugin-findings" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p>Categories: <code>none</code> (no usage), <code>display-only</code> (UI / metadata),
+<code>fs-read</code> (joined and passed to Node <code>fs</code>), <code>fs-stat</code>, <code>passthrough</code>
+(handed back to a patched adapter method), <code>other</code> (URL prefix
+compare, child-process cwd, etc.).</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="table-container"><table><thead><tr><th>Plugin</th><th>Installs</th><th>Where</th><th>Category</th><th>Risk</th><th>Mitigation</th></tr></thead><tbody><tr><td>Excalidraw</td><td>5.9M</td><td><code>src/utils/fileUtils.ts:343</code> — <code>pathToFileURL(adapter.basePath)</code> for drag-drop “is this file in the vault?” prefix-match</td><td>other</td><td>medium</td><td>Shadow-vault path keeps the prefix check internally consistent</td></tr><tr><td>Templater</td><td>4.2M</td><td><code>InternalModuleFile.ts:256/262</code> — <code>tp.file.path(false)</code> joins <code>basePath</code> with the target path; <code>UserSystemFunctions.ts:23</code> uses it as <code>child_process.exec</code> cwd</td><td>fs-read + exec cwd</td><td>high</td><td>Patch <code>basePath</code>/<code>getBasePath()</code> to return shadow-vault path; user scripts run against the synced shadow copy</td></tr><tr><td>Dataview</td><td>4.1M</td><td>none in plugin source (only hit was a bundled <code>hot-reload</code> dev tool)</td><td>none</td><td>none</td><td>n/a — uses <code>metadataCache</code> only</td></tr><tr><td>Tasks</td><td>3.4M</td><td>none in plugin source</td><td>none</td><td>none</td><td>n/a</td></tr><tr><td>Advanced Tables</td><td>2.8M</td><td>none</td><td>none</td><td>none</td><td>n/a</td></tr><tr><td>Calendar</td><td>2.6M</td><td>none</td><td>none</td><td>none</td><td>n/a</td></tr><tr><td>Git (Vinzent03)</td><td>2.5M</td><td><code>src/main.ts:466</code> — <code>path.join(getBasePath(), filePath)</code> for <code>electron.shell.showItemInFolder</code>; <code>simpleGit.ts:44</code> uses <code>getBasePath()</code> as <code>simple-git</code> <code>baseDir</code> (spawns local <code>git</code>); <code>gitManager/myAdapter.ts:10-37</code> wraps <code>vault.adapter</code> for <code>IsomorphicGit</code> (mobile-only path)</td><td>fs-read + child-process</td><td>high (fixable upstream)</td><td><code>SimpleGit</code> (desktop) shells out to local <code>git</code> against a local path; patching <code>basePath</code> would silently mis-route. <code>IsomorphicGit</code> (mobile, gated <code>Platform.isDesktopApp</code>) routes through <code>vault.adapter</code> and would work transparently against our remote adapter — but the gating has no toggle. We won’t ship a workaround; see <a href="././../issues/150" class="internal alias" data-slug="issues/150">#150</a> and table row on line 46</td></tr><tr><td>Style Settings</td><td>2.3M</td><td>none</td><td>none</td><td>none</td><td>n/a</td></tr><tr><td>Kanban</td><td>2.2M</td><td><code>src/components/Item/helpers.ts:450</code> — <code>(adapter as any).basePath</code> joined with attachment path, fed to <code>fs.copyFile</code> on Electron clipboard image paste</td><td>fs-read</td><td>high</td><td>Patch returns shadow-vault path; <code>fs.copyFile</code> lands in shadow vault and syncs up</td></tr><tr><td>Iconize</td><td>2.0M</td><td>none</td><td>none</td><td>none</td><td>n/a</td></tr><tr><td>Remotely Save</td><td>1.9M</td><td><code>src/main.ts:1736</code> — <code>getBasePath().split(&quot;?&quot;)[0]</code> as a vault-instance ID for cloud-sync conflict detection</td><td>display-only</td><td>low</td><td>Shadow-vault path is fine; gives a stable per-machine ID</td></tr><tr><td>QuickAdd</td><td>1.7M</td><td>none</td><td>none</td><td>none</td><td>n/a</td></tr><tr><td>Minimal Theme Settings</td><td>1.5M</td><td>none</td><td>none</td><td>none</td><td>n/a</td></tr><tr><td>Omnisearch</td><td>1.4M</td><td>none</td><td>none</td><td>none</td><td>n/a</td></tr><tr><td>Editing Toolbar</td><td>1.4M</td><td>none</td><td>none</td><td>none</td><td>n/a</td></tr><tr><td>Copilot</td><td>1.3M</td><td><code>src/miyo/miyoUtils.ts:105-110</code> — defensive <code>getBasePath?.()</code> then <code>basePath</code> fallback; flows into local-context AI machinery</td><td>passthrough</td><td>medium</td><td>Shadow-vault path lets Copilot index the synced local copy</td></tr><tr><td>Importer</td><td>1.2M</td><td><code>src/formats/evernote-enex.ts:34</code> — <code>path.join(getBasePath(), folder.path)</code> as <code>outputDir</code> for the Yarle Evernote converter (Node <code>fs</code> writes)</td><td>fs-read</td><td>high</td><td>Same shape as Kanban; shadow-vault path lands writes in the synced copy</td></tr><tr><td>Outliner</td><td>1.2M</td><td>none</td><td>none</td><td>none</td><td>n/a</td></tr><tr><td>Homepage</td><td>1.1M</td><td>none</td><td>none</td><td>none</td><td>n/a</td></tr><tr><td>Recent Files</td><td>1.0M</td><td>none</td><td>none</td><td>none</td><td>n/a</td></tr></tbody></table></div>
+<h3 id="recommendations">Recommendations<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#recommendations" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul>
+<li><strong>Patch both <code>basePath</code> (getter) and <code>getBasePath()</code> (method)</strong> to
+return the shadow-vault local path. This single change makes
+Templater, Kanban, Importer, and Copilot work transparently —
+<code>path.join(basePath, …)</code> plus Node <code>fs.*</code> writes land in the shadow
+vault, which the file-watcher syncs up to the remote.</li>
+<li><strong>Returning the shadow-vault path is also safe for the
+display/metadata cases</strong> (Excalidraw URL-prefix compare, Remotely
+Save instance ID): both want a stable, internally consistent local
+path, which the shadow-vault path provides.</li>
+<li><strong>obsidian-Git is the one casualty</strong> — desktop hardcodes <code>SimpleGit</code>,
+which shells out to a local <code>git</code> binary, so even with <code>basePath</code>
+patched it would operate on the shadow vault rather than the
+canonical remote one. obsidian-Git’s bundled <code>IsomorphicGit</code> path
+<em>does</em> go through <code>vault.adapter</code> and would work against our remote
+adapter transparently, but it’s gated <code>Platform.isDesktopApp</code> with
+no toggle. We won’t ship a workaround (see <a href="././../issues/150" class="internal alias" data-slug="issues/150">#150</a>);
+users who want git on a remote vault should use the integrated
+terminal pane (<a href="././../issues/149" class="internal alias" data-slug="issues/149">#149</a>).</li>
+<li><strong>14 / 20 top plugins read no <code>basePath</code> at all</strong>, so the blast
+radius of the current “do nothing” stance is ~30% of the most-
+installed plugins. That is too large to ignore but small enough
+that a single uniform patch (no per-plugin shim layer) is the
+high-leverage choice.</li>
+<li><strong>Next step is a follow-up implementation issue</strong>, not a change in
+this PR. Scope: extend <code>PATCHED_METHODS</code> (<code>plugin/src/main.ts:49</code>)
+to include <code>basePath</code> and <code>getBasePath</code>, route both to the shadow
+vault’s local root, and add an <code>app://local/&lt;path></code> rewrite check
+for plugins that build asset URLs by hand from <code>basePath</code> (out of
+scope of this survey but worth keeping on the radar).</li>
+</ul>
+<h3 id="implementation-status-2026-04-30">Implementation status (2026-04-30)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#implementation-status-2026-04-30" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul>
+<li><strong>#170 (this PR)</strong> ships the survey’s primary recommendation.
+<code>PATCHED_METHODS</code> now includes <code>basePath</code> and <code>getBasePath</code>, both
+routing to the shadow-vault local root captured at patch time from
+the host <code>FileSystemAdapter.getBasePath()</code>. <code>AdapterPatcher</code> was
+extended to handle property-getter members (the previous
+function-only path didn’t cover the <code>basePath</code> accessor).</li>
+<li><strong>#174</strong> tracks the separate <code>app://local/&lt;path></code> URL-rewrite
+follow-up; out of scope for #170.</li>
+<li><strong>Smoke verification</strong> of Templater / Kanban / Importer / Copilot
+in a real dev vault remains a manual step; the matrix above keeps
+these at <code>🟡 expected (smoke pending after #170)</code> until run.</li>
+</ul>
+<h3 id="method">Method<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#method" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul>
+<li>Registry source: <code>community-plugins.json</code> +
+<code>community-plugin-stats.json</code> from <code>obsidianmd/obsidian-releases</code>,
+fetched 2026-04-29.</li>
+<li>Top-20 selected by lifetime <code>downloads</code> desc.</li>
+<li>Per-repo search: GitHub code-search API restricted to TS/JS
+sources; matches inside bundled <code>hot-reload</code> dev tools or
+<code>sample_vault/.../main.js</code> test fixtures were excluded.</li>
+<li>One-to-two representative usage sites recorded per plugin —
+exhaustive coverage was not the goal; the categorization is what
+drives the recommendation.</li>
+</ul>
+<h2 id="applocal-url-survey-174-2026-05-01"><code>app://local</code> URL survey (#174, 2026-05-01)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#applocal-url-survey-174-2026-05-01" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<p>Investigation tracker for issue #174. We surveyed the same top-20
+plugin set for manual construction of <code>app://local/&lt;path></code> URLs —
+the Electron protocol that Obsidian uses to serve local vault assets.
+Plugins that build these by hand (instead of calling
+<code>getResourcePath</code>) bypass the ResourceBridge and render broken
+images on a remote vault.</p>
+<h3 id="headline-1">Headline<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#headline-1" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul>
+<li><strong>0 / 20</strong> top plugins construct <code>app://local</code> URLs by hand.</li>
+<li>Dataview mentions the protocol in its CHANGELOG / docs only (no
+runtime code).</li>
+<li>The pattern exists <strong>only in niche image-processing plugins</strong>
+outside the top-20 (see below).</li>
+</ul>
+<h3 id="top-20-results">Top-20 results<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#top-20-results" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="table-container"><table><thead><tr><th>Plugin</th><th>Installs</th><th><code>app://local</code> in source?</th></tr></thead><tbody><tr><td>Excalidraw</td><td>5.9M</td><td>no</td></tr><tr><td>Templater</td><td>4.2M</td><td>no</td></tr><tr><td>Dataview</td><td>4.1M</td><td>no (docs only)</td></tr><tr><td>Tasks</td><td>3.4M</td><td>no</td></tr><tr><td>Advanced Tables</td><td>2.8M</td><td>no</td></tr><tr><td>Calendar</td><td>2.6M</td><td>no</td></tr><tr><td>Git (Vinzent03)</td><td>2.5M</td><td>no</td></tr><tr><td>Style Settings</td><td>2.3M</td><td>no</td></tr><tr><td>Kanban</td><td>2.2M</td><td>no</td></tr><tr><td>Iconize</td><td>2.0M</td><td>no</td></tr><tr><td>Remotely Save</td><td>1.9M</td><td>no</td></tr><tr><td>QuickAdd</td><td>1.7M</td><td>no</td></tr><tr><td>Minimal Theme Settings</td><td>1.5M</td><td>no</td></tr><tr><td>Omnisearch</td><td>1.4M</td><td>no</td></tr><tr><td>Editing Toolbar</td><td>1.4M</td><td>no</td></tr><tr><td>Copilot</td><td>1.3M</td><td>no</td></tr><tr><td>Importer</td><td>1.2M</td><td>no</td></tr><tr><td>Outliner</td><td>1.2M</td><td>no</td></tr><tr><td>Homepage</td><td>1.1M</td><td>no</td></tr><tr><td>Recent Files</td><td>1.0M</td><td>no</td></tr></tbody></table></div>
+<h3 id="outside-top-20-plugins-that-do-use-applocal">Outside top-20: plugins that DO use <code>app://local</code><a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#outside-top-20-plugins-that-do-use-applocal" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<p>These were found via broad GitHub code search (<code>&quot;app://local&quot;</code> in
+Obsidian-related TypeScript/JavaScript repos). All are niche
+image-handling or export plugins:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="table-container"><table><thead><tr><th>Plugin</th><th>File(s)</th><th>Pattern</th><th>Category</th></tr></thead><tbody><tr><td>obsidian-image-toolkit</td><td><code>src/util/markdowParse.ts</code></td><td>URL pattern matching / parsing for image rendering</td><td>(a) URL parse — reads, not constructs</td></tr><tr><td>oz-image-in-editor</td><td><code>src/util/obsidianHelper.ts</code>, <code>src/cm5/</code>, <code>src/cm6/</code></td><td>Builds <code>app://local/</code> + basePath for inline image preview in editor</td><td>(b) genuine bypass</td></tr><tr><td>obsidian-marp-plugin</td><td><code>src/convertImage.ts</code></td><td>Resolves vault images to absolute path for Marp slide export</td><td>(b) genuine bypass</td></tr><tr><td>obsidian-bookmaster</td><td><code>src/BookVault.ts</code></td><td>Local book file rendering</td><td>(b) genuine bypass</td></tr><tr><td>obsidian-image-converter</td><td><code>src/FolderAndFilenameManagement.ts</code></td><td>Image path resolution during format conversion</td><td>(a) URL parse</td></tr></tbody></table></div>
+<h3 id="recommendations-1">Recommendations<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#recommendations-1" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul>
+<li><strong>No action needed for top-20 plugins.</strong> The <code>app://local</code> footgun
+exists in theory but does not affect any high-install plugin.</li>
+<li><strong>A webview-side URL rewriter is not justified</strong> at this time.
+The implementation cost (intercept <code>&lt;img></code>/<code>&lt;video></code>/<code>&lt;audio></code>/
+<code>&lt;iframe></code> requests matching <code>app://local/&lt;shadow-vault-path></code> and
+rewrite to ResourceBridge URL) is moderate, and the affected plugin
+set is tiny.</li>
+<li><strong>If a user reports a broken image in a specific plugin</strong>, the
+per-plugin fix is to check whether the plugin calls
+<code>getResourcePath</code> (works via ResourceBridge) or constructs
+<code>app://local</code> by hand (broken). The latter can be patched
+plugin-side or — if the plugin is popular enough — by adding the
+webview rewriter at that point.</li>
+<li><strong>Re-survey when the top-20 list shifts</strong> or when <code>app://local</code>
+usage increases (unlikely — Obsidian’s own <code>getResourcePath</code> is
+the documented API and most plugin authors use it).</li>
+</ul>
+<h3 id="method-1">Method<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#method-1" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ul>
+<li>Same top-20 set as the basePath survey (2026-04-29).</li>
+<li>GitHub code-search API: <code>&quot;app://local&quot; repo:&lt;owner>/&lt;name></code>.</li>
+<li>Broad search (no repo filter) also run to find outside-top-20 hits;
+results filtered to Obsidian plugin repos by path and context.</li>
+<li>Matches in <code>obsidian.d.ts</code> type stubs, bundled <code>main.js</code> of other
+plugins committed to vault configs, and test fixtures were excluded.</li>
+</ul>
+<h2 id="compat-harness-124-phase-e">Compat harness (#124 Phase E)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#compat-harness-124-phase-e" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h2>
+<p>The compat harness lives at <code>plugin/tests/compat/</code> and provides a
+duck-typed Vault + MetadataCache for plugin-driven scenario tests
+without a real Obsidian process. <strong>Approach B</strong> from #124 — fast,
+deterministic, vitest-native.</p>
+<h3 id="files">Files<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#files" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="table-container"><table><thead><tr><th>File</th><th>Purpose</th></tr></thead><tbody><tr><td><code>CompatVault.ts</code></td><td><code>CompatVault</code>, <code>CompatTFile</code>, <code>CompatTFolder</code>, <code>CompatMetadataCache</code>.</td></tr><tr><td><code>fixtures.ts</code></td><td><code>loadFixtures(vault, dir)</code> walks <code>dir</code> for <code>.md</code> files and seeds the vault.</td></tr><tr><td><code>fixtures/*.md</code></td><td>4 hand-crafted markdown fixtures (frontmatter / headings / tasks / plain).</td></tr><tr><td><code>harness.test.ts</code></td><td>11 smoke tests verifying the harness itself.</td></tr></tbody></table></div>
+<h3 id="hot-duck-type-surface-the-contract-this-harness-honours">Hot duck-type surface (the contract this harness honours)<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#hot-duck-type-surface-the-contract-this-harness-honours" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<figure data-rehype-pretty-code-figure><pre tabindex="0" data-language="text" data-theme="github-light github-dark"><code data-language="text" data-theme="github-light github-dark" style="display:grid;"><span data-line><span>vault.getMarkdownFiles()         → TFile[] of every '.md' file</span></span>
+<span data-line><span>vault.getAbstractFileByPath(p)   → TFile | TFolder | null</span></span>
+<span data-line><span>vault.read(file)                 → text contents (Promise&lt;string>)</span></span>
+<span data-line><span>vault.cachedRead(file)           → text contents (Promise&lt;string>)</span></span>
+<span data-line><span>vault.create(path, data)         → TFile (Templater)</span></span>
+<span data-line><span>vault.modify(file, data)         → void  (Templater)</span></span>
+<span data-line><span>vault.createBinary(path, data)   → TFile (Excalidraw)</span></span>
+<span data-line><span>vault.readBinary(file)           → ArrayBuffer (Excalidraw)</span></span>
+<span data-line><span>vault.delete(file)               → void</span></span>
+<span data-line><span>vault.on / offref / trigger      → events ('create' | 'modify' | 'delete' | 'rename')</span></span>
+<span data-line><span>metadataCache.getFileCache(file) → CachedMetadata (Dataview, Tasks)</span></span></code></pre></figure>
+<p><code>CachedMetadata</code> carries <code>frontmatter</code> (YAML scalars: string / number /
+boolean / null), <code>headings[]</code> (level 1-6 with text), and <code>listItems[]</code>
+(checkbox tasks with <code>task: ' '</code> for open or <code>'x'</code> for done). Other
+fields from <code>obsidian.d.ts</code> are intentionally omitted — they’re added
+when a plugin scenario asks for them.</p>
+<h3 id="adding-a-new-scenario">Adding a new scenario<a role="anchor" aria-hidden="true" tabindex="-1" data-no-popover="true" href="#adding-a-new-scenario" class="internal"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg></a></h3>
+<ol>
+<li>Drop a new <code>&lt;plugin>.test.ts</code> next to <code>harness.test.ts</code>.</li>
+<li>Construct a fresh <code>CompatVault</code>, <code>loadFixtures(vault, fixturesDir())</code>.</li>
+<li>Drive the plugin-equivalent calls (e.g. for Dataview: iterate
+<code>vault.getMarkdownFiles()</code> and read each <code>metadataCache.getFileCache(file)</code>).</li>
+<li>Assert the expected aggregated output.</li>
+<li>If the scenario hits a <code>vault.X</code> method that’s not in the surface,
+add it to <code>CompatVault.ts</code> first — keep the harness adds-as-needed
+rather than mocking the entire <code>obsidian.d.ts</code>.</li>
+</ol>
+<p>The roadmap in #124 covers F11 (Dataview), F12 (Templater), F13
+(Excalidraw), F14 (Tasks). Each lands as a separate PR.</p></article><hr/><div class="page-footer"></div></div><div class="right sidebar"><div class="graph"><h3>Graph View</h3><div class="graph-outer"><div class="graph-container" data-cfg="{&quot;drag&quot;:true,&quot;zoom&quot;:true,&quot;depth&quot;:1,&quot;scale&quot;:1.1,&quot;repelForce&quot;:0.5,&quot;centerForce&quot;:0.3,&quot;linkDistance&quot;:30,&quot;fontSize&quot;:0.6,&quot;opacityScale&quot;:1,&quot;showTags&quot;:true,&quot;removeTags&quot;:[],&quot;focusOnHover&quot;:false,&quot;enableRadial&quot;:false}"></div><button class="global-graph-icon" aria-label="Global Graph"><svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 55 55" fill="currentColor" xml:space="preserve"><path d="M49,0c-3.309,0-6,2.691-6,6c0,1.035,0.263,2.009,0.726,2.86l-9.829,9.829C32.542,17.634,30.846,17,29,17
+                s-3.542,0.634-4.898,1.688l-7.669-7.669C16.785,10.424,17,9.74,17,9c0-2.206-1.794-4-4-4S9,6.794,9,9s1.794,4,4,4
+                c0.74,0,1.424-0.215,2.019-0.567l7.669,7.669C21.634,21.458,21,23.154,21,25s0.634,3.542,1.688,4.897L10.024,42.562
+                C8.958,41.595,7.549,41,6,41c-3.309,0-6,2.691-6,6s2.691,6,6,6s6-2.691,6-6c0-1.035-0.263-2.009-0.726-2.86l12.829-12.829
+                c1.106,0.86,2.44,1.436,3.898,1.619v10.16c-2.833,0.478-5,2.942-5,5.91c0,3.309,2.691,6,6,6s6-2.691,6-6c0-2.967-2.167-5.431-5-5.91
+                v-10.16c1.458-0.183,2.792-0.759,3.898-1.619l7.669,7.669C41.215,39.576,41,40.26,41,41c0,2.206,1.794,4,4,4s4-1.794,4-4
+                s-1.794-4-4-4c-0.74,0-1.424,0.215-2.019,0.567l-7.669-7.669C36.366,28.542,37,26.846,37,25s-0.634-3.542-1.688-4.897l9.665-9.665
+                C46.042,11.405,47.451,12,49,12c3.309,0,6-2.691,6-6S52.309,0,49,0z M11,9c0-1.103,0.897-2,2-2s2,0.897,2,2s-0.897,2-2,2
+                S11,10.103,11,9z M6,51c-2.206,0-4-1.794-4-4s1.794-4,4-4s4,1.794,4,4S8.206,51,6,51z M33,49c0,2.206-1.794,4-4,4s-4-1.794-4-4
+                s1.794-4,4-4S33,46.794,33,49z M29,31c-3.309,0-6-2.691-6-6s2.691-6,6-6s6,2.691,6,6S32.309,31,29,31z M47,41c0,1.103-0.897,2-2,2
+                s-2-0.897-2-2s0.897-2,2-2S47,39.897,47,41z M49,10c-2.206,0-4-1.794-4-4s1.794-4,4-4s4,1.794,4,4S51.206,10,49,10z"></path></svg></button></div><div class="global-graph-outer"><div class="global-graph-container" data-cfg="{&quot;drag&quot;:true,&quot;zoom&quot;:true,&quot;depth&quot;:-1,&quot;scale&quot;:0.9,&quot;repelForce&quot;:0.5,&quot;centerForce&quot;:0.2,&quot;linkDistance&quot;:30,&quot;fontSize&quot;:0.6,&quot;opacityScale&quot;:1,&quot;showTags&quot;:true,&quot;removeTags&quot;:[],&quot;focusOnHover&quot;:true,&quot;enableRadial&quot;:true}"></div></div></div><div class="toc desktop-only"><button type="button" class="toc-header" aria-controls="toc-4" aria-expanded="true"><h3>Table of Contents</h3><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="fold"><polyline points="6 9 12 15 18 9"></polyline></svg></button><ul id="list-1" class="toc-content overflow"><li class="depth-0"><a href="#plugin-compatibility" data-for="plugin-compatibility">Plugin compatibility</a></li><li class="depth-1"><a href="#how-to-read-this-table" data-for="how-to-read-this-table">How to read this table</a></li><li class="depth-1"><a href="#compatibility-matrix" data-for="compatibility-matrix">Compatibility matrix</a></li><li class="depth-1"><a href="#updating-this-table" data-for="updating-this-table">Updating this table</a></li><li class="depth-1"><a href="#what-to-test-per-plugin" data-for="what-to-test-per-plugin">What to test (per plugin)</a></li><li class="depth-2"><a href="#dataview" data-for="dataview">Dataview</a></li><li class="depth-2"><a href="#templater" data-for="templater">Templater</a></li><li class="depth-2"><a href="#kanban" data-for="kanban">Kanban</a></li><li class="depth-2"><a href="#excalidraw" data-for="excalidraw">Excalidraw</a></li><li class="depth-2"><a href="#thino" data-for="thino">Thino</a></li><li class="depth-2"><a href="#commander" data-for="commander">Commander</a></li><li class="depth-2"><a href="#heatmap-calendar" data-for="heatmap-calendar">Heatmap Calendar</a></li><li class="depth-2"><a href="#meta-bind" data-for="meta-bind">Meta Bind</a></li><li class="depth-2"><a href="#omnisearch" data-for="omnisearch">Omnisearch</a></li><li class="depth-2"><a href="#quicklatex" data-for="quicklatex">QuickLatex</a></li><li class="depth-2"><a href="#emoji-shortcodes" data-for="emoji-shortcodes">Emoji Shortcodes</a></li><li class="depth-1"><a href="#known-footguns-cross-plugin" data-for="known-footguns-cross-plugin">Known footguns (cross-plugin)</a></li><li class="depth-1"><a href="#why-we-cant-auto-test-all-of-this" data-for="why-we-cant-auto-test-all-of-this">Why we can’t auto-test all of this</a></li><li class="depth-1"><a href="#basepath-compat-survey-133-2026-04-29" data-for="basepath-compat-survey-133-2026-04-29">basePath compat survey (#133, 2026-04-29)</a></li><li class="depth-2"><a href="#headline" data-for="headline">Headline</a></li><li class="depth-2"><a href="#per-plugin-findings" data-for="per-plugin-findings">Per-plugin findings</a></li><li class="depth-2"><a href="#recommendations" data-for="recommendations">Recommendations</a></li><li class="depth-2"><a href="#implementation-status-2026-04-30" data-for="implementation-status-2026-04-30">Implementation status (2026-04-30)</a></li><li class="depth-2"><a href="#method" data-for="method">Method</a></li><li class="depth-1"><a href="#applocal-url-survey-174-2026-05-01" data-for="applocal-url-survey-174-2026-05-01">app://local URL survey (#174, 2026-05-01)</a></li><li class="depth-2"><a href="#headline-1" data-for="headline-1">Headline</a></li><li class="depth-2"><a href="#top-20-results" data-for="top-20-results">Top-20 results</a></li><li class="depth-2"><a href="#outside-top-20-plugins-that-do-use-applocal" data-for="outside-top-20-plugins-that-do-use-applocal">Outside top-20: plugins that DO use app://local</a></li><li class="depth-2"><a href="#recommendations-1" data-for="recommendations-1">Recommendations</a></li><li class="depth-2"><a href="#method-1" data-for="method-1">Method</a></li><li class="depth-1"><a href="#compat-harness-124-phase-e" data-for="compat-harness-124-phase-e">Compat harness (#124 Phase E)</a></li><li class="depth-2"><a href="#files" data-for="files">Files</a></li><li class="depth-2"><a href="#hot-duck-type-surface-the-contract-this-harness-honours" data-for="hot-duck-type-surface-the-contract-this-harness-honours">Hot duck-type surface (the contract this harness honours)</a></li><li class="depth-2"><a href="#adding-a-new-scenario" data-for="adding-a-new-scenario">Adding a new scenario</a></li><li class="overflow-end"></li></ul></div><div class="backlinks"><h3>Backlinks</h3><ul id="list-2" class="overflow"><li><a href="./architecture-shadow-vault" class="internal">architecture-shadow-vault</a></li><li class="overflow-end"></li></ul></div></div><footer class><p>Created with <a href="https://quartz.jzhao.xyz/">Quartz v4.5.2</a> © 2026</p><ul><li><a href="https://github.com/sotashimozono/obsidian-remote-ssh">GitHub</a></li><li><a href="https://github.com/sotashimozono/obsidian-remote-ssh/issues">Issues / Q&amp;A</a></li></ul></footer></div></div></body><script type="application/javascript" data-persist="true">function n(){let t=this.parentElement;t.classList.toggle("is-collapsed");let e=t.getElementsByClassName("callout-content")[0];if(!e)return;let l=t.classList.contains("is-collapsed");e.style.gridTemplateRows=l?"0fr":"1fr"}function c(){let t=document.getElementsByClassName("callout is-collapsible");for(let e of t){let l=e.getElementsByClassName("callout-title")[0],s=e.getElementsByClassName("callout-content")[0];if(!l||!s)continue;l.addEventListener("click",n),window.addCleanup(()=>l.removeEventListener("click",n));let o=e.classList.contains("is-collapsed");s.style.gridTemplateRows=o?"0fr":"1fr"}}document.addEventListener("nav",c);
+</script><script type="module" data-persist="true">function E(a,e){if(!a)return;function t(o){o.target===this&&(o.preventDefault(),o.stopPropagation(),e())}function n(o){o.key.startsWith("Esc")&&(o.preventDefault(),e())}a?.addEventListener("click",t),window.addCleanup(()=>a?.removeEventListener("click",t)),document.addEventListener("keydown",n),window.addCleanup(()=>document.removeEventListener("keydown",n))}function f(a){for(;a.firstChild;)a.removeChild(a.firstChild)}var m=class{constructor(e,t){this.container=e;this.content=t;this.setupEventListeners(),this.setupNavigationControls(),this.resetTransform()}isDragging=!1;startPan={x:0,y:0};currentPan={x:0,y:0};scale=1;MIN_SCALE=.5;MAX_SCALE=3;cleanups=[];setupEventListeners(){let e=this.onMouseDown.bind(this),t=this.onMouseMove.bind(this),n=this.onMouseUp.bind(this),o=this.onTouchStart.bind(this),r=this.onTouchMove.bind(this),i=this.onTouchEnd.bind(this),s=this.resetTransform.bind(this);this.container.addEventListener("mousedown",e),document.addEventListener("mousemove",t),document.addEventListener("mouseup",n),this.container.addEventListener("touchstart",o,{passive:!1}),document.addEventListener("touchmove",r,{passive:!1}),document.addEventListener("touchend",i),window.addEventListener("resize",s),this.cleanups.push(()=>this.container.removeEventListener("mousedown",e),()=>document.removeEventListener("mousemove",t),()=>document.removeEventListener("mouseup",n),()=>this.container.removeEventListener("touchstart",o),()=>document.removeEventListener("touchmove",r),()=>document.removeEventListener("touchend",i),()=>window.removeEventListener("resize",s))}cleanup(){for(let e of this.cleanups)e()}setupNavigationControls(){let e=document.createElement("div");e.className="mermaid-controls";let t=this.createButton("+",()=>this.zoom(.1)),n=this.createButton("-",()=>this.zoom(-.1)),o=this.createButton("Reset",()=>this.resetTransform());e.appendChild(n),e.appendChild(o),e.appendChild(t),this.container.appendChild(e)}createButton(e,t){let n=document.createElement("button");return n.textContent=e,n.className="mermaid-control-button",n.addEventListener("click",t),window.addCleanup(()=>n.removeEventListener("click",t)),n}onMouseDown(e){e.button===0&&(this.isDragging=!0,this.startPan={x:e.clientX-this.currentPan.x,y:e.clientY-this.currentPan.y},this.container.style.cursor="grabbing")}onMouseMove(e){this.isDragging&&(e.preventDefault(),this.currentPan={x:e.clientX-this.startPan.x,y:e.clientY-this.startPan.y},this.updateTransform())}onMouseUp(){this.isDragging=!1,this.container.style.cursor="grab"}onTouchStart(e){if(e.touches.length!==1)return;this.isDragging=!0;let t=e.touches[0];this.startPan={x:t.clientX-this.currentPan.x,y:t.clientY-this.currentPan.y}}onTouchMove(e){if(!this.isDragging||e.touches.length!==1)return;e.preventDefault();let t=e.touches[0];this.currentPan={x:t.clientX-this.startPan.x,y:t.clientY-this.startPan.y},this.updateTransform()}onTouchEnd(){this.isDragging=!1}zoom(e){let t=Math.min(Math.max(this.scale+e,this.MIN_SCALE),this.MAX_SCALE),n=this.content.getBoundingClientRect(),o=n.width/2,r=n.height/2,i=t-this.scale;this.currentPan.x-=o*i,this.currentPan.y-=r*i,this.scale=t,this.updateTransform()}updateTransform(){this.content.style.transform=`translate(${this.currentPan.x}px, ${this.currentPan.y}px) scale(${this.scale})`}resetTransform(){let t=this.content.querySelector("svg").getBoundingClientRect(),n=t.width/this.scale,o=t.height/this.scale;this.scale=1,this.currentPan={x:(this.container.clientWidth-n)/2,y:(this.container.clientHeight-o)/2},this.updateTransform()}},T=["--secondary","--tertiary","--gray","--light","--lightgray","--highlight","--dark","--darkgray","--codeFont"],y;document.addEventListener("nav",async()=>{let e=document.querySelector(".center").querySelectorAll("code.mermaid");if(e.length===0)return;y||=await import("https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.4.0/mermaid.esm.min.mjs");let t=y.default,n=new WeakMap;for(let r of e)n.set(r,r.innerText);async function o(){for(let s of e){s.removeAttribute("data-processed");let c=n.get(s);c&&(s.innerHTML=c)}let r=T.reduce((s,c)=>(s[c]=window.getComputedStyle(document.documentElement).getPropertyValue(c),s),{}),i=document.documentElement.getAttribute("saved-theme")==="dark";t.initialize({startOnLoad:!1,securityLevel:"loose",theme:i?"dark":"base",themeVariables:{fontFamily:r["--codeFont"],primaryColor:r["--light"],primaryTextColor:r["--darkgray"],primaryBorderColor:r["--tertiary"],lineColor:r["--darkgray"],secondaryColor:r["--secondary"],tertiaryColor:r["--tertiary"],clusterBkg:r["--light"],edgeLabelBackground:r["--highlight"]}}),await t.run({nodes:e})}await o(),document.addEventListener("themechange",o),window.addCleanup(()=>document.removeEventListener("themechange",o));for(let r=0;r<e.length;r++){let v=function(){let g=l.querySelector("#mermaid-space"),h=l.querySelector(".mermaid-content");if(!h)return;f(h);let w=i.querySelector("svg").cloneNode(!0);h.appendChild(w),l.classList.add("active"),g.style.cursor="grab",u=new m(g,h)},M=function(){l.classList.remove("active"),u?.cleanup(),u=null},i=e[r],s=i.parentElement,c=s.querySelector(".clipboard-button"),d=s.querySelector(".expand-button"),p=window.getComputedStyle(c),L=c.offsetWidth+parseFloat(p.marginLeft||"0")+parseFloat(p.marginRight||"0");d.style.right=`calc(${L}px + 0.3rem)`,s.prepend(d);let l=s.querySelector("#mermaid-container");if(!l)return;let u=null;d.addEventListener("click",v),E(l,M),window.addCleanup(()=>{u?.cleanup(),d.removeEventListener("click",v)})}});
+</script><script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/copy-tex.min.js" type="application/javascript" data-persist="true"></script><script src="./postscript.js" type="module" data-persist="true"></script></html>
