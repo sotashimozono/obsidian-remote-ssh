@@ -6,65 +6,65 @@
       <description>Last 10 notes on obsidian-remote-ssh</description>
       <generator>Quartz -- quartz.jzhao.xyz</generator>
       <item>
-    <title>FAQ</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/faq</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/faq</guid>
-    <description><![CDATA[ Common questions about obsidian-remote-ssh: works offline?, mobile support, conflict handling, daemon safety, comparison vs Sync, troubleshooting first steps. ]]></description>
-    <pubDate>Sun, 10 May 2026 15:12:37 GMT</pubDate>
+    <title>API overview</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/overview</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/api/overview</guid>
+    <description><![CDATA[ obsidian-remote-ssh JSON-RPC 2.0 protocol reference. LSP-style framing on a Unix socket, auth handshake, server.info, fs.* method namespace, capabilities-gated extensions. ]]></description>
+    <pubDate>Sun, 10 May 2026 15:22:51 GMT</pubDate>
   </item><item>
-    <title>obsidian-remote-ssh</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/</guid>
-    <description><![CDATA[ Edit Obsidian vaults stored on a remote SSH host — no local copies, no third-party cloud. Install guide, architecture, JSON-RPC protocol, and operations docs. ]]></description>
-    <pubDate>Sun, 10 May 2026 15:12:37 GMT</pubDate>
+    <title>Profiles</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/configuration/profiles</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/configuration/profiles</guid>
+    <description><![CDATA[ Full configuration reference for obsidian-remote-ssh profiles: host, port, username, auth method, vault path, jump host, transport mode, SSH session tuning. ]]></description>
+    <pubDate>Sun, 10 May 2026 15:22:51 GMT</pubDate>
   </item><item>
-    <title>FAQ</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/faq</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/faq</guid>
-    <description><![CDATA[ FAQ 繰り返し聞かれる質問と、最短の有用な回答です。 Obsidian Sync / Syncthing / Dropbox との違いは? obsidian-remote-sshObsidian SyncSyncthing / Dropboxファイルの所在あなたのリモートホスト上の単一の正本クラウド（Obsidian のサーバ）全デバイスにレプリケート認証あなたの SSH 鍵Obsidian アカウントサービスアカウント競合モデルmtime precondition、デーモン仲介ベクトル時計、クラウド仲介ファイル更新時刻、*-conflict-.. ]]></description>
-    <pubDate>Sun, 10 May 2026 15:12:37 GMT</pubDate>
+    <title>This device</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/configuration/this-device</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/configuration/this-device</guid>
+    <description><![CDATA[ Per-device settings for obsidian-remote-ssh: Client ID partitioning of remote workspace state, user name display, telemetry opt-in, debug logging toggle. ]]></description>
+    <pubDate>Sun, 10 May 2026 15:22:51 GMT</pubDate>
   </item><item>
-    <title>obsidian-remote-ssh</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/</guid>
-    <description><![CDATA[ Obsidian の vault を SSH/SFTP 経由でリモート編集できるプラグインの日本語ガイドです。Raspberry Pi や NAS、VPS の vault に Obsidian から直接アクセス。 ]]></description>
-    <pubDate>Sun, 10 May 2026 15:12:37 GMT</pubDate>
+    <title>Hardware-key SSH auth (YubiKey, TouchID, Secure Enclave)</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/hardware-key</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/hardware-key</guid>
+    <description><![CDATA[ Use a YubiKey, Nitrokey, macOS Secure Enclave, or Windows Hello to sign SSH connections to your Obsidian vault. FIDO2 ed25519-sk + Apple keychain + TPM recipes. ]]></description>
+    <pubDate>Sun, 10 May 2026 15:22:51 GMT</pubDate>
   </item><item>
-    <title>Architecture: Shadow Vault Approach</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/shadow-vault</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/shadow-vault</guid>
-    <description><![CDATA[ How obsidian-remote-ssh's shadow vault architecture works: separate Obsidian vault per profile, lazy fetch from the remote, why monkey-patching the adapter was retired. ]]></description>
-    <pubDate>Sun, 10 May 2026 14:58:33 GMT</pubDate>
+    <title>Migrating between hosts</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/host-migration</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/host-migration</guid>
+    <description><![CDATA[ Move your Obsidian vault from one remote host to another (Pi to NAS, home to VPS) with rsync, profile re-target, and host-key trust handoff. Zero-data-loss recipe. ]]></description>
+    <pubDate>Sun, 10 May 2026 15:22:51 GMT</pubDate>
   </item><item>
-    <title>Comparison vs other Obsidian sync tools</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/comparison</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/comparison</guid>
-    <description><![CDATA[ obsidian-remote-ssh vs Obsidian Sync, Syncthing, Dropbox, iCloud, Obsidian Git, Nextcloud, Remotely Save — picking the right vault sync tool by topology and trade-offs. ]]></description>
-    <pubDate>Sun, 10 May 2026 14:58:33 GMT</pubDate>
+    <title>Cookbook</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/</guid>
+    <description><![CDATA[ Goal-oriented walkthroughs for obsidian-remote-ssh: Raspberry Pi vault, Tailscale, hardware keys, backups, host migration, multi-vault, systemd, reverse proxy. ]]></description>
+    <pubDate>Sun, 10 May 2026 15:22:51 GMT</pubDate>
   </item><item>
-    <title>Backup &amp; restore</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/backup-restore</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/backup-restore</guid>
-    <description><![CDATA[ Back up and restore your remote Obsidian vault with rsync, restic, or borg. Covers daily snapshots, off-site replication, single-note recovery, full disaster restore. ]]></description>
-    <pubDate>Sun, 10 May 2026 14:58:33 GMT</pubDate>
+    <title>Editing multiple vaults from one Obsidian</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/multi-vault</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/multi-vault</guid>
+    <description><![CDATA[ Edit work, personal, and family Obsidian vaults from a single Obsidian install. Multiple SSH profiles, separate shadow vaults, shared launcher vault. ]]></description>
+    <pubDate>Sun, 10 May 2026 15:22:51 GMT</pubDate>
   </item><item>
-    <title>Raspberry Pi vault from scratch</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/raspberry-pi-vault</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/raspberry-pi-vault</guid>
-    <description><![CDATA[ Set up a Raspberry Pi as your home Obsidian vault server from scratch — OS install, SSH key, vault directory, network access, and the matching plugin profile. ]]></description>
-    <pubDate>Sun, 10 May 2026 14:58:33 GMT</pubDate>
+    <title>Reverse proxy in front of Docker sshd</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/reverse-proxy</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/reverse-proxy</guid>
+    <description><![CDATA[ Front the obsidian-remote-ssh sshd container with nginx / Caddy / SSH ProxyJump. TLS termination, multi-tenant routing, hostname-based vault selection. ]]></description>
+    <pubDate>Sun, 10 May 2026 15:22:51 GMT</pubDate>
   </item><item>
-    <title>Share a vault via Tailscale</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/share-via-tailscale</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/share-via-tailscale</guid>
-    <description><![CDATA[ Run obsidian-remote-ssh over Tailscale: zero router config, encrypted in-transit traffic, works across NAT, reachable from your laptop and (later) your phone. ]]></description>
-    <pubDate>Sun, 10 May 2026 14:58:33 GMT</pubDate>
+    <title>Generating an SSH key</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/ssh-keygen</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/ssh-keygen</guid>
+    <description><![CDATA[ Generate an SSH key the obsidian-remote-ssh plugin can use: ed25519 vs ed25519-sk vs RSA, passphrase choice, ssh-agent integration, where to put the public key. ]]></description>
+    <pubDate>Sun, 10 May 2026 15:22:51 GMT</pubDate>
   </item><item>
-    <title>First connect</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/first-connect</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/first-connect</guid>
-    <description><![CDATA[ What happens when you click Connect: SSH handshake, daemon auto-deploy with cosign-signed binary, vault fetch, shadow vault opens. Step-by-step explanation. ]]></description>
-    <pubDate>Sun, 10 May 2026 14:58:33 GMT</pubDate>
+    <title>systemd-managed daemon</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/systemd-managed-daemon</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/systemd-managed-daemon</guid>
+    <description><![CDATA[ Replace the auto-deployed daemon with a systemd-managed one: cosign-verify the binary first, install as a user unit, enable lingering, monitor with journalctl. ]]></description>
+    <pubDate>Sun, 10 May 2026 15:22:51 GMT</pubDate>
   </item>
     </channel>
   </rss>
