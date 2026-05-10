@@ -6,65 +6,65 @@
       <description>Last 10 notes on obsidian-remote-ssh</description>
       <generator>Quartz -- quartz.jzhao.xyz</generator>
       <item>
-    <title>Architecture</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/architecture/</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/architecture/</guid>
-    <description><![CDATA[ Architecture Design specs for the major subsystems. These document why decisions were made, not just what the code does. ]]></description>
-    <pubDate>Sun, 10 May 2026 06:54:38 GMT</pubDate>
-  </item><item>
-    <title>shadow-vault</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/architecture/shadow-vault</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/architecture/shadow-vault</guid>
-    <description><![CDATA[ Architecture: Shadow Vault Approach Status: Shipped. ]]></description>
-    <pubDate>Sun, 10 May 2026 06:54:38 GMT</pubDate>
-  </item><item>
     <title>obsidian-remote-ssh</title>
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/</guid>
     <description><![CDATA[  Edit remote Obsidian vaults over SSH/SFTP — like VS Code Remote-SSH, but for Obsidian. ]]></description>
-    <pubDate>Sun, 10 May 2026 06:54:38 GMT</pubDate>
+    <pubDate>Sun, 10 May 2026 11:24:48 GMT</pubDate>
   </item><item>
-    <title>Authentication</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/api/authentication</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/api/authentication</guid>
-    <description><![CDATA[ Authentication Two methods. auth MUST be the first call on every connection. ]]></description>
-    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
+    <title>Migrating from Obsidian Sync</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/migration/from-obsidian-sync</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/migration/from-obsidian-sync</guid>
+    <description><![CDATA[ Migrating from Obsidian Sync Move from Obsidian Sync (Obsidian’s official paid sync service) to obsidian-remote-ssh. ]]></description>
+    <pubDate>Sun, 10 May 2026 11:24:48 GMT</pubDate>
   </item><item>
-    <title>systemd-managed daemon</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/cookbook/systemd-managed-daemon</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/cookbook/systemd-managed-daemon</guid>
-    <description><![CDATA[ systemd-managed daemon (with cosign verification) Goal: run a cosign-verified daemon binary you control under systemd, so the daemon survives plugin restarts and OS reboots. ]]></description>
-    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
+    <title>API overview</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/api/overview</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/api/overview</guid>
+    <description><![CDATA[ API &amp; protocol — overview The daemon speaks JSON-RPC 2.0 with LSP-style framing on a Unix socket. ]]></description>
+    <pubDate>Sun, 10 May 2026 11:15:42 GMT</pubDate>
   </item><item>
-    <title>FAQ</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/faq</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/faq</guid>
-    <description><![CDATA[ FAQ Recurring questions, with the shortest useful answer. ]]></description>
-    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
+    <title>Protocol evolution &amp; versioning</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/api/protocol-evolution</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/api/protocol-evolution</guid>
+    <description><![CDATA[ Protocol evolution &amp; versioning How the wire protocol changes over time, what’s safe vs breaking, and how clients should detect server capabilities. ]]></description>
+    <pubDate>Sun, 10 May 2026 11:15:42 GMT</pubDate>
   </item><item>
-    <title>Troubleshooting</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/operations/troubleshooting</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/operations/troubleshooting</guid>
-    <description><![CDATA[ Troubleshooting Most failures fall into a small number of buckets. This page maps symptom to likely cause to fix. ]]></description>
-    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
+    <title>Firewall, ports &amp; NAT</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/server/firewall</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/server/firewall</guid>
+    <description><![CDATA[ Firewall, ports &amp; NAT What ports the plugin uses (and which it doesn’t), how to expose a remote vault host across networks, and what to put in the firewall rules. ]]></description>
+    <pubDate>Sun, 10 May 2026 11:15:42 GMT</pubDate>
   </item><item>
-    <title>Plugin auto-deploy</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/server/auto-deploy</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/server/auto-deploy</guid>
-    <description><![CDATA[ Plugin auto-deploy This is the default. ]]></description>
-    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
+    <title>Multi-user hosting</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/server/multi-user</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/server/multi-user</guid>
+    <description><![CDATA[ Multi-user hosting Hosting vaults for several users on one remote host. ]]></description>
+    <pubDate>Sun, 10 May 2026 11:15:42 GMT</pubDate>
   </item><item>
-    <title>Raspberry Pi</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/server/raspberry-pi</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/server/raspberry-pi</guid>
-    <description><![CDATA[ Raspberry Pi notes obsidian-remote-ssh runs comfortably on Raspberry Pi 4 / 5 / Zero 2 W. ]]></description>
-    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
+    <title>Server overview</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/server/overview</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/server/overview</guid>
+    <description><![CDATA[ Server / deploy — overview The server side is a single Go binary (obsidian-remote-server) that: Listens on a Unix socket (default ~/.obsidian-remote/server.sock). ]]></description>
+    <pubDate>Sun, 10 May 2026 11:15:42 GMT</pubDate>
   </item><item>
-    <title>systemd unit</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/server/systemd</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/server/systemd</guid>
-    <description><![CDATA[ systemd unit Run the daemon as a long-lived service so it survives plugin reconnects, OS reboots, and lets you pre-deploy across many hosts. ]]></description>
-    <pubDate>Sun, 10 May 2026 06:47:27 GMT</pubDate>
+    <title>Hardware-key SSH auth (YubiKey, TouchID, Secure Enclave)</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/cookbook/hardware-key</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/cookbook/hardware-key</guid>
+    <description><![CDATA[ Hardware-key SSH auth Sign SSH connections with a key that lives in tamper-resistant hardware — your YubiKey, your laptop’s Secure Enclave, or any FIDO2 authenticator. ]]></description>
+    <pubDate>Sun, 10 May 2026 11:04:44 GMT</pubDate>
+  </item><item>
+    <title>Cookbook</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/cookbook/</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/cookbook/</guid>
+    <description><![CDATA[ Cookbook Goal-oriented walkthroughs that compose pieces from the rest of these docs. If you want a step-by-step “how do I…” answer, start here. ]]></description>
+    <pubDate>Sun, 10 May 2026 11:04:44 GMT</pubDate>
+  </item><item>
+    <title>Editing multiple vaults from one Obsidian</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/cookbook/multi-vault</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/en/cookbook/multi-vault</guid>
+    <description><![CDATA[ Editing multiple vaults from one Obsidian Run several SSH profiles from a single Obsidian install — work vault on one host, personal vault on another, family-shared vault on a third. ]]></description>
+    <pubDate>Sun, 10 May 2026 11:04:44 GMT</pubDate>
   </item>
     </channel>
   </rss>
