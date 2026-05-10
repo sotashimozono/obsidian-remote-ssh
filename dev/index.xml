@@ -6,6 +6,42 @@
       <description>Last 10 notes on obsidian-remote-ssh</description>
       <generator>Quartz -- quartz.jzhao.xyz</generator>
       <item>
+    <title>Development setup</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/development-setup</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/development-setup</guid>
+    <description><![CDATA[ Development setup How to get a working dev environment for the plugin and the daemon. ]]></description>
+    <pubDate>Sun, 10 May 2026 10:54:08 GMT</pubDate>
+  </item><item>
+    <title>Release flow</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/release-flow</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/release-flow</guid>
+    <description><![CDATA[ Release flow Step-by-step for cutting releases — both beta (every merge to next) and stable (manual promotion). ]]></description>
+    <pubDate>Sun, 10 May 2026 10:54:08 GMT</pubDate>
+  </item><item>
+    <title>obsidian-remote-ssh</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/</guid>
+    <description><![CDATA[  Edit remote Obsidian vaults over SSH/SFTP — like VS Code Remote-SSH, but for Obsidian. ]]></description>
+    <pubDate>Sun, 10 May 2026 10:54:08 GMT</pubDate>
+  </item><item>
+    <title>Uninstalling</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/uninstalling</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/uninstalling</guid>
+    <description><![CDATA[ Uninstalling The plugin doesn’t touch system files, so a clean uninstall is straightforward. ]]></description>
+    <pubDate>Sun, 10 May 2026 10:54:08 GMT</pubDate>
+  </item><item>
+    <title>Upgrading</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/upgrading</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/upgrading</guid>
+    <description><![CDATA[ Upgrading the plugin + daemon The plugin and daemon are versioned together. ]]></description>
+    <pubDate>Sun, 10 May 2026 10:54:08 GMT</pubDate>
+  </item><item>
+    <title>Privacy &amp; data handling</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/privacy</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/privacy</guid>
+    <description><![CDATA[ Privacy &amp; data handling Plain answers about what data this plugin handles, where it lives, and what does (or does not) leave your machines. ]]></description>
+    <pubDate>Sun, 10 May 2026 10:54:08 GMT</pubDate>
+  </item><item>
     <title>Backup &amp; restore</title>
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/backup-restore</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/backup-restore</guid>
@@ -28,42 +64,6 @@
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/</guid>
     <description><![CDATA[ Architecture Design specs for the major subsystems — the why behind decisions, not just the what of the code. ]]></description>
-    <pubDate>Sun, 10 May 2026 10:24:04 GMT</pubDate>
-  </item><item>
-    <title>First connect</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/first-connect</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/first-connect</guid>
-    <description><![CDATA[ First connect — what’s actually happening The shadow vault model obsidian-remote-ssh does not edit your remote files directly through Obsidian’s vault layer. ]]></description>
-    <pubDate>Sun, 10 May 2026 10:24:04 GMT</pubDate>
-  </item><item>
-    <title>Reconnect behavior</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/reconnect</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/reconnect</guid>
-    <description><![CDATA[ Reconnect behavior When the SSH connection drops mid-session, the plugin retries up to 5 times with ×1.5 exponential backoff (1 s → 1.5 s → 2.25 s → … capped at 30 s) before surfacing an error. ]]></description>
-    <pubDate>Sun, 10 May 2026 10:24:04 GMT</pubDate>
-  </item><item>
-    <title>Token &amp; socket</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/security/token</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/security/token</guid>
-    <description><![CDATA[ Token &amp; socket The daemon authenticates clients via a 32-byte shared-secret token written to a 0600-mode file at startup, never persisted across daemon restarts. ]]></description>
-    <pubDate>Sun, 10 May 2026 10:24:04 GMT</pubDate>
-  </item><item>
-    <title>Binary signing</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/signing</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/signing</guid>
-    <description><![CDATA[ Binary signing Every release binary is signed with Cosign keyless (Sigstore OIDC) by the GitHub Actions workflow that produced it — no GPG key management, no trust roots to bootstrap. ]]></description>
-    <pubDate>Sun, 10 May 2026 10:24:04 GMT</pubDate>
-  </item><item>
-    <title>Host keys &amp; trust</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/host-keys</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/host-keys</guid>
-    <description><![CDATA[ Host keys &amp; trust obsidian-remote-ssh maintains its own known-host store (separate from ~/.ssh/known_hosts) so trust stays scoped to the plugin. ]]></description>
-    <pubDate>Sun, 10 May 2026 10:24:04 GMT</pubDate>
-  </item><item>
-    <title>Jump hosts (bastions)</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/jump-host</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/jump-host</guid>
-    <description><![CDATA[ Jump hosts (bastions) When the host you want to edit is not directly reachable — it sits behind a bastion / corporate gateway / Tailscale exit node — obsidian-remote-ssh can chain through one or more jump hosts (ssh -J-style). ]]></description>
     <pubDate>Sun, 10 May 2026 10:24:04 GMT</pubDate>
   </item>
     </channel>

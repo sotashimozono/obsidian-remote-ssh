@@ -47,8 +47,14 @@
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/configuration/this-device</loc>
     <lastmod>2026-05-10T04:22:26.000Z</lastmod>
   </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/development-setup</loc>
+    <lastmod>2026-05-10T10:54:08.000Z</lastmod>
+  </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/documentation</loc>
     <lastmod>2026-05-09T00:00:00.000Z</lastmod>
+  </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/release-flow</loc>
+    <lastmod>2026-05-10T10:54:08.000Z</lastmod>
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/testing-strategy</loc>
     <lastmod>2026-05-10T06:29:42.000Z</lastmod>
@@ -90,7 +96,7 @@
     <lastmod>2026-05-10T05:59:41.000Z</lastmod>
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/</loc>
-    <lastmod>2026-05-10T10:14:26.000Z</lastmod>
+    <lastmod>2026-05-10T10:54:08.000Z</lastmod>
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/daemon-panel</loc>
     <lastmod>2026-05-10T04:22:26.000Z</lastmod>
@@ -103,6 +109,15 @@
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/troubleshooting</loc>
     <lastmod>2026-05-10T06:47:27.000Z</lastmod>
+  </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/uninstalling</loc>
+    <lastmod>2026-05-10T10:54:08.000Z</lastmod>
+  </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/upgrading</loc>
+    <lastmod>2026-05-10T10:54:08.000Z</lastmod>
+  </url><url>
+    <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/privacy</loc>
+    <lastmod>2026-05-10T10:54:08.000Z</lastmod>
   </url><url>
     <loc>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/roadmap</loc>
     <lastmod>2026-05-10T05:59:41.000Z</lastmod>
