@@ -6,6 +6,54 @@
       <description>Last 10 notes on obsidian-remote-ssh</description>
       <generator>Quartz -- quartz.jzhao.xyz</generator>
       <item>
+    <title>Cookbook</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/cookbook/</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/cookbook/</guid>
+    <description><![CDATA[ Cookbook ドキュメント全体のパーツを組み合わせた、目的指向のウォークスルー集です。「X したい」という質問にステップバイステップで答えるなら、ここから始めてください。 レシピ 目的ページPi を自宅 vault サーバとしてセットアップ（ゼロ → 初回接続）Raspberry Pi vault from scratchプラグイン用の SSH 鍵を生成SSH 鍵の生成（英語）Pi 上の vault を Tailscale 経由で同僚と共有Tailscale 経由で共有（英語）自動デプロイされるデーモンを systemd 管理に置き換え + cosign 検証systemd-managed... ]]></description>
+    <pubDate>Sun, 10 May 2026 13:26:42 GMT</pubDate>
+  </item><item>
+    <title>Raspberry Pi vault from scratch</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/cookbook/raspberry-pi-vault</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/cookbook/raspberry-pi-vault</guid>
+    <description><![CDATA[ Raspberry Pi vault — ゼロからのセットアップ ゴール: 自宅ネットワーク上の Pi に Obsidian vault をホストし、ノート PC からこのプラグイン経由で編集する。Pi OS インストール込みで約 30 分。 ハードウェア + OS Pi 4 / Pi 5（RAM 4 GB で十分）。小規模 vault なら Pi Zero 2 W も動作 32 GB+ microSD、または（推奨）USB 接続 SSD Raspberry Pi OS (Bookworm) または Ubuntu Server 22.04+ for arm64 Raspberry Pi Ima... ]]></description>
+    <pubDate>Sun, 10 May 2026 13:26:42 GMT</pubDate>
+  </item><item>
+    <title>はじめに</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/getting-started/</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/getting-started/</guid>
+    <description><![CDATA[ はじめに 「プラグインを触ったことがない」状態から「リモートの vault を Obsidian で編集している」状態までの最短ルートです。3 ページ構成です。 ページ一覧 #ページ所要時間1インストール約 2 分2初回接続約 5 分3Quickstart（別経路）計約 5 分 2 つのルート SSH 到達可能なホスト（Pi、NAS、VPS、職場の開発機など）が既にある場合: Quickstart — 5 分版。詳しい説明はスキップ。 各ステップで何が起こっているかも知りたい場合: インストール — 何をインストールするのか、チャネル構成。 初回接続 — Connect ボタンを押した瞬間に裏... ]]></description>
+    <pubDate>Sun, 10 May 2026 13:26:42 GMT</pubDate>
+  </item><item>
+    <title>obsidian-remote-ssh</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/</guid>
+    <description><![CDATA[  Obsidian の vault を SSH/SFTP 経由でリモート編集できるプラグインです — VS Code Remote-SSH の Obsidian 版だと思ってください。 Raspberry Pi、自宅 NAS、VPS、その他 SSH 到達可能な Linux/macOS ホスト上の vault を、Obsidian から直接編集できます。サーバ側の小さな署名済みデーモンがファイル同期を担当するので、ノートが第三者のクラウドを経由することはありません。 まずはここから やりたいこと読むページ5 分で試したいQuickstart一通り順を追ってセットアップを理解したいTutorial... ]]></description>
+    <pubDate>Sun, 10 May 2026 13:26:42 GMT</pubDate>
+  </item><item>
+    <title>Obsidian Sync からの移行</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/migration/from-obsidian-sync</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/migration/from-obsidian-sync</guid>
+    <description><![CDATA[ Obsidian Sync からの移行 Obsidian Sync（Obsidian 公式の有料同期サービス）から obsidian-remote-ssh への乗り換えガイドです。Sync の「Obsidian のサーバ上に vault」モデルを「あなたのリモートホスト上に vault」モデルに置き換えます — エンドユーザ体験は同じ、所有権の物語が違うだけ。 スコープの正直なところ: このページはこのプラグイン側のセットアップで検証可能な部分を扱います。Obsidian Sync 内部の挙動（履歴保持、E2EE 鍵管理、バージョン復元のセマンティクス）の正典は Obsidian 公式の Sy... ]]></description>
+    <pubDate>Sun, 10 May 2026 13:26:42 GMT</pubDate>
+  </item><item>
+    <title>移行</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/migration/</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/migration/</guid>
+    <description><![CDATA[ 移行 別の同期ソリューションから obsidian-remote-ssh への乗り換えガイド集です。現時点では詳細ガイドが 1 本。利用ニーズが多い順に追加していきます。 ページ一覧 ページ移行元Obsidian Sync からObsidian の公式有料同期サービス — 精神的に最も近い相手 今後追加予定（要望は issue へ） Syncthing から Dropbox / iCloud / OneDrive（vault を同期フォルダに置くパターン）から Obsidian Git から Nextcloud から Remotely Save プラグインから 移行する前に まず 他の Obs... ]]></description>
+    <pubDate>Sun, 10 May 2026 13:26:42 GMT</pubDate>
+  </item><item>
+    <title>セキュリティ</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/security/</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/security/</guid>
+    <description><![CDATA[ セキュリティ 脅威モデルと、それに対する防御メカニズムです。まず 脅威モデル を読んでください — 他のページはそれを実装する可動部品です。 ページ一覧 ページ内容脅威モデル何を防御し、何を保証し、何が明示的にスコープ外かHost-key trust（英語）プラグイン独自の known-hosts ストア（~/.ssh/known_hosts とは別）、信頼ダイアログ、ホスト鍵ローテーションToken handling（英語）32 バイトのデーモンセッショントークン: 生成、ディスク上のライフサイクル、漏洩時の挙動Cosign verify（英語）ダウンロードしたデーモンバイナリの Sigst... ]]></description>
+    <pubDate>Sun, 10 May 2026 13:26:42 GMT</pubDate>
+  </item><item>
+    <title>脅威モデル</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/security/model</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/security/model</guid>
+    <description><![CDATA[ セキュリティ — 脅威モデル このページは obsidian-remote-ssh が何を防御し、何を防御しないかを示します。モデルが想定するより高い脅威環境にいる場合は、追加の防御を講じる必要があります。 信頼境界 graph TB subgraph Local[&quot;ローカルマシン (あなたのデスクトップ)&quot;] OB[Obsidian] PL[Plugin] KEY[&quot;~/.ssh/id_ed25519 (秘密鍵)&quot;] end subgraph Wire[&quot;SSH 転送路&quot;] SSH[SSH session] end subgraph... ]]></description>
+    <pubDate>Sun, 10 May 2026 13:26:42 GMT</pubDate>
+  </item><item>
     <title>obsidian-remote-ssh docs</title>
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/</guid>
@@ -16,54 +64,6 @@
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/comparison</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/comparison</guid>
     <description><![CDATA[ 他の Obsidian 同期ツールとの比較 「Obsidian の vault を複数デバイスで使えるようにしたい」を実現する手段は複数あります。このページは obsidian-remote-ssh と主要な代替手段を比較します — このプラグインが適切でないケースも含めて、率直に書きます。 このページの精神: 「最高のツール」というものは存在せず、各ツールはそれぞれのモデルに最適です。Obsidian Sync のモデルが合うなら Obsidian Sync を使ってください。 一覧 obsidian-remote-sshObsidian SyncSyncthingDropbox / iCl... ]]></description>
-    <pubDate>Sun, 10 May 2026 13:11:30 GMT</pubDate>
-  </item><item>
-    <title>FAQ</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/faq</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/faq</guid>
-    <description><![CDATA[ FAQ 繰り返し聞かれる質問と、最短の有用な回答です。 Obsidian Sync / Syncthing / Dropbox との違いは? obsidian-remote-sshObsidian SyncSyncthing / Dropboxファイルの所在あなたのリモートホスト上の単一の正本クラウド（Obsidian のサーバ）全デバイスにレプリケート認証あなたの SSH 鍵Obsidian アカウントサービスアカウント競合モデルmtime precondition、デーモン仲介ベクトル時計、クラウド仲介ファイル更新時刻、*-conflict-.. ]]></description>
-    <pubDate>Sun, 10 May 2026 13:11:30 GMT</pubDate>
-  </item><item>
-    <title>初回接続</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/getting-started/first-connect</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/getting-started/first-connect</guid>
-    <description><![CDATA[ 初回接続 — 裏で何が起こっているのか Shadow vault モデル obsidian-remote-ssh は Obsidian の vault レイヤを経由してリモートファイルを直接編集しません。代わりに以下を行います: ローカルディスク上に shadow vault を &lt;plugin-dir&gt;/shadow-vaults/&lt;profile-id&gt;/ 配下に作成。これは実体としての Obsidian vault です。 リモート vault のファイルを shadow vault に遅延ミラーリング（大きいファイルは初回オープン時にフェッチ） 両側を監視し、S... ]]></description>
-    <pubDate>Sun, 10 May 2026 13:11:30 GMT</pubDate>
-  </item><item>
-    <title>はじめに</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/getting-started/</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/getting-started/</guid>
-    <description><![CDATA[ はじめに 「プラグインを触ったことがない」状態から「リモートの vault を Obsidian で編集している」状態までの最短ルートです。3 ページ構成です。 ページ一覧 #ページ所要時間1インストール約 2 分2初回接続約 5 分3Quickstart（別経路）計約 5 分 2 つのルート SSH 到達可能なホスト（Pi、NAS、VPS、職場の開発機など）が既にある場合: Quickstart — 5 分版。詳しい説明はスキップ。 各ステップで何が起こっているかも知りたい場合: インストール — 何をインストールするのか、チャネル構成。 初回接続 — Connect ボタンを押した瞬間に裏... ]]></description>
-    <pubDate>Sun, 10 May 2026 13:11:30 GMT</pubDate>
-  </item><item>
-    <title>インストール</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/getting-started/install</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/getting-started/install</guid>
-    <description><![CDATA[ obsidian-remote-ssh のインストール Obsidian Community Plugins ストア（stable）または BRAT（beta チャネル — 新機能はここに先に届きます）からインストールできます。両者は同じプラグインコードベースを配布し、違いは BRAT / Obsidian がどの manifest を取得するかだけです。 オプション 1 — Community Plugins ストア（stable） ステータス: 申請中。現時点では BRAT 経由のインストールを推奨します。 Obsidian → Settings → Community plugins を... ]]></description>
-    <pubDate>Sun, 10 May 2026 13:11:30 GMT</pubDate>
-  </item><item>
-    <title>Quickstart</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/getting-started/quickstart</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/getting-started/quickstart</guid>
-    <description><![CDATA[ 5 分間 Quickstart 「プラグインインストール済み」から「リモート vault 上のファイルを編集している」までを 5 分で完走するページです。前提条件: obsidian-remote-ssh がインストール済み（インストール 参照） 公開鍵が ~/.ssh/authorized_keys に登録された SSH 到達可能な Linux/macOS ホスト そのホスト上の vault 用ディレクトリ（空でも OK） これらがまだ揃っていない場合は、Docker quickstart server（英語）でサンドボックスをワンコマンド構築できます。 1. ]]></description>
-    <pubDate>Sun, 10 May 2026 13:11:30 GMT</pubDate>
-  </item><item>
-    <title>obsidian-remote-ssh</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/</guid>
-    <description><![CDATA[  Obsidian の vault を SSH/SFTP 経由でリモート編集できるプラグインです — VS Code Remote-SSH の Obsidian 版だと思ってください。 Raspberry Pi、自宅 NAS、VPS、その他 SSH 到達可能な Linux/macOS ホスト上の vault を、Obsidian から直接編集できます。サーバ側の小さな署名済みデーモンがファイル同期を担当するので、ノートが第三者のクラウドを経由することはありません。 まずはここから やりたいこと読むページ5 分で試したいQuickstart一通り順を追ってセットアップを理解したいTutorial... ]]></description>
-    <pubDate>Sun, 10 May 2026 13:11:30 GMT</pubDate>
-  </item><item>
-    <title>運用</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/operations/</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/operations/</guid>
-    <description><![CDATA[ 運用 プラグインが動いている状態で「運用する」場面 — ログを読む、不具合を切り分ける、速度を調整する、アップグレード、アンインストール — のページ群です。症状 → 対処の対応表として使ってください。 ページ一覧 ページこんなとき読むトラブルシューティング何かが動かない。症状 → 原因 → 対処のマップ。「壊れた」系の質問はまずここから。Performance tuning（英語）「動くけど遅い」。ネットワーク / ディスク / inotify / デーモン側キャッシュのチューニングReconnect behaviour（英語）SSH リンクが切れたときの挙動とリトライ設定Daemon pa... ]]></description>
-    <pubDate>Sun, 10 May 2026 13:11:30 GMT</pubDate>
-  </item><item>
-    <title>トラブルシューティング</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/operations/troubleshooting</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/operations/troubleshooting</guid>
-    <description><![CDATA[ トラブルシューティング ほとんどの不具合は少数のパターンに収まります。このページは症状 → 原因 → 対処の対応表です。 接続が即座に失敗する 症状原因対処Permission denied (publickey)SSH 認証が間違っているリモートの ~/.ssh/authorized_keys に鍵が登録されているか確認。先にターミナルから ssh -i &lt;key&gt; user@host で疎通確認Host key verification failedプラグインの known-host ストアが拒否した設定 → trust ダイアログを開く。known host が変わった場合は... ]]></description>
     <pubDate>Sun, 10 May 2026 13:11:30 GMT</pubDate>
   </item>
     </channel>
