@@ -1,13 +1,17 @@
 # Remote SSH for Obsidian
 
-[![CI](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/ci.yml)
-[![Integration](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/integration.yml/badge.svg?branch=main)](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/integration.yml)
-[![Security](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/security.yml)
-[![codecov](https://codecov.io/gh/sotashimozono/obsidian-remote-ssh/branch/main/graph/badge.svg)](https://codecov.io/gh/sotashimozono/obsidian-remote-ssh)
+[![CI](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/ci.yml/badge.svg?branch=next)](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/ci.yml)
+[![Integration](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/integration.yml/badge.svg?branch=next)](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/integration.yml)
+[![Security](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/security.yml/badge.svg?branch=next)](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/security.yml)
+[![codecov](https://codecov.io/gh/sotashimozono/obsidian-remote-ssh/branch/next/graph/badge.svg)](https://codecov.io/gh/sotashimozono/obsidian-remote-ssh)
+[![Docs](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/docs.yml/badge.svg?branch=next)](https://github.com/sotashimozono/obsidian-remote-ssh/actions/workflows/docs.yml)
 
 [![GitHub release](https://img.shields.io/github/v/release/sotashimozono/obsidian-remote-ssh?display_name=tag&sort=semver)](https://github.com/sotashimozono/obsidian-remote-ssh/releases)
 [![Downloads](https://img.shields.io/github/downloads/sotashimozono/obsidian-remote-ssh/total)](https://github.com/sotashimozono/obsidian-remote-ssh/releases)
 [![Open issues](https://img.shields.io/github/issues/sotashimozono/obsidian-remote-ssh)](https://github.com/sotashimozono/obsidian-remote-ssh/issues)
+
+[![Docs (stable)](https://img.shields.io/badge/docs-stable-7b5ea7?logo=obsidian&logoColor=white)](http://codes.sota-shimozono.com/obsidian-remote-ssh/)
+[![Docs (dev preview)](https://img.shields.io/badge/docs-dev_preview-9b7ec8?logo=obsidian&logoColor=white)](http://codes.sota-shimozono.com/obsidian-remote-ssh/dev/)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Obsidian 1.5+](https://img.shields.io/badge/Obsidian-1.5+-7C3AED?logo=obsidian&logoColor=white)](https://obsidian.md)
