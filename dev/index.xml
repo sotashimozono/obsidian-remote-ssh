@@ -6,6 +6,18 @@
       <description>Last 10 notes on obsidian-remote-ssh</description>
       <generator>Quartz -- quartz.jzhao.xyz</generator>
       <item>
+    <title>data.json schema reference</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/reference/data-json</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/reference/data-json</guid>
+    <description><![CDATA[ data.json schema reference Complete schema for &lt;vault&gt;/.obsidian/plugins/remote-ssh/data.json — the file that holds your profiles, host-key trust, and plugin settings. ]]></description>
+    <pubDate>Sun, 10 May 2026 14:25:27 GMT</pubDate>
+  </item><item>
+    <title>Multi-user hosting</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/multi-user</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/server/multi-user</guid>
+    <description><![CDATA[ Multi-user hosting Hosting vaults for several users on one remote host. ]]></description>
+    <pubDate>Sun, 10 May 2026 14:24:52 GMT</pubDate>
+  </item><item>
     <title>Cookbook</title>
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/cookbook/</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/cookbook/</guid>
@@ -53,18 +65,6 @@
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/security/model</guid>
     <description><![CDATA[ セキュリティ — 脅威モデル このページは obsidian-remote-ssh が何を防御し、何を防御しないかを示します。モデルが想定するより高い脅威環境にいる場合は、追加の防御を講じる必要があります。 信頼境界 graph TB subgraph Local[&quot;ローカルマシン (あなたのデスクトップ)&quot;] OB[Obsidian] PL[Plugin] KEY[&quot;~/.ssh/id_ed25519 (秘密鍵)&quot;] end subgraph Wire[&quot;SSH 転送路&quot;] SSH[SSH session] end subgraph... ]]></description>
     <pubDate>Sun, 10 May 2026 13:26:42 GMT</pubDate>
-  </item><item>
-    <title>obsidian-remote-ssh docs</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/</guid>
-    <description><![CDATA[  English docs → 日本語ドキュメント → . ]]></description>
-    <pubDate>Sun, 10 May 2026 13:11:30 GMT</pubDate>
-  </item><item>
-    <title>他の Obsidian 同期ツールとの比較</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/comparison</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/ja/comparison</guid>
-    <description><![CDATA[ 他の Obsidian 同期ツールとの比較 「Obsidian の vault を複数デバイスで使えるようにしたい」を実現する手段は複数あります。このページは obsidian-remote-ssh と主要な代替手段を比較します — このプラグインが適切でないケースも含めて、率直に書きます。 このページの精神: 「最高のツール」というものは存在せず、各ツールはそれぞれのモデルに最適です。Obsidian Sync のモデルが合うなら Obsidian Sync を使ってください。 一覧 obsidian-remote-sshObsidian SyncSyncthingDropbox / iCl... ]]></description>
-    <pubDate>Sun, 10 May 2026 13:11:30 GMT</pubDate>
   </item>
     </channel>
   </rss>
