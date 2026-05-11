@@ -38,31 +38,31 @@ jobs:
     # Branch protection lists this as a required check, and a
     # job-level `if:` would cause GitHub to omit the check entirely
     # ("expected but missing" → merge blocked). We instead skip at
-    # the STEP level for sync-shape PRs: no real work happens, but
-    # the empty job still reports green.
+    # the STEP level for auto-generated PRs: no real work happens,
+    # but the empty job still reports green.
     #
-    # Two PR shapes count as "sync" for the skip:
+    # Three PR shapes are skipped:
     #   1. head_ref == 'main' — the auto-opened main → next sync PR
     #      from sync-main-to-next.yml.
     #   2. head_ref starts with 'chore/sync-main-to-next' — a manual
-    #      conflict-resolution PR opened when (1) hits conflicts that
-    #      can't be resolved on the main head ref. Same purpose, same
-    #      semantics; the version-check rules don't apply because the
-    #      whole point is to pull main's version state into next.
+    #      conflict-resolution PR opened when (1) hits conflicts.
+    #   3. actor == 'dependabot[bot]' — dependency-bump PRs carry no
+    #      plugin version change by design.
     steps:
-      - name: Detect sync-shape PR
+      - name: Detect auto-generated PR (sync or Dependabot)
         id: sync_check
         run: |
           if [[ "${{ github.head_ref }}" == "main" ]] \
-            || [[ "${{ github.head_ref }}" == chore/sync-main-to-next* ]]; then
+            || [[ "${{ github.head_ref }}" == chore/sync-main-to-next* ]] \
+            || [[ "${{ github.actor }}" == "dependabot[bot]" ]]; then
             echo "is_sync=true" >> "$GITHUB_OUTPUT"
           else
             echo "is_sync=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Skip note (sync PRs only)
+      - name: Skip note (auto-generated PRs)
         if: steps.sync_check.outputs.is_sync == 'true'
-        run: echo "Sync-shape PR (head=${{ github.head_ref }}) — version-check is a no-op."
+        run: echo "Auto-generated PR (actor=${{ github.actor }}, head=${{ github.head_ref }}) — version-check is a no-op."
 
       - if: steps.sync_check.outputs.is_sync != 'true'
         uses: actions/checkout@v6
@@ -152,7 +152,7 @@ jobs:
           fi
 
       - name: STABLE channel (PR → main) — head version must be plain X.Y.Z
-        if: github.base_ref == 'main'
+        if: github.base_ref == 'main' && steps.sync_check.outputs.is_sync != 'true'
         run: |
           head="${{ steps.versions.outputs.head_manifest }}"
           if [[ "$head" == *-beta.* ]]; then
