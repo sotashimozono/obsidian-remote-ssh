@@ -256,19 +256,22 @@ jobs:
       - name: Verify bundle size
         working-directory: plugin
         # Cap raised 600 → 800 KB in #149 to absorb the bundled
-        # xterm.js + addon-fit (~300 KB combined). esbuild code-
-        # splitting requires `format: 'esm'`, which Obsidian plugins
-        # don't support, so the terminal deps land in the same main.js
-        # along with everything else. 800 KB is still standard for an
-        # Obsidian plugin (Excalidraw 5.9 MB / Templater 4.2 MB /
-        # Dataview 4.1 MB) — flag here if a future feature pushes us
-        # higher and we need to revisit on-demand loading.
+        # xterm.js + addon-fit (~300 KB combined). Raised 800 → 900 KB
+        # for xterm 6: its CJS build is ~40% larger than 5.x, and even
+        # after preferring the ESM build via esbuild `mainFields`, the
+        # plugin gains ~55 KB. esbuild code-splitting requires
+        # `format: 'esm'`, which Obsidian plugins don't support, so the
+        # terminal deps land in the same main.js along with everything
+        # else. 900 KB is still standard for an Obsidian plugin
+        # (Excalidraw 5.9 MB / Templater 4.2 MB / Dataview 4.1 MB) —
+        # flag here if a future feature pushes us higher and we need
+        # to revisit on-demand loading.
         run: |
           SIZE=$(stat -c%s main.js)
           KB=$(( SIZE / 1024 ))
           echo "Bundle: ${KB} KB"
-          if [ $SIZE -gt 819200 ]; then
-            echo "::error::Bundle ${KB} KB exceeds 800 KB limit"
+          if [ $SIZE -gt 921600 ]; then
+            echo "::error::Bundle ${KB} KB exceeds 900 KB limit"
             exit 1
           fi
 

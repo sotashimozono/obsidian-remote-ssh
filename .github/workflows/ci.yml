@@ -153,7 +153,7 @@ jobs:
       - run: npm ci
       - name: Production build
         run: node esbuild.config.mjs production
-      - name: Bundle size guard (< 800 KB)
+      - name: Bundle size guard (< 900 KB)
         # Use Node for stat so the script works identically on
         # ubuntu/macos/windows (GNU `stat -c%s` and BSD `stat -f%z`
         # diverge; PowerShell's `Get-Item` is a third dialect). Inline
@@ -161,8 +161,10 @@ jobs:
         # the printed strings don't confuse the YAML parser.
         #
         # Cap raised 600 → 800 KB in #149 to absorb the bundled
-        # xterm.js + addon-fit (~300 KB combined). Mirror of
-        # `release.yml`'s same-named guard — both must agree.
+        # xterm.js + addon-fit (~300 KB combined). Raised 800 → 900 KB
+        # for xterm 6: even after switching to the smaller ESM build via
+        # `mainFields: ['module', 'main']`, xterm 6 adds ~55 KB over 5.x.
+        # Mirror of `release.yml`'s same-named guard — both must agree.
         shell: bash
         run: |
           node -e '
@@ -170,8 +172,8 @@ jobs:
           const size = fs.statSync("main.js").size;
           const kb = Math.round(size / 1024);
           console.log("Bundle: " + kb + " KB");
-          if (size > 819200) {
-            console.error("::error::Bundle " + kb + " KB exceeds 800 KB limit — check for unwanted large deps");
+          if (size > 921600) {
+            console.error("::error::Bundle " + kb + " KB exceeds 900 KB limit — check for unwanted large deps");
             process.exit(1);
           }'
       - name: Upload build artifact
