@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import {
   launchObsidian,
   connectAndOpenShadow,
+  runCommandViaPalette,
   type ObsidianHandle,
 } from './helpers/obsidian';
 import { scaffoldTestVault, type ScaffoldResult } from './helpers/vault-scaffold';
@@ -189,9 +190,17 @@ test.describe('Remote → Obsidian reflection (M11)', () => {
       fileLocator(obsidian.page, noteName),
     ).toBeVisible({ timeout: REFLECT_TIMEOUT_MS });
 
-    // Open the markdown note. Obsidian's File Explorer activates a
-    // file on a single click; preview mode is the default.
+    // Open the markdown note, then explicitly switch to Reading view.
+    // Obsidian's default is LIVE PREVIEW (a CodeMirror editing mode —
+    // reflect test 2 asserts on `.cm-editor .cm-content`, proving the
+    // default), where `.markdown-preview-view` does NOT exist. The
+    // old assertion therefore never matched and timed out as
+    // "element(s) not found" regardless of ResourceBridge — diagnosed
+    // in run 26015295742. Toggle to Reading view so the assertion
+    // tests what it claims (the bridge-served <img> in the preview
+    // pane), keeping the real `naturalWidth > 0` regression check.
     await fileLocator(obsidian.page, noteName).click();
+    await runCommandViaPalette(obsidian.page, 'Toggle reading view');
 
     // The embedded image surfaces as an <img> inside the markdown
     // preview pane. Asserting `naturalWidth > 0` is what catches a

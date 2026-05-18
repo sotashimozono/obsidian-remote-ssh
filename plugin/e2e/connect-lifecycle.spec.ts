@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
 import {
   launchObsidian,
-  driveConnectFlow,
-  findShadowVaultPath,
+  connectAndWaitForShadowVault,
+  waitForShadowVaultLoaded,
   type ObsidianHandle,
 } from './helpers/obsidian';
 import { scaffoldTestVault, type ScaffoldResult } from './helpers/vault-scaffold';
@@ -54,13 +54,25 @@ test.describe('connect lifecycle (SFTP)', () => {
   });
 
   test('Connect → patch → runAutoConnect → populate completes end-to-end over SFTP', async () => {
+    // Per-attempt log cutoff. `beforeAll` builds the scaffold once, so
+    // a Playwright retry reuses the same scaffold/shadow dirs and the
+    // same APPEND-mode console.log files. Without this gate the retry
+    // would match the FIRST attempt's stale `SFTP channel open` /
+    // `Adapter patched` / `populateVaultFromRemote` lines and race
+    // past straight to the File Explorer DOM check (the exact 13s
+    // false-fail seen in run 26010373894). Every oracle below is
+    // scoped to lines emitted at/after this instant.
+    const since = new Date().toISOString();
+
     // 1. Real Obsidian on the scaffold vault, plugin force-loaded.
     scaffoldHandle = await launchObsidian(scaffold.vaultPath);
 
-    // 2. Drive the real Connect command; the plugin bootstraps a
+    // 2. Drive the real Connect command (retries the palette flow if
+    //    CI Obsidian wasn't interactive yet); the plugin bootstraps a
     //    shadow vault and registers it in obsidian.json.
-    await driveConnectFlow(scaffoldHandle.page);
-    const shadowVaultPath = await findShadowVaultPath(scaffold.vaultPath, 20_000);
+    const shadowVaultPath = await connectAndWaitForShadowVault(
+      scaffoldHandle.page, scaffold.vaultPath, 45_000,
+    );
 
     // 3. The connecting (scaffold) window must NOT be stuck
     //    re-bootstrapping/re-spawning the shadow — the production
@@ -70,6 +82,7 @@ test.describe('connect lifecycle (SFTP)', () => {
       /WindowSpawner: firing obsidian:\/\/open/,
       3,
       'scaffold window must not loop-spawn the shadow vault',
+      since,
     );
 
     // 4. Hand off to a fresh Obsidian on the shadow vault — this is
@@ -87,6 +100,7 @@ test.describe('connect lifecycle (SFTP)', () => {
       /SFTP channel open/,
       60_000,
       'SFTP channel must open',
+      since,
     );
     //    b) the adapter was patched over the SFTP transport
     await waitForLog(
@@ -94,6 +108,7 @@ test.describe('connect lifecycle (SFTP)', () => {
       /Adapter patched via SFTP/,
       60_000,
       'adapter must patch after SFTP open (absent in the incident)',
+      since,
     );
     //    c) the remote tree was actually walked into the vault model.
     //    A partial / empty populate STILL logs this line ("0 entries")
@@ -105,6 +120,7 @@ test.describe('connect lifecycle (SFTP)', () => {
       /populateVaultFromRemote\(shadow-[^)]*\):.*?\d+ entries/,
       90_000,
       'vault must populate from remote (absent in the incident)',
+      since,
     );
     const populatedCount = Number(
       /(\d+) entries/.exec(populateEntry.msg ?? '')?.[1] ?? '0',
@@ -121,18 +137,34 @@ test.describe('connect lifecycle (SFTP)', () => {
       /WindowSpawner: firing obsidian:\/\/open/,
       2,
       'shadow window must not loop-spawn',
+      since,
     );
 
-    // 7. Observable end state: File Explorer shows remote content.
-    //    (The remote docker vault is the integration fixture tree.)
-    const fileExplorerHasEntries = await shadowHandle.page
-      .locator('.nav-files-container .nav-file-title')
+    // 7. Observable end state: the remote vault is LOADED. Assert the
+    //    product's own model (getMarkdownFiles()>=1 + a file-explorer
+    //    leaf) — the exact "the remote tree loaded" outcome the field
+    //    report is about. Diagnosed across runs 26015295742 /
+    //    26016246390: the model + leaf are consistently correct
+    //    (built Nf, 0 errors; leaf visible 300x717; navTitles>0) but
+    //    headless Obsidian paints the File Explorer tree lazily, so a
+    //    DOM `.nav-file-title` visibility wait races under Xvfb and
+    //    false-reds a vault that actually loaded fine.
+    await waitForShadowVaultLoaded(shadowHandle.page, shadowLog, 30_000);
+
+    // Best-effort: confirm the File Explorer DOM also painted. A miss
+    // is annotated, not fatal — the model assertion already proved
+    // the vault loaded; this only flags the headless paint lag.
+    const fePainted = await shadowHandle.page
+      .locator('.workspace-leaf-content[data-type="file-explorer"] .nav-file-title')
       .first()
-      .isVisible({ timeout: 30_000 })
+      .waitFor({ state: 'visible', timeout: 10_000 })
+      .then(() => true)
       .catch(() => false);
-    expect(
-      fileExplorerHasEntries,
-      'File Explorer should render remote files after populate',
-    ).toBe(true);
+    test.info().annotations.push({
+      type: fePainted ? 'fe-rendered' : 'fe-paint-lazy',
+      description: fePainted
+        ? 'File Explorer painted the remote tree'
+        : 'vault model loaded; File Explorer DOM paint lagged (headless, non-fatal)',
+    });
   });
 });

@@ -66,9 +66,37 @@ export function readLogEntries(logPath: string): LogEntry[] {
   return out;
 }
 
-/** Count entries whose `msg` matches `pattern`. */
-export function countLog(logPath: string, pattern: RegExp): number {
-  return readLogEntries(logPath).filter(
+/**
+ * A timestamp cutoff for the oracle. The plugin logs `ts` as an
+ * ISO-8601 UTC string (`2026-05-18T02:33:21.043Z`), which is
+ * lexicographically ordered, so a string `>=` compare is a correct
+ * chronological filter without parsing.
+ *
+ * `console.log` is an *append* buffer keyed by the (now per-spec)
+ * profile id, but a Playwright RETRY of the same spec reuses the
+ * `beforeAll` scaffold — so the retry inherits the first attempt's
+ * lines in the same file. Capturing `new Date().toISOString()` right
+ * before the shadow window launches and passing it as `since` makes
+ * every oracle consider only THIS attempt's lines: a stale `SFTP
+ * channel open` / `Adapter patched` from a prior attempt (or a prior
+ * spec, or a cached runner) can no longer satisfy a wait or inflate a
+ * count. Entries with no `ts` are excluded once a cutoff is set
+ * (can't prove they're fresh). Omitting `since` keeps the legacy
+ * unfiltered behaviour for the rpc specs that don't share this race.
+ */
+function entriesSince(logPath: string, since?: string): LogEntry[] {
+  const all = readLogEntries(logPath);
+  if (!since) return all;
+  return all.filter((e) => typeof e.ts === 'string' && e.ts >= since);
+}
+
+/** Count entries whose `msg` matches `pattern` (optionally since a cutoff). */
+export function countLog(
+  logPath: string,
+  pattern: RegExp,
+  since?: string,
+): number {
+  return entriesSince(logPath, since).filter(
     (e) => typeof e.msg === 'string' && pattern.test(e.msg),
   ).length;
 }
@@ -84,11 +112,12 @@ export async function waitForLog(
   pattern: RegExp,
   timeoutMs: number,
   label: string,
+  since?: string,
 ): Promise<LogEntry> {
   const deadline = Date.now() + timeoutMs;
   let entries: LogEntry[] = [];
   while (Date.now() < deadline) {
-    entries = readLogEntries(logPath);
+    entries = entriesSince(logPath, since);
     const hit = entries.find(
       (e) => typeof e.msg === 'string' && pattern.test(e.msg),
     );
@@ -119,11 +148,12 @@ export async function waitForCount(
   min: number,
   timeoutMs: number,
   label: string,
+  since?: string,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let n = 0;
   while (Date.now() < deadline) {
-    n = countLog(logPath, pattern);
+    n = countLog(logPath, pattern, since);
     if (n >= min) return;
     await new Promise((r) => setTimeout(r, 500));
   }
@@ -143,8 +173,9 @@ export function assertAtMost(
   pattern: RegExp,
   max: number,
   label: string,
+  since?: string,
 ): void {
-  const n = countLog(logPath, pattern);
+  const n = countLog(logPath, pattern, since);
   if (n > max) {
     throw new Error(
       `log-oracle: ${label} — expected ${pattern} at most ${max}× but ` +

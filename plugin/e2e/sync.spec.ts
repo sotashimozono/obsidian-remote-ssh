@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import {
   launchObsidian,
   connectAndOpenShadow,
+  runCommandViaPalette,
   type ObsidianHandle,
 } from './helpers/obsidian';
 import { scaffoldTestVault, type ScaffoldResult } from './helpers/vault-scaffold';
@@ -80,13 +81,10 @@ test.describe('Remote sync verification', () => {
   test('create — new note appears on remote', async () => {
     const { page } = obsidian;
 
-    // Create a new note via command palette
-    await page.keyboard.press('Control+P');
-    await page.waitForTimeout(300);
-    await page.keyboard.type('Create new note');
-    await page.waitForTimeout(500);
-    const cmd = page.locator('.prompt .suggestion-item').first();
-    await cmd.click();
+    // Create a new note via command palette (hardened against CI's
+    // racy palette wiring — the fixed-sleep version timed the whole
+    // test out at 120s in run 26015295742).
+    await runCommandViaPalette(page, 'Create new note');
     await page.waitForTimeout(1_000);
 
     // Type the filename in the title area
@@ -137,13 +135,9 @@ test.describe('Remote sync verification', () => {
   test('delete — removed note disappears from remote', async () => {
     const { page } = obsidian;
 
-    // Delete the current note via command palette
-    await page.keyboard.press('Control+P');
-    await page.waitForTimeout(300);
-    await page.keyboard.type('Delete current file');
-    await page.waitForTimeout(500);
-    const cmd = page.locator('.prompt .suggestion-item').first();
-    await cmd.click();
+    // Delete the current note via command palette (hardened — see
+    // the create test).
+    await runCommandViaPalette(page, 'Delete current file');
 
     // Obsidian shows a confirmation dialog — click Delete
     const confirmBtn = page.locator('.modal-button-container button:has-text("Delete")');

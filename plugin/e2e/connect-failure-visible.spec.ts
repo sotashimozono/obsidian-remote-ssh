@@ -1,8 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
   launchObsidian,
-  driveConnectFlow,
-  findShadowVaultPath,
+  connectAndWaitForShadowVault,
   type ObsidianHandle,
 } from './helpers/obsidian';
 import { scaffoldTestVault, type ScaffoldResult } from './helpers/vault-scaffold';
@@ -62,10 +61,19 @@ test.describe('connect failure is visible (bad remotePath, SFTP)', () => {
   });
 
   test('a bad remotePath fails visibly — no silent hang, no spawn storm, no false connect', async () => {
+    // Per-attempt cutoff — `beforeAll`'s scaffold (and its shadow dir)
+    // is reused across Playwright retries with APPEND-mode logs. The
+    // `.toBe(0)` patch/populate assertions below are negative checks:
+    // a stale `Adapter patched` / `populateVaultFromRemote` line from
+    // a prior attempt would make them spuriously non-zero. Scope every
+    // oracle to lines emitted at/after this instant.
+    const since = new Date().toISOString();
+
     scaffoldHandle = await launchObsidian(scaffold.vaultPath);
 
-    await driveConnectFlow(scaffoldHandle.page);
-    const shadowVaultPath = await findShadowVaultPath(scaffold.vaultPath, 20_000);
+    const shadowVaultPath = await connectAndWaitForShadowVault(
+      scaffoldHandle.page, scaffold.vaultPath, 45_000,
+    );
 
     // C2 guard: one Connect drive must not have produced a spawn storm
     // in the source window.
@@ -74,6 +82,7 @@ test.describe('connect failure is visible (bad remotePath, SFTP)', () => {
       /WindowSpawner: firing obsidian:\/\/open/,
       3,
       'source window must not loop-spawn on a single Connect',
+      since,
     );
 
     await scaffoldHandle.cleanup();
@@ -89,15 +98,16 @@ test.describe('connect failure is visible (bad remotePath, SFTP)', () => {
       /Connect failed|did not reach CONNECTED state|auto-connect to .* failed/,
       90_000,
       'a bad remotePath must fail VISIBLY (logged), not hang silently',
+      since,
     );
 
     // It must NOT have lied about success: no patch, no populate.
     expect(
-      countLog(shadowLog, /Adapter patched via/),
+      countLog(shadowLog, /Adapter patched via/, since),
       'a failed connect must not patch the adapter',
     ).toBe(0);
     expect(
-      countLog(shadowLog, /populateVaultFromRemote\([^)]*\):.*entries/),
+      countLog(shadowLog, /populateVaultFromRemote\([^)]*\):.*entries/, since),
       'a failed connect must not populate the vault',
     ).toBe(0);
 
@@ -107,6 +117,7 @@ test.describe('connect failure is visible (bad remotePath, SFTP)', () => {
       /WindowSpawner: firing obsidian:\/\/open/,
       2,
       'shadow window must not loop-spawn on a failed connect',
+      since,
     );
   });
 });

@@ -143,17 +143,88 @@ export async function launchObsidian(
  *      empty passphrase input does NOT submit; verified empirically)
  */
 export async function driveConnectFlow(page: Page): Promise<void> {
-  await page.keyboard.press('Control+P');
-  await page.waitForTimeout(500);
-  await page.keyboard.type('Remote SSH: Connect', { delay: 25 });
-  await page.waitForTimeout(800);
-  await page.keyboard.press('Enter');
-  await page.waitForTimeout(1_200);
+  // CI's headless Obsidian is slow/racy to wire the command palette
+  // for ~seconds after the plugin loads (proven: the pre-existing
+  // smoke "settings tab" test fails first try, passes on retry). The
+  // old fixed `waitForTimeout`s raced that window — Ctrl+P / Enter
+  // landed before the palette accepted input, so the connect command
+  // never fired and the connect-lifecycle/reconnect specs hard-failed
+  // with "connect command likely never fired". Wait for the palette
+  // input to actually be present before typing; re-open it if the
+  // first Ctrl+P didn't take.
+  const paletteInput = page
+    .locator('.prompt input, input.prompt-input, .suggestion-container input')
+    .first();
 
+  let opened = false;
+  for (let i = 0; i < 5 && !opened; i++) {
+    await page.keyboard.press('Control+P');
+    opened = await paletteInput
+      .waitFor({ state: 'visible', timeout: 4_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!opened) await page.keyboard.press('Escape').catch(() => { /* ignore */ });
+  }
+  if (!opened) {
+    throw new Error('driveConnectFlow: command palette never opened (Obsidian not interactive)');
+  }
+
+  await paletteInput.fill('');
+  await page.keyboard.type('Remote SSH: Connect', { delay: 20 });
+  // Let the fuzzy filter settle on the matching command.
+  await page.waitForTimeout(600);
+  await page.keyboard.press('Enter');
+
+  // The per-profile connect modal appears for passphrase/confirm
+  // profiles; for the scaffold's key-auth profile connect can fire
+  // straight off Enter (no modal). Click the button if it shows; its
+  // absence is not an error.
   const connectBtn = page.locator('.modal button:has-text("Connect")').first();
   if (await connectBtn.isVisible({ timeout: 5_000 }).catch(() => false)) {
     await connectBtn.click();
   }
+}
+
+/**
+ * Robust connect: drive the palette flow, then wait for the shadow
+ * vault to register. If it doesn't appear within a per-attempt
+ * window, re-drive the connect command (CI Obsidian may not have been
+ * interactive on the first attempt) — bounded by `timeoutMs`.
+ *
+ * Re-driving is safe: a successful (if slow) first spawn is guarded
+ * by the plugin's `shadowSpawnInFlight` debounce (a second connect
+ * within ~15s is a no-op), and that slow spawn's entry still shows up
+ * for a later poll; a first attempt that never fired left no guard,
+ * so the retry fires cleanly.
+ */
+export async function connectAndWaitForShadowVault(
+  page: Page,
+  scaffoldVaultPath: string,
+  timeoutMs = 45_000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let attempts = 0;
+  let lastErr: unknown = null;
+  while (Date.now() < deadline) {
+    attempts++;
+    try {
+      await driveConnectFlow(page);
+    } catch (e) {
+      lastErr = e;
+      await page.waitForTimeout(1_500);
+      continue;
+    }
+    const perAttempt = Math.min(15_000, Math.max(3_000, deadline - Date.now()));
+    try {
+      return await findShadowVaultPath(scaffoldVaultPath, perAttempt);
+    } catch (e) {
+      lastErr = e; // not registered yet — re-drive the connect command
+    }
+  }
+  throw new Error(
+    `connectAndWaitForShadowVault: no shadow vault after ${attempts} connect ` +
+    `attempt(s) in ${timeoutMs}ms — ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
+  );
 }
 
 /**
@@ -473,4 +544,206 @@ async function waitForCDP(url: string, timeoutMs: number): Promise<void> {
     delay = Math.min(delay * 1.5, 3_000);
   }
   throw new Error(`CDP endpoint at ${url} did not become ready within ${timeoutMs}ms`);
+}
+
+/**
+ * Run an Obsidian command through the command palette, robust to CI's
+ * slow/racy palette wiring. The old per-spec pattern —
+ * `Ctrl+P` → `waitForTimeout(300)` → type → `waitForTimeout(500)` →
+ * click `.prompt .suggestion-item` — raced the palette: in CI the
+ * suggestion list isn't populated yet when the fixed sleeps elapse,
+ * so the click hangs and the whole test hits its 120s timeout (the
+ * sync.spec create/edit/delete cascade in run 26015295742). Mirrors
+ * `driveConnectFlow`'s hardened open: re-press until the palette
+ * input is actually visible, then wait for a real suggestion to
+ * appear before clicking it.
+ */
+export async function runCommandViaPalette(
+  page: Page,
+  query: string,
+): Promise<void> {
+  const paletteInput = page
+    .locator('.prompt input, input.prompt-input, .suggestion-container input')
+    .first();
+
+  let opened = false;
+  for (let i = 0; i < 5 && !opened; i++) {
+    await page.keyboard.press('Control+P');
+    opened = await paletteInput
+      .waitFor({ state: 'visible', timeout: 4_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!opened) await page.keyboard.press('Escape').catch(() => { /* ignore */ });
+  }
+  if (!opened) {
+    throw new Error(
+      `runCommandViaPalette: command palette never opened for "${query}" ` +
+      '(Obsidian not interactive)',
+    );
+  }
+
+  await paletteInput.fill('');
+  await page.keyboard.type(query, { delay: 20 });
+
+  // Wait for the fuzzy filter to actually surface a suggestion before
+  // clicking — the fixed sleep this replaces is exactly what raced.
+  const firstSuggestion = page.locator('.prompt .suggestion-item').first();
+  await firstSuggestion.waitFor({ state: 'visible', timeout: 10_000 });
+  await firstSuggestion.click();
+}
+
+/**
+ * Diagnostic snapshot for the "File Explorer empty after a successful
+ * SFTP connect+populate" failure. The bare Playwright "element(s) not
+ * found" can't distinguish three very different root causes:
+ *
+ *   1. `VaultModelBuilder.build` inserted nothing (walk produced
+ *      entries but every insert errored) — `fileMapKeys` ≈ 0.
+ *   2. Model built but the File Explorer view never picked the
+ *      `create` events up — `fileMapKeys` large, `navTitles` 0.
+ *   3. Model built AND rendered, but the file-explorer leaf is in a
+ *      collapsed/hidden sidebar — `navTitles` > 0, `display:none`.
+ *
+ * Captures the in-page vault model + every file-explorer leaf's
+ * computed visibility, plus the tail of the shadow window's
+ * structured log (where `VaultModelBuilder: built Nf + Md` / its
+ * per-entry errors land), so one CI round is conclusive instead of
+ * speculative. Read-only.
+ */
+export interface ShadowModelSnapshot {
+  /** Entries in `vault.fileMap` (folders + files + the shadow .obsidian). */
+  fileMapKeys: number;
+  rootChildren: number;
+  loadedFiles: number;
+  /** `vault.getMarkdownFiles().length` — the remote `.md` the populate built. */
+  markdownFiles: number;
+  fileExplorerLeaves: number;
+  leaves: Array<{
+    navTitles: number;
+    display: string;
+    visibility: string;
+    w: number;
+    h: number;
+  }>;
+}
+
+/**
+ * Read the shadow window's in-page vault model + file-explorer leaf
+ * geometry. This is the GROUND TRUTH for "did the remote vault load":
+ * `vault.getMarkdownFiles()` / `fileMap` are what the product builds
+ * from the remote walk, independent of whether headless Obsidian has
+ * painted the File Explorer tree yet (the DOM `.nav-file-title`
+ * visibility is a virtualised/lazy render that races in Xvfb). Read-only.
+ */
+async function readShadowModel(
+  page: Page,
+): Promise<ShadowModelSnapshot | { error: string }> {
+  try {
+    return await page.evaluate(() => {
+      const app = (window as unknown as { app?: Record<string, unknown> }).app;
+      const v = (app as { vault?: Record<string, unknown> } | undefined)?.vault as
+        | {
+            fileMap?: Record<string, unknown>;
+            getRoot?: () => { children?: unknown[] };
+            getAllLoadedFiles?: () => unknown[];
+            getMarkdownFiles?: () => unknown[];
+          }
+        | undefined;
+      const ws = (app as { workspace?: { getLeavesOfType?: (t: string) => unknown[] } } | undefined)
+        ?.workspace;
+      const leaves = ws?.getLeavesOfType?.('file-explorer') ?? [];
+      const leafInfo = leaves.map((l) => {
+        const el = (l as { containerEl?: HTMLElement }).containerEl;
+        const navTitles = el?.querySelectorAll?.('.nav-file-title').length ?? -1;
+        const cs = el ? getComputedStyle(el) : null;
+        const rect = el?.getBoundingClientRect?.();
+        return {
+          navTitles,
+          display: cs?.display ?? '?',
+          visibility: cs?.visibility ?? '?',
+          w: rect ? Math.round(rect.width) : -1,
+          h: rect ? Math.round(rect.height) : -1,
+        };
+      });
+      return {
+        fileMapKeys: Object.keys(v?.fileMap ?? {}).length,
+        rootChildren: v?.getRoot?.()?.children?.length ?? -1,
+        loadedFiles: v?.getAllLoadedFiles?.().length ?? -1,
+        markdownFiles: v?.getMarkdownFiles?.().length ?? -1,
+        fileExplorerLeaves: leaves.length,
+        leaves: leafInfo,
+      };
+    });
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * Diagnostic snapshot string: the in-page model + the shadow window's
+ * structured-log tail (where `VaultModelBuilder: built Nf + Md` / its
+ * per-entry errors land). Attached to assertion failures so a red
+ * run is conclusive.
+ */
+export async function dumpShadowState(
+  page: Page,
+  shadowLogPath: string,
+): Promise<string> {
+  const m = await readShadowModel(page);
+  const model = 'error' in m ? `evaluate-failed: ${m.error}` : JSON.stringify(m);
+
+  let logTail = '(shadow console.log absent)';
+  try {
+    const raw = fs.readFileSync(shadowLogPath, 'utf8').replace(/\0/g, '');
+    logTail = raw
+      .trim()
+      .split('\n')
+      .slice(-30)
+      .join('\n');
+  } catch {
+    /* absent / mid-write — keep the placeholder */
+  }
+
+  return (
+    `shadow vault model: ${model}\n` +
+    `--- ${shadowLogPath} (last 30 lines) ---\n${logTail}`
+  );
+}
+
+/**
+ * Wait until the shadow window has actually LOADED the remote vault —
+ * the user-facing outcome the field report ("vault won't load") is
+ * about. Asserts on the product's own model (`getMarkdownFiles() >= 1`
+ * AND a file-explorer leaf exists), NOT on DOM `.nav-file-title`
+ * visibility: the docker fixture vault always has `remote_demo*.md`,
+ * so the populate building ≥1 markdown file into `vault.fileMap` is
+ * the exact "the remote tree loaded" signal, and it is immune to
+ * headless Obsidian's lazy/virtualised File Explorer paint (which
+ * races under Xvfb and produced false reds even though the model and
+ * the leaf were correct — diagnosed across runs 26015295742 /
+ * 26016246390). Throws with the full diagnostic on timeout.
+ */
+export async function waitForShadowVaultLoaded(
+  page: Page,
+  shadowLogPath: string,
+  timeoutMs = 30_000,
+): Promise<ShadowModelSnapshot> {
+  const deadline = Date.now() + timeoutMs;
+  let last: ShadowModelSnapshot | { error: string } | null = null;
+  while (Date.now() < deadline) {
+    last = await readShadowModel(page);
+    if (
+      !('error' in last) &&
+      last.markdownFiles >= 1 &&
+      last.fileExplorerLeaves >= 1
+    ) {
+      return last;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error(
+    'shadow vault did not load the remote tree ' +
+    `(need getMarkdownFiles()>=1 AND a file-explorer leaf) within ${timeoutMs}ms.\n` +
+    (await dumpShadowState(page, shadowLogPath)),
+  );
 }
