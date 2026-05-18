@@ -21,7 +21,13 @@ name: E2E smoke (Playwright + Obsidian)
 
 on:
   pull_request:
-    branches: [main]
+    # Both release branches. `next` is where features (and the
+    # connect-lifecycle / connect-failure specs) land first — gating
+    # it here is what stops a broken connect reaching stable again
+    # (1.0.49 shipped connect-broken because nothing exercised the
+    # real connect path on a next PR). Mark "Obsidian E2E smoke" as a
+    # required check on next in branch protection to make it binding.
+    branches: [main, next]
     paths:
       # Plugin or daemon source — anything that could change the
       # Obsidian-side behaviour the spec drives.

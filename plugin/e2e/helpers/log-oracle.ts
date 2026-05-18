@@ -106,6 +106,34 @@ export async function waitForLog(
 }
 
 /**
+ * Poll until `pattern` has occurred at least `min` times, or throw
+ * after `timeoutMs`. Used by the reconnect spec: a successful SFTP
+ * reconnect emits a *fresh* `SFTP channel open` line, so "count grew
+ * past the pre-drop baseline" is the reliable recovered-oracle for
+ * the SFTP transport (setState doesn't log; recovery has no other
+ * stable logged signal).
+ */
+export async function waitForCount(
+  logPath: string,
+  pattern: RegExp,
+  min: number,
+  timeoutMs: number,
+  label: string,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let n = 0;
+  while (Date.now() < deadline) {
+    n = countLog(logPath, pattern);
+    if (n >= min) return;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error(
+    `log-oracle: ${label} — ${pattern} occurred ${n}× (< ${min}) within ` +
+    `${timeoutMs}ms at ${logPath}`,
+  );
+}
+
+/**
  * Assert `pattern` occurs at most `max` times — the spawn-loop guard.
  * In the broken build `WindowSpawner: firing obsidian://open` repeated
  * dozens of times; a healthy connect fires it a bounded number.

@@ -13,15 +13,20 @@ import * as net from 'node:net';
 export const SSHD_HOST = '127.0.0.1';
 export const SSHD_PORT = 2222;
 
-export async function assertSshdReachable(): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
+/** One-shot TCP probe — resolves if the port accepts a connection. */
+function probeSshd(): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     const sock = net
       .connect({ host: SSHD_HOST, port: SSHD_PORT })
       .setTimeout(5_000)
       .once('connect', () => { sock.destroy(); resolve(); })
       .once('timeout', () => { sock.destroy(); reject(new Error('timeout')); })
       .once('error', reject);
-  }).catch((e) => {
+  });
+}
+
+export async function assertSshdReachable(): Promise<void> {
+  await probeSshd().catch((e) => {
     throw new Error(
       `docker test sshd not reachable at ${SSHD_HOST}:${SSHD_PORT} ` +
       `(${(e as Error).message}). Run \`npm run sshd:start\` first. ` +
@@ -29,4 +34,35 @@ export async function assertSshdReachable(): Promise<void> {
       `must not pass CI green (that is how 1.0.49 shipped broken).`,
     );
   });
+}
+
+/**
+ * Poll until sshd accepts connections again, or throw after
+ * `timeoutMs`. `npm run sshd:start` exits 0 the moment `docker
+ * compose up -d` returns — the container's sshd is NOT yet accepting
+ * connections at that point. Without this wait the reconnect spec's
+ * recovery assertion times out and blames the *plugin* ("reconnect
+ * must recover") when the real fault is "the harness never brought
+ * sshd back". This makes that failure attributable.
+ */
+export async function waitForSshdReachable(
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastErr = 'unknown';
+  while (Date.now() < deadline) {
+    try {
+      await probeSshd();
+      return;
+    } catch (e) {
+      lastErr = (e as Error).message;
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
+  }
+  throw new Error(
+    `sshd did not become reachable at ${SSHD_HOST}:${SSHD_PORT} within ` +
+    `${timeoutMs}ms after restart (last: ${lastErr}). This is a HARNESS ` +
+    `fault (sshd:start ran but the container never came back), NOT a ` +
+    `plugin reconnect failure — fix the docker test sshd, not the plugin.`,
+  );
 }
