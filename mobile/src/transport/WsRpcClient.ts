@@ -18,7 +18,7 @@ export interface WsRpcClientOptions {
 interface PendingCall {
   resolve: (value: unknown) => void;
   reject:  (reason: unknown) => void;
-  timer:   ReturnType<typeof setTimeout>;
+  timer:   ReturnType<typeof window.setTimeout>;
 }
 
 /**
@@ -56,7 +56,7 @@ export class WsRpcClient {
     );
 
     return new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = window.setTimeout(() => {
         this.pending.delete(id);
         reject(new RpcError(-32603, `RPC timeout: ${method}`));
       }, this.timeoutMs);
@@ -65,7 +65,7 @@ export class WsRpcClient {
       try {
         this.channel.send(body);
       } catch (e) {
-        clearTimeout(timer);
+        window.clearTimeout(timer);
         this.pending.delete(id);
         reject(e instanceof Error ? e : new Error(String(e)));
       }
@@ -118,7 +118,7 @@ export class WsRpcClient {
     if (typeof m['id'] === 'number') {
       const p = this.pending.get(m['id']);
       if (!p) return;
-      clearTimeout(p.timer);
+      window.clearTimeout(p.timer);
       this.pending.delete(m['id']);
       const err = m['error'];
       if (err && typeof err === 'object') {
@@ -146,7 +146,7 @@ export class WsRpcClient {
     this.closed = true;
     const reason = err ?? new RpcError(-32603, 'WsRpcClient: stream closed before reply');
     for (const p of this.pending.values()) {
-      clearTimeout(p.timer);
+      window.clearTimeout(p.timer);
       p.reject(reason);
     }
     this.pending.clear();

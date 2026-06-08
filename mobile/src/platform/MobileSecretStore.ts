@@ -58,14 +58,17 @@ class LocalStorageSecretStore implements SecretStore {
   private readonly prefix = 'obsidian-remote-ssh:';
 
   async get(key: string): Promise<string | null> {
-    return localStorage.getItem(this.prefix + key);
+    // eslint-disable-next-line no-restricted-globals -- mobile context: App API unavailable
+    return window.localStorage.getItem(this.prefix + key);
   }
 
   async set(key: string, value: string): Promise<void> {
-    localStorage.setItem(this.prefix + key, value);
+    // eslint-disable-next-line no-restricted-globals -- mobile context: App API unavailable
+    window.localStorage.setItem(this.prefix + key, value);
   }
 
   async delete(key: string): Promise<void> {
-    localStorage.removeItem(this.prefix + key);
+    // eslint-disable-next-line no-restricted-globals -- mobile context: App API unavailable
+    window.localStorage.removeItem(this.prefix + key);
   }
 }
