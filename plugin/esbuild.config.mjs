@@ -1,4 +1,5 @@
 import esbuild from 'esbuild';
+import { readFileSync, writeFileSync } from 'fs';
 
 const prod = process.argv[2] === 'production';
 
@@ -13,6 +14,24 @@ const nativeNodePlugin = {
       external: true,
     }));
   },
+};
+
+// ssh2 probes BigInt support via `new Function("return 2n ** 32n")()`.
+// That literal `new Function(...)` trips Obsidian's plugin-reviewer
+// "Dynamic Code Execution" check, even though it executes no user input.
+// Obsidian's Electron runtime always supports BigInt, so the probe is
+// moot — inline the value it would compute and drop the `new Function`,
+// leaving the shipped main.js free of dynamic code execution.
+const stripSsh2BigIntProbe = (file) => {
+  const code = readFileSync(file, 'utf8');
+  const patched = code.replaceAll(
+    'new Function("return 2n ** 32n")()',
+    '(2n ** 32n)',
+  );
+  if (patched !== code) {
+    writeFileSync(file, patched);
+    console.log('esbuild: stripped ssh2 BigInt new Function probe');
+  }
 };
 
 esbuild.build({
@@ -39,4 +58,4 @@ esbuild.build({
   sourcemap: prod ? false : 'inline',
   minify: prod,
   outfile: 'main.js',
-}).catch(() => process.exit(1));
+}).then(() => stripSsh2BigIntProbe('main.js')).catch(() => process.exit(1));

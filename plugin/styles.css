@@ -262,7 +262,7 @@
   width: 100%;
   /* Solid background ensures xterm's transparent canvas paints over a
    * predictable colour in both Obsidian light + dark themes. */
-  background: #000;
+  background: #000000;
 }
 
 .remote-ssh-terminal-disconnected {
@@ -275,7 +275,7 @@
  *
  * Copyright (c) 2014 The xterm.js authors. All rights reserved.
  * Copyright (c) 2012-2013, Christopher Jeffrey (MIT License)
- * https://github.com/chjj/term.js
+ * github.com/chjj/term.js
  */
 
 .xterm {
@@ -311,8 +311,8 @@
 }
 
 .xterm .composition-view {
-    background: #000;
-    color: #FFF;
+    background: #000000;
+    color: #FFFFFF;
     display: none;
     position: absolute;
     white-space: nowrap;
@@ -321,7 +321,7 @@
 .xterm .composition-view.active { display: block; }
 
 .xterm .xterm-viewport {
-    background-color: #000;
+    background-color: #000000;
     overflow-y: scroll;
     cursor: default;
     position: absolute;

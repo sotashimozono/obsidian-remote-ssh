@@ -337,6 +337,23 @@ public issue for security bugs.
 
 ---
 
+## Permissions & data access
+
+Remote SSH is **desktop-only** and, by design, reaches outside the Obsidian
+vault API to talk to the remote host you configure. Everything below is
+required for SSH/SFTP remote editing. **No telemetry, no analytics** —
+nothing leaves your machine except to the host you set up in a profile.
+
+| Capability | Why it's needed | Scope |
+|---|---|---|
+| **Network** | SSH/SFTP connection | Only the host / port / optional jump host you enter in a profile |
+| **Filesystem (outside the vault)** | Read your SSH private key and `~/.ssh/config` to authenticate; stage the daemon binary | `~/.ssh/*` and the plugin's own `server-bin/` folder only |
+| **System identity** | Pre-fill sensible defaults for the client id and remote username | `os.hostname()` and `os.userInfo().username` (both overridable in settings); `SSH_AUTH_SOCK` / `APPDATA` / `XDG_CONFIG_HOME` to locate the SSH agent and config |
+| **Process execution** | Start the daemon on the **remote** host over the SSH channel | Remote host only — no local shell execution |
+| **Clipboard (write)** | The "Copy to clipboard" button copies diagnostic logs | Only on explicit click; the clipboard is never read |
+
+---
+
 ## Contributing
 
 Contributions welcome. Dev setup, branch + commit conventions, version-bump
