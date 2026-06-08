@@ -40,3 +40,5 @@ docs-site/public/
 docs-site/docs/
 docs-site/.github/
 docs-site/content/
+# Quartz framework source — fetched in CI from docs/quartz-framework branch
+docs-site/quartz/

@@ -38,6 +38,11 @@ jobs:
           cache: npm
           cache-dependency-path: docs-site/package-lock.json
 
+      - name: Checkout Quartz framework
+        run: |
+          git fetch origin docs/quartz-framework
+          git checkout origin/docs/quartz-framework -- docs-site/quartz/
+
       - name: Install Quartz dependencies
         working-directory: docs-site
         run: npm ci
