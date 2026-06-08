@@ -2,6 +2,7 @@
 # notably shell scripts (CR mangles the shebang) and Dockerfiles
 # (CR sneaks into RUN commands). Without this, a Windows checkout
 # could commit CRLF and break CI / container builds.
+*            text=auto eol=lf
 *.sh         text eol=lf
 *.mjs        text eol=lf
 Dockerfile   text eol=lf

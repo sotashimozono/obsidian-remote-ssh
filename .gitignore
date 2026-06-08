@@ -33,12 +33,8 @@ docker/test-vault/*
 !docker/test-vault/.gitkeep
 !docker/test-vault/remote_demo*.md
 
-# Quartz docs site build artifacts and Quartz's own bundled content/docs
-docs-site/node_modules/
-docs-site/.quartz-cache/
-docs-site/public/
-docs-site/docs/
-docs-site/.github/
-docs-site/content/
+# Quartz build artifacts (generated at repo root after docs-site/ consolidation)
+.quartz-cache/
+public/
 # Quartz framework source — fetched in CI from docs/quartz-framework branch
-docs-site/quartz/
+quartz/

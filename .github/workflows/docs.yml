@@ -5,13 +5,15 @@ on:
     branches: [main, next]
     paths:
       - "docs/**"
-      - "docs-site/**"
+      - "quartz.config.ts"
+      - "quartz.layout.ts"
       - "scripts/check-docs-links.mjs"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
-      - "docs-site/**"
+      - "quartz.config.ts"
+      - "quartz.layout.ts"
       - "scripts/check-docs-links.mjs"
       - ".github/workflows/docs.yml"
 
@@ -36,15 +38,14 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: docs-site/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Checkout Quartz framework
         run: |
           git fetch origin docs/quartz-framework
-          git checkout origin/docs/quartz-framework -- docs-site/quartz/
+          git checkout origin/docs/quartz-framework -- quartz/
 
       - name: Install Quartz dependencies
-        working-directory: docs-site
         run: npm ci
 
       # ── Lint: wikilinks + anchor refs (runs on PRs and pushes) ───────────
@@ -72,18 +73,17 @@ jobs:
       # ── Build (ALWAYS — incl. PRs, so a docs break is caught pre-merge
       #    instead of turning main/next red post-merge) ──────────────────
       - name: Build docs (${{ env.DOCS_CHANNEL }})
-        working-directory: docs-site
         # Invoke via node directly — bypasses bin-shim/exec-bit issues
         # (npx fell back to a non-executable shim on the main-branch run).
         # QUARTZ_BASE_URL comes from the resolve step via $GITHUB_ENV.
-        run: node ./quartz/bootstrap-cli.mjs build -d ../docs
+        run: node ./quartz/bootstrap-cli.mjs build -d docs
 
       # ── Deploy (push to a release branch only — never on PRs) ────────────
       - name: Deploy — stable → gh-pages root
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: JamesIves/github-pages-deploy-action@v4
         with:
-          folder: docs-site/public
+          folder: public
           branch: gh-pages
           clean: true
           # Preserve the /dev/ subtree when cleaning the root deployment
@@ -94,7 +94,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/next'
         uses: JamesIves/github-pages-deploy-action@v4
         with:
-          folder: docs-site/public
+          folder: public
           branch: gh-pages
           target-folder: dev
           clean: true
