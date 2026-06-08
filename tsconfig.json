@@ -1,4 +1,12 @@
 {
   "extends": "./plugin/tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "obsidian": ["plugin/node_modules/obsidian"],
+      "@xterm/xterm": ["plugin/node_modules/@xterm/xterm"],
+      "@xterm/addon-fit": ["plugin/node_modules/@xterm/addon-fit"]
+    }
+  },
   "include": ["plugin/src/**/*.ts"]
 }

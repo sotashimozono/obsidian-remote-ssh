@@ -580,6 +580,7 @@ function insertIntoFileMap(vault: Vault, path: string, entry: TAbstractFile): vo
 // import edge. `Exact extends true` forces a compile error the moment
 // conformance breaks.
 type _Assert<T extends true> = T;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- compile-time conformance check, intentionally unused at runtime
 type _WriterReflectorConformance = _Assert<
   VaultModelBuilder extends WriterReflector ? true : false
 >;
