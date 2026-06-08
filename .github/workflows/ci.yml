@@ -153,6 +153,26 @@ jobs:
       - run: npm ci
       - name: Production build
         run: node esbuild.config.mjs production
+      - name: Dynamic code execution guard (no new Function / eval)
+        # esbuild.config.mjs's stripSsh2BigIntProbe inlines ssh2's
+        # `new Function("return 2n ** 32n")()` so the shipped main.js has
+        # zero dynamic code execution (an Obsidian reviewer requirement).
+        # Assert it here: a silent no-op (ssh2/esbuild string drift) would
+        # otherwise re-introduce the finding and only surface at Obsidian's
+        # multi-day review queue. Mirror of release.yml's same-named guard.
+        shell: bash
+        run: |
+          node -e '
+          const fs = require("fs");
+          const code = fs.readFileSync("main.js", "utf8");
+          const nf = (code.match(/new Function/g) || []).length;
+          const ev = (code.match(/\beval\s*\(/g) || []).length;
+          console.log("new Function: " + nf + ", eval(: " + ev);
+          if (nf > 0 || ev > 0) {
+            console.error("::error::main.js contains dynamic code execution (new Function/eval) — stripSsh2BigIntProbe may have silently no-oped");
+            process.exit(1);
+          }
+          console.log("Dynamic code execution guard passed.");'
       - name: Bundle size guard (< 900 KB)
         # Use Node for stat so the script works identically on
         # ubuntu/macos/windows (GNU `stat -c%s` and BSD `stat -f%z`

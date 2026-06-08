@@ -16,22 +16,34 @@ const nativeNodePlugin = {
   },
 };
 
-// ssh2 probes BigInt support via `new Function("return 2n ** 32n")()`.
-// That literal `new Function(...)` trips Obsidian's plugin-reviewer
-// "Dynamic Code Execution" check, even though it executes no user input.
-// Obsidian's Electron runtime always supports BigInt, so the probe is
-// moot — inline the value it would compute and drop the `new Function`,
-// leaving the shipped main.js free of dynamic code execution.
+// ssh2 initialises its `MAX_32BIT_BIGINT` constant via
+// `new Function("return 2n ** 32n")()` — a BigInt-availability guard wrapped
+// in try/catch (see ssh2/lib/protocol/node-fs-compat.js). That literal
+// `new Function(...)` trips Obsidian's plugin-reviewer "Dynamic Code
+// Execution" check, even though it executes no user input. Obsidian's
+// Electron runtime always supports BigInt, so the value is constant — inline
+// it and drop the `new Function`, leaving the shipped main.js free of
+// dynamic code execution.
+//
+// PROBE is a load-bearing string literal: if a future ssh2 release or an
+// esbuild minification change alters it, `replaceAll` would silently no-op
+// and re-introduce the reviewer finding. So a zero-replacement outcome is a
+// HARD ERROR on production builds (warn-only on dev, so the local loop isn't
+// blocked while the pattern is being updated).
 const stripSsh2BigIntProbe = (file) => {
+  const PROBE = 'new Function("return 2n ** 32n")()';
   const code = readFileSync(file, 'utf8');
-  const patched = code.replaceAll(
-    'new Function("return 2n ** 32n")()',
-    '(2n ** 32n)',
-  );
-  if (patched !== code) {
-    writeFileSync(file, patched);
-    console.log('esbuild: stripped ssh2 BigInt new Function probe');
+  if (!code.includes(PROBE)) {
+    const msg =
+      `stripSsh2BigIntProbe: probe ${JSON.stringify(PROBE)} not found in `
+      + `${file}. ssh2 may have changed it or esbuild altered the literal — `
+      + 'update PROBE or remove this step. Refusing to ship an unverified bundle.';
+    if (prod) throw new Error(msg);
+    console.warn(`esbuild: ${msg} (dev build — skipping)`);
+    return;
   }
+  writeFileSync(file, code.replaceAll(PROBE, '(2n ** 32n)'));
+  console.log('esbuild: stripped ssh2 BigInt new Function probe');
 };
 
 esbuild.build({
@@ -58,4 +70,7 @@ esbuild.build({
   sourcemap: prod ? false : 'inline',
   minify: prod,
   outfile: 'main.js',
-}).then(() => stripSsh2BigIntProbe('main.js')).catch(() => process.exit(1));
+}).then(() => stripSsh2BigIntProbe('main.js')).catch((err) => {
+  console.error('esbuild build failed:', err);
+  process.exit(1);
+});

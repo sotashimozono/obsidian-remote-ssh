@@ -275,6 +275,25 @@ jobs:
             exit 1
           fi
 
+      - name: Dynamic code execution guard (no new Function / eval)
+        # Mirror of ci.yml's same-named guard — assert the shipped main.js
+        # has zero dynamic code execution before publishing the release,
+        # so a silent stripSsh2BigIntProbe no-op can't ship to users.
+        working-directory: plugin
+        shell: bash
+        run: |
+          node -e '
+          const fs = require("fs");
+          const code = fs.readFileSync("main.js", "utf8");
+          const nf = (code.match(/new Function/g) || []).length;
+          const ev = (code.match(/\beval\s*\(/g) || []).length;
+          console.log("new Function: " + nf + ", eval(: " + ev);
+          if (nf > 0 || ev > 0) {
+            console.error("::error::main.js contains dynamic code execution (new Function/eval) — stripSsh2BigIntProbe may have silently no-oped");
+            process.exit(1);
+          }
+          console.log("Dynamic code execution guard passed.");'
+
       - name: Generate changelog (git-cliff, grouped by Conventional Commits type)
         id: changelog
         # `--unreleased` (NOT `--latest`): the new tag for this run
