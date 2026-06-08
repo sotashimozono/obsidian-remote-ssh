@@ -23,10 +23,20 @@ import { clearNotices } from './tests/__mocks__/obsidian';
 const g = globalThis as unknown as {
   activeWindow?: typeof globalThis;
   activeDocument?: object;
+  window?: typeof globalThis;
 };
 
 if (typeof g.activeWindow === 'undefined') {
   g.activeWindow = globalThis;
+}
+
+// eslint-plugin-obsidianmd 0.3.0 flipped `prefer-active-window-timers` →
+// `prefer-window-timers`, so source now calls `window.setTimeout(...)`.
+// The node environment (integration/replay configs) has no `window`, so
+// alias it to globalThis too. jsdom already provides one, so this is a
+// no-op under the unit config.
+if (typeof g.window === 'undefined') {
+  g.window = globalThis;
 }
 
 if (typeof g.activeDocument === 'undefined') {
