@@ -61,8 +61,18 @@ export interface RemoteEntryWithRel extends RemoteEntry {
  * @internal Exported for testing only.
  */
 export function wireKeyboardInteractiveHandler(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ssh2 Client.on uses `any[]` in its listener signature; narrowing to `unknown[]` breaks assignability
-  client: { on(event: string, listener: (...args: any[]) => void): void },
+  client: {
+    on(
+      event: 'keyboard-interactive',
+      listener: (
+        name: string,
+        instructions: string,
+        lang: string,
+        prompts: Prompt[],
+        finish: KeyboardInteractiveCallback,
+      ) => void,
+    ): void;
+  },
   handler: KbdInteractiveHandlerFn,
 ): void {
   client.on('keyboard-interactive', (
