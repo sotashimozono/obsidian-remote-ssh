@@ -59,9 +59,9 @@ export class ReconnectManager {
     // inject `setTimeoutFn` / `clearTimeoutFn` directly so they don't
     // touch the global at all.
     this.setTimeoutFn = opts.setTimeoutFn
-      ?? ((cb, ms) => activeWindow.setTimeout(cb, ms));
+      ?? ((cb, ms) => window.setTimeout(cb, ms));
     this.clearTimeoutFn = opts.clearTimeoutFn
-      ?? ((h) => { activeWindow.clearTimeout(h as number); });
+      ?? ((h) => { window.clearTimeout(h as number); });
     this.rng = opts.rng ?? Math.random;
   }
 

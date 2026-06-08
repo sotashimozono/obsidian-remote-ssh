@@ -76,11 +76,11 @@ export class Telemetry {
       this.enabled = true;
       // activeWindow is Obsidian's popout-aware scheduler; vitest setup
       // shims it to globalThis so the call works in Node tests too.
-      this.timer = activeWindow.setInterval(() => { void this.flush(); }, FLUSH_INTERVAL_MS);
+      this.timer = window.setInterval(() => { void this.flush(); }, FLUSH_INTERVAL_MS);
     } else {
       await this.flush();
       if (this.timer !== null) {
-        activeWindow.clearInterval(this.timer);
+        window.clearInterval(this.timer);
         this.timer = null;
       }
       this.enabled = false;

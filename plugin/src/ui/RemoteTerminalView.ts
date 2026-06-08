@@ -150,7 +150,7 @@ export class RemoteTerminalView extends ItemView {
 
   onClose(): Promise<void> {
     if (this.resizeTimer !== null) {
-      activeWindow.clearTimeout(this.resizeTimer);
+      window.clearTimeout(this.resizeTimer);
       this.resizeTimer = null;
     }
     this.resizeObserver?.disconnect();
@@ -167,12 +167,12 @@ export class RemoteTerminalView extends ItemView {
   }
 
   private scheduleResize(): void {
-    if (this.resizeTimer !== null) activeWindow.clearTimeout(this.resizeTimer);
+    if (this.resizeTimer !== null) window.clearTimeout(this.resizeTimer);
     // activeWindow.setTimeout binds the timer to the currently focused
     // popout window so it dies cleanly with the window — required by
     // obsidianmd/prefer-active-window-timers and matches the rest of
     // the plugin's timer usage.
-    this.resizeTimer = activeWindow.setTimeout(() => {
+    this.resizeTimer = window.setTimeout(() => {
       this.resizeTimer = null;
       this.applyResize();
     }, RESIZE_DEBOUNCE_MS);

@@ -186,7 +186,7 @@ export default class RemoteSshPlugin extends Plugin {
         },
       },
       () => this.adapterMgr.isPatched(),
-      (cb) => { activeWindow.setTimeout(cb, 0); },
+      (cb) => { window.setTimeout(cb, 0); },
     );
     this.registerEvent(
       this.app.vault.on('rename', (file) => renameFollower.handleRename(file)),
@@ -603,8 +603,8 @@ export default class RemoteSshPlugin extends Plugin {
           }
         },
         debounceMs: 1500,
-        setTimer: (cb, ms) => activeWindow.setTimeout(cb, ms),
-        clearTimer: (h) => activeWindow.clearTimeout(h as number),
+        setTimer: (cb, ms) => window.setTimeout(cb, ms),
+        clearTimer: (h) => window.clearTimeout(h as number),
       });
       // Seed the just-pulled bytes as the synced baseline so the
       // pull's own writes (and Obsidian re-saving an identical file
@@ -935,7 +935,7 @@ export default class RemoteSshPlugin extends Plugin {
       // ~15s so an impatient double/triple-click can't fire a second
       // spawn into that gap. `activeWindow.setTimeout` (not bare
       // setTimeout) for Obsidian popout-window compatibility.
-      activeWindow.setTimeout(() => { this.shadowSpawnInFlight = false; }, 15_000);
+      window.setTimeout(() => { this.shadowSpawnInFlight = false; }, 15_000);
     } catch (e) {
       // Spawn FAILED — nothing is opening. Clear the guard NOW so the
       // user can retry immediately; a 15s lockout here would strand

@@ -27,9 +27,9 @@ export class LargeTransferBar {
       this.render();
       // Manage the tick loop based on whether anything is in flight.
       if (transfers.length > 0 && this.tickHandle === null) {
-        this.tickHandle = activeWindow.setInterval(() => this.render(), 250);
+        this.tickHandle = window.setInterval(() => this.render(), 250);
       } else if (transfers.length === 0 && this.tickHandle !== null) {
-        activeWindow.clearInterval(this.tickHandle);
+        window.clearInterval(this.tickHandle);
         this.tickHandle = null;
       }
     });
@@ -38,7 +38,7 @@ export class LargeTransferBar {
   /** Tear down listeners + DOM. Call on plugin unload. */
   remove(): void {
     if (this.tickHandle !== null) {
-      activeWindow.clearInterval(this.tickHandle);
+      window.clearInterval(this.tickHandle);
       this.tickHandle = null;
     }
     this.unsubscribe?.();

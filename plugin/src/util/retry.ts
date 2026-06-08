@@ -4,7 +4,7 @@ import { errorMessage } from "./errorMessage";
 
 // Sleep via `activeWindow.setTimeout` so we honour Obsidian's
 // popout-window scoping rule (`obsidianmd/prefer-active-window-timers`).
-const sleep = (ms: number) => new Promise<void>(r => { activeWindow.setTimeout(r, ms); });
+const sleep = (ms: number) => new Promise<void>(r => { window.setTimeout(r, ms); });
 
 export async function withRetry<T>(
   fn: () => Promise<T>,

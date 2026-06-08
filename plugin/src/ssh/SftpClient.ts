@@ -177,19 +177,19 @@ export class SftpClient {
       // `obsidianmd/prefer-active-window-timers`. The vitest setup
       // polyfill aliases `activeWindow` to `globalThis` so the same
       // call works under Node-style integration tests.
-      const timer = activeWindow.setTimeout(() => {
+      const timer = window.setTimeout(() => {
         client.destroy();
         reject(new Error(`Connection timed out after ${profile.connectTimeoutMs}ms`));
       }, profile.connectTimeoutMs);
 
       client.on('ready', () => {
-        activeWindow.clearTimeout(timer);
+        window.clearTimeout(timer);
         logger.info(`SftpClient: SSH ready (${profile.host})`);
         resolve();
       });
 
       client.on('error', err => {
-        activeWindow.clearTimeout(timer);
+        window.clearTimeout(timer);
         reject(err instanceof Error ? err : new Error(String(err)));
       });
 

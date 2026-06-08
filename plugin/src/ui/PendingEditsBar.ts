@@ -48,7 +48,7 @@ export class PendingEditsBar {
   startPolling(getCount: () => number, intervalMs: number = 2000): void {
     this.stopPolling();
     this.setCount(getCount());
-    this.pollHandle = activeWindow.setInterval(() => {
+    this.pollHandle = window.setInterval(() => {
       try {
         this.setCount(getCount());
       } catch {
@@ -62,7 +62,7 @@ export class PendingEditsBar {
   /** Stop the poll loop and hide the indicator. */
   stopPolling(): void {
     if (this.pollHandle !== null) {
-      activeWindow.clearInterval(this.pollHandle);
+      window.clearInterval(this.pollHandle);
       this.pollHandle = null;
     }
     this.hide();

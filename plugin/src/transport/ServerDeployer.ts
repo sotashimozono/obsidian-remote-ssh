@@ -338,7 +338,7 @@ function truncate(s: string, max: number): string {
 // In tests / non-DOM hosts the vitest setup polyfill aliases
 // `activeWindow` to `globalThis`, so this still works there.
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => { activeWindow.setTimeout(resolve, ms); });
+  return new Promise(resolve => { window.setTimeout(resolve, ms); });
 }
 
 /**
