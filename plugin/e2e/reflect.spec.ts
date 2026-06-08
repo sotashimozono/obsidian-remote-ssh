@@ -104,7 +104,12 @@ test.describe('Remote → Obsidian reflection (M11)', () => {
     ).toBeVisible({ timeout: REFLECT_TIMEOUT_MS });
   });
 
-  test('2 — modify: remote overwrite reflects in editor + advances mtime', async () => {
+  // QUARANTINED (#376): flaky — Obsidian/Electron closes the page mid-test
+  // ("Target page... has been closed") at the .click() below, independent of
+  // REFLECT_TIMEOUT. The crash is run-scoped, so retries don't absorb it, and
+  // `Obsidian E2E smoke` is required on `main` — a flaky failure blocks every
+  // next → main promotion. Re-enable once #376 is root-caused.
+  test.fixme('2 — modify: remote overwrite reflects in editor + advances mtime', async () => {
     const file = `${STAMP}-modify.md`;
     const sentinel = `MODIFIED-${STAMP}`;
     await remote.writeFile(file, '# initial\n');
@@ -175,7 +180,10 @@ test.describe('Remote → Obsidian reflection (M11)', () => {
     ).toBeVisible({ timeout: REFLECT_TIMEOUT_MS });
   });
 
-  test('5 — large-file image render: 1 MB PNG renders via ResourceBridge', async () => {
+  // QUARANTINED (#376): same Obsidian/Electron mid-test crash as test 2,
+  // aggravated by pushing a 1 MB PNG through ResourceBridge. Re-enable once
+  // #376 is root-caused.
+  test.fixme('5 — large-file image render: 1 MB PNG renders via ResourceBridge', async () => {
     const png = `${STAMP}-image.png`;
     const noteName = `${STAMP}-image.md`;
 
