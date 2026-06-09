@@ -1,8 +1,20 @@
 {
-  "name": "obsidian-remote-ssh-workspace",
+  "name": "obsidian-remote-ssh-validator-root",
   "version": "0.0.0",
   "private": true,
-  "workspaces": [
-    "plugin"
-  ]
+  "description": "NOT the plugin package. Exists only so the community-plugin validator (ObsidianReviewBot), which runs `npm install` + type-aware eslint from the REPO ROOT, can resolve plugin/src's types. The real plugin lives in plugin/. Keep these versions in sync with plugin/package.json.",
+  "devDependencies": {
+    "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
+    "@types/node": "^25.9.2",
+    "@types/ssh2": "^1.11.19",
+    "@typescript-eslint/eslint-plugin": "^8.60.1",
+    "@typescript-eslint/parser": "^8.59.2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "eslint": "^10.4.1",
+    "eslint-plugin-obsidianmd": "^0.3.0",
+    "obsidian": "~1.12.3",
+    "ssh2": "^1.17.0",
+    "typescript": "^6.0.3"
+  }
 }
