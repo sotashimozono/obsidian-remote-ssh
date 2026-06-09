@@ -374,18 +374,25 @@
 
 .xterm-dim.xterm-dim { opacity: 1; }
 
+/* Obsidian's bundled Chromium only partially supports text-decoration
+   STYLE (double/wavy/dotted/dashed) and MULTIPLE line values
+   (e.g. `overline underline`), which the community-plugin validator flags.
+   We collapse xterm's fancy underline styles and the simultaneous
+   overline+underline to a plain underline — the only fully-supported
+   text-decoration form. Single overline / underline / line-through are
+   kept as-is (those are fully supported). */
 .xterm-underline-1 { text-decoration: underline; }
-.xterm-underline-2 { text-decoration: underline double; }
-.xterm-underline-3 { text-decoration: underline wavy; }
-.xterm-underline-4 { text-decoration: underline dotted; }
-.xterm-underline-5 { text-decoration: underline dashed; }
+.xterm-underline-2 { text-decoration: underline; }
+.xterm-underline-3 { text-decoration: underline; }
+.xterm-underline-4 { text-decoration: underline; }
+.xterm-underline-5 { text-decoration: underline; }
 
 .xterm-overline { text-decoration: overline; }
-.xterm-overline.xterm-underline-1 { text-decoration: overline underline; }
-.xterm-overline.xterm-underline-2 { text-decoration: overline underline double; }
-.xterm-overline.xterm-underline-3 { text-decoration: overline underline wavy; }
-.xterm-overline.xterm-underline-4 { text-decoration: overline underline dotted; }
-.xterm-overline.xterm-underline-5 { text-decoration: overline underline dashed; }
+.xterm-overline.xterm-underline-1 { text-decoration: underline; }
+.xterm-overline.xterm-underline-2 { text-decoration: underline; }
+.xterm-overline.xterm-underline-3 { text-decoration: underline; }
+.xterm-overline.xterm-underline-4 { text-decoration: underline; }
+.xterm-overline.xterm-underline-5 { text-decoration: underline; }
 
 .xterm-strikethrough { text-decoration: line-through; }
 
