@@ -18,7 +18,21 @@ export type RpcConnectionHandle = Awaited<ReturnType<typeof establishRpcConnecti
 
 export interface ConnectionDeps {
   locateDaemonBinary: () => string | null;
+  /**
+   * Download + cache the daemon binary for the remote's arch when it isn't
+   * staged locally (community-store installs don't ship it). Returns the
+   * local path, or null when the remote arch is unsupported or the user
+   * declined the download — the caller then downgrades to SFTP.
+   */
+  ensureDaemonBinary: (client: SftpClient) => Promise<string | null>;
 }
+
+/**
+ * Raised by {@link ConnectionManager.startRpcSession} when no daemon binary
+ * could be obtained (unsupported remote arch, or the user declined the
+ * download). The connect flow catches it and falls back to SFTP transport.
+ */
+export class DaemonUnavailableError extends Error {}
 
 /**
  * Hooks the reconnect attempt calls after re-establishing the transport
@@ -70,10 +84,14 @@ export class ConnectionManager {
    * and `daemonDeployer` are populated.
    */
   async startRpcSession(profile: SshProfile, effectivePath: string): Promise<void> {
-    const localBinaryPath = this.deps.locateDaemonBinary();
+    // Prefer a locally-staged binary (dev builds); otherwise download +
+    // cache the right per-arch binary from the GitHub release (the path
+    // community-store installs take, since the package can't ship it).
+    const localBinaryPath =
+      this.deps.locateDaemonBinary() ?? (await this.deps.ensureDaemonBinary(this.client));
     if (!localBinaryPath) {
-      throw new Error(
-        'daemon binary not staged. Run `npm run build:server` (or `build:full`) and reload the plugin.',
+      throw new DaemonUnavailableError(
+        'daemon binary unavailable: the remote arch is unsupported or the download was declined.',
       );
     }
 

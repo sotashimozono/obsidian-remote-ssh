@@ -120,6 +120,12 @@ export interface PluginSettings {
    */
   telemetryEnabled?: boolean;
   /**
+   * Whether the user consented to auto-downloading the daemon binary from
+   * the GitHub release. Asked once on the first RPC connect when no binary
+   * is staged locally (community-store installs); remembered thereafter.
+   */
+  daemonDownloadConsented?: boolean;
+  /**
    * #149 — terminal pane preferences. All optional; the View applies
    * sensible defaults when missing. `terminalShell` overrides the
    * remote login shell (e.g. `/usr/bin/zsh -l`); blank/missing means

@@ -1,4 +1,4 @@
-import { Plugin, Notice, FileSystemAdapter, TFile, TFolder } from 'obsidian';
+import { Plugin, Notice, Modal, FileSystemAdapter, TFile, TFolder, requestUrl } from 'obsidian';
 import type { PluginSettings, SshProfile } from './types';
 import { SyncState } from './types';
 import { DEFAULT_SETTINGS, DEFAULT_WALK_IGNORE_DIRS } from './constants';
@@ -36,7 +36,11 @@ import { ObservabilityInstaller } from './util/ObservabilityInstaller';
 import { normalizeRemotePath } from './util/pathUtils';
 import * as path from 'path';
 import { errorMessage } from "./util/errorMessage";
-import { ConnectionManager } from "./ConnectionManager";
+import { ConnectionManager, DaemonUnavailableError } from "./ConnectionManager";
+import { detectRemoteTarget, ensureDaemonBinary as downloadDaemonBinary } from './transport/DaemonDownloader';
+
+/** GitHub `owner/repo` the daemon binaries are released from. */
+const DAEMON_RELEASE_REPO = 'sotashimozono/obsidian-remote-ssh';
 import { TransferTracker } from "./util/TransferTracker";
 import { LargeTransferBar } from "./ui/LargeTransferBar";
 import { OnboardingModal } from "./ui/OnboardingModal";
@@ -134,6 +138,7 @@ export default class RemoteSshPlugin extends Plugin {
     });
     this.conn = new ConnectionManager(client, {
       locateDaemonBinary: () => this.locateDaemonBinary(),
+      ensureDaemonBinary: (c) => this.ensureDaemonBinary(c),
     });
     this.conn.activeRemoteBasePath = null;
 
@@ -451,7 +456,7 @@ export default class RemoteSshPlugin extends Plugin {
       return;
     }
 
-    const transport = profile.transport ?? 'sftp';
+    let transport = profile.transport ?? 'sftp';
     let rpcSummary = '';
     if (transport === 'rpc') {
       try {
@@ -460,15 +465,25 @@ export default class RemoteSshPlugin extends Plugin {
         const ver  = this.conn.rpcConnection?.info.version ?? '?';
         rpcSummary = ` — daemon ${ver}, ${caps} capabilities`;
       } catch (e) {
-        this.setState(SyncState.ERROR);
-        const { notice, classified } = classifyToNotice(e);
-        logger.error(`RPC startup failed: ${classified.title}`, {
-          category: classified.category, code: classified.code,
-          original: classified.original.message, profileId: profile.id,
-        });
-        new Notice(notice);
-        try { await this.conn.client.disconnect(); } catch { /* ignore */ }
-        return;
+        if (e instanceof DaemonUnavailableError) {
+          // Unsupported remote arch, or the user declined the daemon
+          // download → keep the session on SFTP. Vault read/write/sync
+          // still work; daemon-only features (fast walk, thumbnails, live
+          // watch, image/PDF rendering) are unavailable.
+          logger.warn(`RPC unavailable, falling back to SFTP: ${e.message}`);
+          new Notice('Remote SSH: daemon unavailable — connected via SFTP (reduced features).');
+          transport = 'sftp';
+        } else {
+          this.setState(SyncState.ERROR);
+          const { notice, classified } = classifyToNotice(e);
+          logger.error(`RPC startup failed: ${classified.title}`, {
+            category: classified.category, code: classified.code,
+            original: classified.original.message, profileId: profile.id,
+          });
+          new Notice(notice);
+          try { await this.conn.client.disconnect(); } catch { /* ignore */ }
+          return;
+        }
       }
     }
 
@@ -1089,6 +1104,88 @@ export default class RemoteSshPlugin extends Plugin {
       'server-bin', 'obsidian-remote-server-linux-amd64',
     );
     return fs.existsSync(candidate) ? candidate : null;
+  }
+
+  /**
+   * Acquire a daemon binary for the REMOTE's os/arch when one isn't staged
+   * locally. Community-store installs don't ship `server-bin/`, so we probe
+   * the remote with `uname`, download the matching binary from this plugin's
+   * GitHub release, verify it against `daemon-manifest.json` (sha256), and
+   * cache it under `server-bin/`. Returns null (→ caller downgrades to SFTP)
+   * for unsupported arches, a declined download, or any failure.
+   */
+  private async ensureDaemonBinary(client: SftpClient): Promise<string | null> {
+    const target = await detectRemoteTarget(async (cmd) => (await client.exec(cmd)).stdout);
+    if (!target) {
+      logger.warn('ensureDaemonBinary: unsupported remote os/arch (uname); staying on SFTP');
+      return null;
+    }
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) return null;
+    const cacheDir = path.join(
+      adapter.getBasePath(),
+      this.app.vault.configDir, 'plugins', this.manifest.id, 'server-bin',
+    );
+
+    // Consent gate: Obsidian discourages silent external downloads, so ask
+    // once and remember the answer in settings.
+    if (!this.settings.daemonDownloadConsented) {
+      const consented = await this.confirmDaemonDownload(this.manifest.version);
+      if (!consented) {
+        logger.info('ensureDaemonBinary: user declined daemon download; staying on SFTP');
+        return null;
+      }
+      this.settings.daemonDownloadConsented = true;
+      await this.saveSettings();
+    }
+
+    try {
+      const local = await downloadDaemonBinary(
+        {
+          fetchBinary: async (url) => new Uint8Array((await requestUrl({ url })).arrayBuffer),
+          fetchText: async (url) => (await requestUrl({ url })).text,
+          cacheDir,
+          cacheHit: (abs) => fs.existsSync(abs),
+          writeExecutable: async (abs, bytes) => {
+            await fs.promises.mkdir(path.dirname(abs), { recursive: true });
+            await fs.promises.writeFile(abs, bytes);
+            await fs.promises.chmod(abs, 0o755);
+          },
+          repo: DAEMON_RELEASE_REPO,
+          version: this.manifest.version,
+        },
+        target,
+      );
+      new Notice(`Remote SSH: downloaded daemon for ${target.os}/${target.arch}.`);
+      return local;
+    } catch (e) {
+      logger.error(`ensureDaemonBinary: download/verify failed: ${errorMessage(e)}`);
+      new Notice(`Remote SSH: daemon download failed — ${errorMessage(e)}. Using SFTP.`);
+      return null;
+    }
+  }
+
+  /** One-time consent dialog for the daemon auto-download. */
+  private confirmDaemonDownload(version: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const modal = new Modal(this.app);
+      modal.titleEl.setText('Download remote daemon?');
+      modal.contentEl.createEl('p', {
+        text:
+          `Remote SSH can download a small helper daemon (release ${version}) from ` +
+          'this plugin’s GitHub release. It is uploaded to your SSH host and ' +
+          'verified by sha256, and enables fast sync, live watch, and image/PDF ' +
+          'preview. Decline to stay on plain SFTP (these extras are then off).',
+      });
+      let decided = false;
+      const buttons = modal.contentEl.createDiv({ cls: 'modal-button-container' });
+      const ok = buttons.createEl('button', { text: 'Download', cls: 'mod-cta' });
+      ok.addEventListener('click', () => { decided = true; resolve(true); modal.close(); });
+      const no = buttons.createEl('button', { text: 'Use SFTP' });
+      no.addEventListener('click', () => { decided = true; resolve(false); modal.close(); });
+      modal.onClose = () => { if (!decided) resolve(false); };
+      modal.open();
+    });
   }
 
   isConnected(): boolean {
