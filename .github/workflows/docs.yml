@@ -5,16 +5,10 @@ on:
     branches: [main, next]
     paths:
       - "docs/**"
-      - "quartz.config.ts"
-      - "quartz.layout.ts"
-      - "scripts/check-docs-links.mjs"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
-      - "quartz.config.ts"
-      - "quartz.layout.ts"
-      - "scripts/check-docs-links.mjs"
       - ".github/workflows/docs.yml"
 
 # gh-pages deploy requires write access to contents
@@ -34,16 +28,25 @@ jobs:
           # Full history so Quartz CreatedModifiedDate plugin can read git log
           fetch-depth: 0
 
+      # Quartz framework + config + deps + types now live ONLY on the docs
+      # branch (kept off main/next so the Obsidian plugin validator scans
+      # just the plugin). Fetch the whole Quartz set BEFORE setup-node so its
+      # `package-lock.json` cache key resolves. main/next still carries the
+      # `docs/` content that we build.
+      - name: Checkout Quartz framework + config from docs branch
+        run: |
+          git fetch origin docs/quartz-framework
+          git checkout origin/docs/quartz-framework -- \
+            quartz/ quartz.config.ts quartz.layout.ts \
+            package.json package-lock.json \
+            index.d.ts globals.d.ts tsconfig.quartz.json \
+            scripts/check-docs-links.mjs
+
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: package-lock.json
-
-      - name: Checkout Quartz framework
-        run: |
-          git fetch origin docs/quartz-framework
-          git checkout origin/docs/quartz-framework -- quartz/
 
       - name: Install Quartz dependencies
         run: npm ci
