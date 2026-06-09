@@ -136,8 +136,8 @@ export class Logger {
     // those methods, so capturing them would encourage exactly the
     // anti-pattern the rule exists to prevent.
     const snapshot: ConsoleSnapshot = {
-      warn: console.warn.bind(console),
-      error: console.error.bind(console),
+      warn: console.warn.bind(console) as ConsoleFn,
+      error: console.error.bind(console) as ConsoleFn,
     };
     this.originalConsole = snapshot;
     console.warn = (...args: unknown[]) => {

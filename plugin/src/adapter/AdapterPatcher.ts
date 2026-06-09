@@ -61,7 +61,7 @@ export class AdapterPatcher<T extends object> {
         if (typeof replDesc.value === 'function') {
           const fn = replDesc.value as (...args: unknown[]) => unknown;
           Object.defineProperty(this.target, name, {
-            value: fn.bind(this.replacement),
+            value: (...args: unknown[]): unknown => fn.apply(this.replacement, args),
             writable: true,
             configurable: true,
             enumerable: true,

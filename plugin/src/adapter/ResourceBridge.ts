@@ -32,12 +32,18 @@ export type FetchBinaryFn = (vaultPath: string) => Promise<Uint8Array>;
  * cache entry and re-issues with `expectedMtime: undefined` so the
  * webview gets a fresh slice rather than a stale one.
  */
+export interface BinaryRange {
+  bytes: Uint8Array;
+  mtime: number;
+  totalSize: number;
+}
+
 export type FetchBinaryRangeFn = (
   vaultPath: string,
   offset: number,
   length: number,
   expectedMtime?: number,
-) => Promise<{ bytes: Uint8Array; mtime: number; totalSize: number }>;
+) => Promise<BinaryRange>;
 
 /**
  * Async fetcher for daemon-resized image thumbnails. Optional: the
@@ -324,7 +330,7 @@ export class ResourceBridge {
       // Pin follow-up requests to the cached generation so the daemon
       // rejects mid-stream edits with PreconditionFailed (#171).
       const expectedMtime = this.lookupMtime(rawPath);
-      let result;
+      let result: BinaryRange;
       try {
         result = await fetchRange(rawPath, explicit.start, explicit.length, expectedMtime);
       } catch (e) {

@@ -7,12 +7,13 @@ import { errorMessage } from "../util/errorMessage";
  * `SftpDataAdapter.replayQueuedOp` so a fake adapter (test fixture)
  * can satisfy the same contract.
  */
+export type ReplayOutcome =
+  | { result: 'ok' }
+  | { result: 'conflict' }
+  | { result: 'error'; message: string };
+
 export interface ReplayTarget {
-  replayQueuedOp(op: QueuedOp): Promise<
-    | { result: 'ok' }
-    | { result: 'conflict' }
-    | { result: 'error'; message: string }
-  >;
+  replayQueuedOp(op: QueuedOp): Promise<ReplayOutcome>;
 }
 
 export interface ReplayReport {
@@ -55,7 +56,7 @@ export class QueueReplayer {
     logger.info(`QueueReplayer: draining ${initialPending.length} pending entries`);
 
     for (const entry of initialPending) {
-      let outcome;
+      let outcome: ReplayOutcome;
       try {
         outcome = await this.target.replayQueuedOp(entry.op);
       } catch (e) {
