@@ -1,0 +1,8 @@
+{
+  "name": "obsidian-remote-ssh-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": [
+    "plugin"
+  ]
+}

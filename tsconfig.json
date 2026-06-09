@@ -3,7 +3,7 @@
   "compilerOptions": {
     "module": "commonjs",
     "moduleResolution": "node",
-    "typeRoots": ["./plugin/node_modules/@types"],
+    "typeRoots": ["./node_modules/@types", "./plugin/node_modules/@types"],
     "types": ["node"]
   },
   "include": ["plugin/src/**/*.ts"]
