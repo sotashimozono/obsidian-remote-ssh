@@ -55,7 +55,7 @@
     "eslint-plugin-obsidianmd": "^0.3.0",
     "fast-check": "^4.8.0",
     "jsdom": "^29.1.1",
-    "obsidian": "latest",
+    "obsidian": "~1.12.3",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
   }
