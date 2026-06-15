@@ -6,6 +6,18 @@
       <description>Last 10 notes on obsidian-remote-ssh</description>
       <generator>Quartz -- quartz.jzhao.xyz</generator>
       <item>
+    <title>First connect</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/first-connect</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/first-connect</guid>
+    <description><![CDATA[ What happens when you click Connect: SSH handshake, daemon auto-deploy with cosign-signed binary, vault fetch, shadow vault opens. Step-by-step explanation. ]]></description>
+    <pubDate>Mon, 15 Jun 2026 10:19:16 GMT</pubDate>
+  </item><item>
+    <title>Troubleshooting</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/troubleshooting</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/operations/troubleshooting</guid>
+    <description><![CDATA[ Diagnosing common obsidian-remote-ssh issues: connection failures, host-key mismatches, daemon-deploy errors, conflict surfaces, slow sync — symptoms and fixes. ]]></description>
+    <pubDate>Mon, 15 Jun 2026 10:19:16 GMT</pubDate>
+  </item><item>
     <title>Bidirectional sync gap — design analysis (issues</title>
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/bidirectional-sync-gap</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/bidirectional-sync-gap</guid>
@@ -52,18 +64,6 @@
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/host-migration</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/host-migration</guid>
     <description><![CDATA[ Move your Obsidian vault from one remote host to another (Pi to NAS, home to VPS) with rsync, profile re-target, and host-key trust handoff. Zero-data-loss recipe. ]]></description>
-    <pubDate>Sun, 10 May 2026 15:30:51 GMT</pubDate>
-  </item><item>
-    <title>Editing multiple vaults from one Obsidian</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/multi-vault</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/multi-vault</guid>
-    <description><![CDATA[ Edit work, personal, and family Obsidian vaults from a single Obsidian install. Multiple SSH profiles, separate shadow vaults, shared launcher vault. ]]></description>
-    <pubDate>Sun, 10 May 2026 15:30:51 GMT</pubDate>
-  </item><item>
-    <title>Raspberry Pi vault from scratch</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/raspberry-pi-vault</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/raspberry-pi-vault</guid>
-    <description><![CDATA[ Set up a Raspberry Pi as your home Obsidian vault server from scratch — OS install, SSH key, vault directory, network access, and the matching plugin profile. ]]></description>
     <pubDate>Sun, 10 May 2026 15:30:51 GMT</pubDate>
   </item>
     </channel>
