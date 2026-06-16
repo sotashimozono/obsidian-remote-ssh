@@ -6,6 +6,12 @@
       <description>Last 10 notes on obsidian-remote-ssh</description>
       <generator>Quartz -- quartz.jzhao.xyz</generator>
       <item>
+    <title>Release flow</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/release-flow</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/contributing/release-flow</guid>
+    <description><![CDATA[ Release flow Step-by-step for cutting releases — both beta (every merge to next) and stable (manual promotion). ]]></description>
+    <pubDate>Mon, 15 Jun 2026 12:06:11 GMT</pubDate>
+  </item><item>
     <title>First connect</title>
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/first-connect</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/getting-started/first-connect</guid>
@@ -58,12 +64,6 @@
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/hardware-key</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/hardware-key</guid>
     <description><![CDATA[ Use a YubiKey, Nitrokey, macOS Secure Enclave, or Windows Hello to sign SSH connections to your Obsidian vault. FIDO2 ed25519-sk + Apple keychain + TPM recipes. ]]></description>
-    <pubDate>Sun, 10 May 2026 15:30:51 GMT</pubDate>
-  </item><item>
-    <title>Migrating between hosts</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/host-migration</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/cookbook/host-migration</guid>
-    <description><![CDATA[ Move your Obsidian vault from one remote host to another (Pi to NAS, home to VPS) with rsync, profile re-target, and host-key trust handoff. Zero-data-loss recipe. ]]></description>
     <pubDate>Sun, 10 May 2026 15:30:51 GMT</pubDate>
   </item>
     </channel>
