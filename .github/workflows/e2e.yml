@@ -62,7 +62,27 @@ concurrency:
 
 jobs:
   e2e:
-    name: Obsidian E2E smoke
+    # Sharded across runners. Obsidian is single-instance, so ONE machine can
+    # only ever drive one window (`workers: 1` in playwright.config.ts is not
+    # tunable) — but that constraint is per MACHINE. Fanning the suite out over
+    # three runners collapses ~30 min of serial work to the slowest shard.
+    #
+    # ALL THREE SHARDS RUN ON EVERY PR. This is a speed change, not a coverage
+    # change: a suite you only run sometimes is a suite you don't trust.
+    #
+    # Second, load-bearing benefit: each runner brings up its OWN docker sshd,
+    # so shards cannot contaminate each other's remote vault. We hit exactly
+    # that — a fixture plugin left behind in the remote community-plugins.json
+    # by one spec reddened `sync.spec` in another. Isolation by construction
+    # beats remembering to clean up.
+    #
+    # fail-fast: false — one shard going red must not cancel the others, or we
+    # lose the rest of the picture on every failure.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [core, features, stress]
+    name: E2E (${{ matrix.shard }})
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -144,17 +164,22 @@ jobs:
         env:
           OBSIDIAN_PATH: ~/obsidian/squashfs-root/obsidian
           DISPLAY: ':99'
-        run: npm run test:e2e
+        # Only this shard's group. The groups are defined as Playwright
+        # `projects` in e2e/playwright.config.ts and together cover every spec —
+        # nothing is dropped, it is just spread across runners.
+        run: npx playwright test --config e2e/playwright.config.ts --project=${{ matrix.shard }}
 
       - name: Tear down test sshd
         if: always()
         run: npm run sshd:stop
 
+      # Artifact names must be unique per shard — three jobs uploading the same
+      # name in one run is an upload conflict, and the reports would clobber.
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-report-${{ github.run_id }}
+          name: e2e-report-${{ matrix.shard }}-${{ github.run_id }}
           path: plugin/e2e-results/
           retention-days: 14
 
@@ -162,6 +187,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-screenshots-${{ github.run_id }}
+          name: e2e-screenshots-${{ matrix.shard }}-${{ github.run_id }}
           path: plugin/test-results/
           retention-days: 14
