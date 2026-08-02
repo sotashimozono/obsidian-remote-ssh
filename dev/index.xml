@@ -6,6 +6,12 @@
       <description>Last 10 notes on obsidian-remote-ssh</description>
       <generator>Quartz -- quartz.jzhao.xyz</generator>
       <item>
+    <title>Plugin compatibility</title>
+    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/plugin-compatibility</link>
+    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/plugin-compatibility</guid>
+    <description><![CDATA[ Which Obsidian community plugins work cleanly with obsidian-remote-ssh's shadow vault model. Known-good, known-broken, and quirky-but-fixable plugin behaviours. ]]></description>
+    <pubDate>Sun, 02 Aug 2026 09:28:26 GMT</pubDate>
+  </item><item>
     <title>Architecture</title>
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/</guid>
@@ -22,12 +28,6 @@
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/glossary</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/glossary</guid>
     <description><![CDATA[ Glossary Terms that show up across these docs, defined once. If a term should be here and isn’t, open an issue. ]]></description>
-    <pubDate>Tue, 30 Jun 2026 06:49:49 GMT</pubDate>
-  </item><item>
-    <title>Plugin compatibility</title>
-    <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/plugin-compatibility</link>
-    <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/plugin-compatibility</guid>
-    <description><![CDATA[ Which Obsidian community plugins work cleanly with obsidian-remote-ssh's shadow vault model. Known-good, known-broken, and quirky-but-fixable plugin behaviours. ]]></description>
     <pubDate>Tue, 30 Jun 2026 06:49:49 GMT</pubDate>
   </item><item>
     <title>Release flow</title>
