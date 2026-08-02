@@ -131,14 +131,31 @@ Things that aren't a specific plugin but trip plugins in general:
 - **`app.vault.adapter.basePath` and `getBasePath()`** resolve to the
   **shadow vault's** local root (e.g. `~/.obsidian-remote/vaults/<P-id>/`),
   not the remote SSH path; #170 patches both so readers don't crash on
-  `undefined`. But the vault tree is **virtual** — served from the
-  remote, not mirrored to disk (only `.obsidian/` lives there). So
-  `basePath` + Node `fs` only touches the local shadow copy: `fs` reads
-  miss remote notes, `fs` writes don't reach the remote. Only the vault
-  API round-trips (`.obsidian/` config via a dedicated watcher,
-  #342/#434). See *Direct-disk / agentic plugins* (#429) and the
+  `undefined`. The vault tree there is **virtual** — served from the
+  remote, not mirrored to disk (only `.obsidian/` lives there) — so the
+  two directions are **not** symmetric:
+  - **Writes propagate.** A file written under `basePath` with Node
+    `fs` — by a plugin, or by a subprocess it spawned — is picked up by
+    a filesystem watcher and pushed to the remote vault through the
+    same adapter the vault API uses, then registered in `vault.fileMap`
+    (#429). It goes through the normal mtime precondition, so a
+    simultaneous remote edit raises the usual conflict prompt. The
+    config tree (`.obsidian/**`), `.trash`, VCS/dependency dirs and
+    editor temp files are excluded; a file over the write-back size
+    limit (Settings → Advanced, 32 MB default) is reported rather than
+    pushed. The whole behaviour is switchable: *Push out-of-band file
+    writes to the remote*.
+  - **Reads do not.** `fs.readFileSync` / `fs.readdirSync` under
+    `basePath` see only what is physically there — the config tree and
+    whatever an out-of-band writer left behind — never the remote
+    notes. Mirroring the note tree to disk would mean keeping a local
+    clone of the remote vault, which is the thing this design exists to
+    avoid. So a plugin that *reads* notes through Node `fs` (importers,
+    exporters, "open in external editor", anything that shells out to a
+    local binary) sees an empty vault. Read through the vault API.
+  See *Direct-disk / agentic plugins* (#429) and the
   **basePath survey** (#133) — its "syncs up to the remote" mitigations
-  assumed a vault-tree watcher that was never built. **Exception:** plugins that shell out to a local
+  now hold for writes, and only for writes. **Exception:** plugins that shell out to a local
   binary (notably obsidian-Git's `SimpleGit` desktop path) operate on
   the shadow git repo rather than the remote one — patching can't fix
   this from our side. obsidian-Git's bundled `IsomorphicGit` mode
@@ -149,11 +166,12 @@ Things that aren't a specific plugin but trip plugins in general:
   they don't see our patched `app.vault.adapter`. Plugins that pass file
   paths to a worker for parsing (some search-heavy plugins do this)
   will break against the remote. Same diagnosis: no general fix.
-- **`fs.watch` from Node** doesn't reach the remote. Our patched
+- **`fs.watch` from Node** doesn't see remote activity. Our patched
   adapter feeds `app.vault.adapter.on('modify', …)`-style listeners
   through the daemon's `fs.watch` notifications, but a plugin that
-  installs its own `fs.watch` against `basePath` only watches the local
-  empty directory.
+  installs its own `fs.watch` against `basePath` only sees local disk
+  events — its own writes and other out-of-band writers, never a change
+  another device made on the remote.
 - **Static asset URLs (`app://local/<path>`)** — a few plugins build
   these manually instead of going through `getResourcePath`. The
   manually-built URL points at the local FS and won't render. The
@@ -165,11 +183,15 @@ Things that aren't a specific plugin but trip plugins in general:
   needed at this time.
 - **Direct-disk / agentic plugins** (e.g. Claude Code wrappers like
   "Claudian") write via Node `fs` / child processes, bypassing the
-  adapter — so their files stay in the local shadow copy and never
-  reach the remote ([#429](https://github.com/sotashimozono/obsidian-remote-ssh/issues/429)).
-  No local→remote reconciler exists for the vault tree (adding one =
-  the sync model this single-source-of-truth design avoids). Use
-  plugins that go through the vault API.
+  adapter ([#429](https://github.com/sotashimozono/obsidian-remote-ssh/issues/429)).
+  The files they *create or edit* now reach the remote vault and the
+  file explorer, via the write-back watcher described above — a
+  one-way, event-driven push, not a reconciler. What they still cannot
+  do is **read**: an agent that greps the vault directory, or opens a
+  note by absolute path, finds nothing there, because the note tree is
+  never materialised on disk. Feed such a plugin content through the
+  vault API (or paste it in); don't expect it to discover the vault by
+  walking `basePath`.
 
 ## Why we can't auto-test all of this
 

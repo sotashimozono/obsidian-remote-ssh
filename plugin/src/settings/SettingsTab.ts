@@ -108,6 +108,21 @@ export class SettingsTab extends PluginSettingTab {
           }
         }));
 
+    new Setting(containerEl)
+      .setName('Push out-of-band file writes to the remote')
+      .setDesc(
+        'Some plugins write notes with raw filesystem calls (or hand the job to a ' +
+        'subprocess) instead of the vault API. Those writes land in the local shadow ' +
+        'folder. With this on they are carried up to the remote vault and appear in the ' +
+        'file explorer; with it off they stay local.',
+      )
+      .addToggle(t => t.setValue(this.plugin.settings.localWriteBack !== false)
+        .onChange(async v => {
+          this.plugin.settings.localWriteBack = v;
+          await this.plugin.saveSettings();
+          new Notice('Remote SSH: reconnect for this to take effect');
+        }));
+
     this.renderTerminalPanel(containerEl);
   }
 
