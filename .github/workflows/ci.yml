@@ -216,7 +216,7 @@ jobs:
         working-directory: server
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           # Bumped 1.22 → 1.25 to follow `server/go.mod`'s `go 1.25.0`
           # directive after Dependabot pulled in `golang.org/x/image`
