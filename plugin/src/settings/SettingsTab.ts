@@ -124,6 +124,21 @@ export class SettingsTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
+      .setName('Let plugins read the vault with filesystem calls')
+      .setDesc(
+        'Some plugins list or read notes with raw filesystem calls instead of the vault API. ' +
+        'With this on, those calls see the remote vault: names and sizes come from the vault ' +
+        'model at no cost, and the content of a file is fetched only when something actually ' +
+        'reads it. Only the vault folder is affected. Turn it off if a plugin misbehaves.',
+      )
+      .addToggle(t => t.setValue(this.plugin.settings.fsModulePatch !== false)
+        .onChange(async v => {
+          this.plugin.settings.fsModulePatch = v;
+          await this.plugin.saveSettings();
+          new Notice('Remote SSH: reconnect for this to take effect');
+        }));
+
+    new Setting(containerEl)
       .setName('On-demand file cache')
       .setDesc(
         'Budget in megabytes for materialising remote files on this device so paths handed to plugins ' +

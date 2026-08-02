@@ -195,6 +195,17 @@ export interface PluginSettings {
    */
   fsCacheMaxFileMB?: number;
   /**
+   * #429 read side — let plugins that use Node's `fs` directly see the
+   * vault. Names and stats are answered from `vault.fileMap` (no
+   * download at all); a `readFileSync` materialises that one file,
+   * within the cache budget. Only paths under the shadow vault root and
+   * outside the config dir are answered for; everything else runs the
+   * stock function untouched. Default true. Turn it off if a plugin
+   * misbehaves — the cost is that raw `fs` reads see an empty vault
+   * again.
+   */
+  fsModulePatch?: boolean;
+  /**
    * #149 — terminal pane preferences. All optional; the View applies
    * sensible defaults when missing. `terminalShell` overrides the
    * remote login shell (e.g. `/usr/bin/zsh -l`); blank/missing means

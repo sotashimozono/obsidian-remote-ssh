@@ -32,6 +32,7 @@ import { ShadowVaultBootstrap } from './shadow/ShadowVaultBootstrap';
 import type { SharedConfigReader, BootstrapResult } from './shadow/ShadowVaultBootstrap';
 import { SharedConfigWatcher } from './shadow/SharedConfigWatcher';
 import { LocalWriteWatcher, makeLocalWriteIgnore } from './adapter/LocalWriteWatcher';
+import { FsModulePatcher } from './adapter/FsModulePatcher';
 import { watchTree, listTreeFiles } from './util/watchTree';
 import { ShadowVaultManager } from './shadow/ShadowVaultManager';
 import { WindowSpawner } from './shadow/WindowSpawner';
@@ -119,6 +120,7 @@ export default class RemoteSshPlugin extends Plugin {
    */
   private sharedConfigWatcher: SharedConfigWatcher | null = null;
   private localWriteWatcher: LocalWriteWatcher | null = null;
+  private fsModulePatcher: FsModulePatcher | null = null;
   private observability: ObservabilityInstaller | null = null;
   /**
    * #149 — re-entrant guard for `openRemoteTerminal()`. The
@@ -795,6 +797,56 @@ export default class RemoteSshPlugin extends Plugin {
         lww.start();
         this.localWriteWatcher = lww;
       }
+
+      // #429 read side. The write-back above carries bytes OUT; nothing
+      // carried the vault IN, because the note tree is virtual: a plugin
+      // doing `fs.readdirSync(basePath)` saw the config dir and no notes,
+      // and `fs.readFileSync` on a note the user is looking at got ENOENT.
+      //
+      // Rather than mirror the tree (that is a clone of the remote, which
+      // this design refuses), answer from what already exists: names and
+      // stats come from `vault.fileMap` — free, no download — and content
+      // only when a `readFileSync` actually asks for it.
+      this.fsModulePatcher?.restore();
+      this.fsModulePatcher = null;
+      if (this.settings.fsModulePatch !== false) {
+        const req = (window as unknown as { require?: (m: string) => unknown }).require;
+        const fsModule = typeof req === 'function'
+          ? (req('fs') as Record<string, unknown> | null)
+          : null;
+        if (!fsModule) {
+          logger.info(
+            'fs patch: window.require is unavailable in this renderer — plugins that read ' +
+            'the vault through Node fs will not see it',
+          );
+        } else {
+          const asEntry = (f: unknown) => {
+            if (f instanceof TFile) return { isDir: false, size: f.stat.size, mtimeMs: f.stat.mtime };
+            if (f instanceof TFolder) return { isDir: true, size: 0, mtimeMs: 0 };
+            return null;
+          };
+          const patcher = new FsModulePatcher({
+            fsModule,
+            root: hostAdapter.getBasePath(),
+            configDir: this.app.vault.configDir,
+            tree: {
+              children: (relDir) => {
+                const folder = relDir === ''
+                  ? this.app.vault.getRoot()
+                  : this.app.vault.getAbstractFileByPath(relDir);
+                if (!(folder instanceof TFolder)) return null;
+                return folder.children.flatMap((c) => {
+                  const entry = asEntry(c);
+                  return entry ? [{ name: c.name, entry }] : [];
+                });
+              },
+              entry: (rel) => asEntry(this.app.vault.getAbstractFileByPath(rel)),
+            },
+            materialize: (rel) => da.materializeSync(rel),
+          });
+          if (patcher.patch()) this.fsModulePatcher = patcher;
+        }
+      }
     }
 
     // Adapter is patched; build the file model so File Explorer
@@ -890,6 +942,8 @@ export default class RemoteSshPlugin extends Plugin {
       this.sharedConfigWatcher = null;
       this.localWriteWatcher?.stop();
       this.localWriteWatcher = null;
+      this.fsModulePatcher?.restore();
+      this.fsModulePatcher = null;
       this.adapterMgr.restore();
       this.setState(SyncState.ERROR);
       // s.reason is a string from ReconnectManager; wrap into Error
@@ -932,6 +986,10 @@ export default class RemoteSshPlugin extends Plugin {
     // we are about to restore.
     this.localWriteWatcher?.stop();
     this.localWriteWatcher = null;
+    // Hand Node's fs back before the adapter goes: a stale patch would
+    // keep answering for a vault model that is about to be torn down.
+    this.fsModulePatcher?.restore();
+    this.fsModulePatcher = null;
     this.adapterMgr.restore();
     // Drop lazy-load state — the walker it captured is now disconnected. A
     // stray File-Explorer click after this finds a null loader and no-ops.

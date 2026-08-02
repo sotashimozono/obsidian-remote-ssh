@@ -145,23 +145,32 @@ Things that aren't a specific plugin but trip plugins in general:
     limit (Settings → Advanced, 32 MB default) is reported rather than
     pushed. The whole behaviour is switchable: *Push out-of-band file
     writes to the remote*.
-  - **Reads work only for a file you asked for by path.**
-    `getFullPath(path)` and `getFilePath(path)` materialise that one
-    file onto the shadow disk before returning, so the path they hand
-    back resolves and `shell.openPath` / an `<img>` / an external editor
-    opens the real note. Files read through the vault API are cached the
-    same way. Everything else is still absent: the note tree is **not**
-    mirrored, because that would mean keeping a local clone of the
-    remote vault — the thing this design exists to avoid. So
-    `fs.readFileSync(path.join(basePath, 'note.md'))` on a note nobody
-    asked for fails, and `fs.readdirSync(basePath)` lists only the
-    config tree plus whatever happens to be materialised — never the
-    vault. A plugin that discovers notes by walking the filesystem sees
-    an empty vault; read through the vault API instead.
-    The cache is bounded (Settings → Advanced, *On-demand file cache*,
+  - **Reads work from inside Obsidian, on demand.** `readFileSync`,
+    `readdirSync`, `existsSync`, `statSync` and `lstatSync` are taken
+    over *for paths under the vault folder only* — the config dir and
+    everything outside the vault run the stock function untouched.
+    Names and sizes are answered from the vault model, so listing or
+    stat-ing the vault costs **no download at all**, and a file's
+    content is fetched only when something actually reads it.
+    `getFullPath(path)` / `getFilePath(path)` do the same before
+    returning, so the path they hand back resolves for `shell.openPath`,
+    an `<img>` or an external editor.
+    The note tree is still **not** mirrored: that would be a local clone
+    of the remote vault, which is what this design exists to avoid. The
+    cache is bounded (Settings → Advanced, *On-demand file cache*,
     128 MB default, 8 MB per file), evicts least-recently-used copies,
     refuses anything over the limit rather than fetching and discarding
-    it, and is deleted on disconnect.
+    it, and is deleted on disconnect. A file over that limit reads as
+    `ENOENT`, exactly as before.
+    Two things this cannot reach, both moot if you switch off *Let
+    plugins read the vault with filesystem calls*:
+    - a plugin that captured the function before we patched it —
+      `const { readFileSync } = require('fs')` at module scope;
+    - **anything in another process.** A subprocess (a CLI the plugin
+      spawns, `git`, `ripgrep`, an external editor) has its own `fs` and
+      sees only what is physically on disk: the config tree plus
+      whatever has been materialised. Point such a tool at specific
+      files rather than expecting it to walk the vault.
   See *Direct-disk / agentic plugins* (#429) and the
   **basePath survey** (#133) — its "syncs up to the remote" mitigations
   now hold for writes, and only for writes. **Exception:** plugins that shell out to a local
@@ -195,13 +204,14 @@ Things that aren't a specific plugin but trip plugins in general:
   adapter ([#429](https://github.com/sotashimozono/obsidian-remote-ssh/issues/429)).
   The files they *create or edit* now reach the remote vault and the
   file explorer, via the write-back watcher described above — a
-  one-way, event-driven push, not a reconciler. Reading is the half
-  that stays limited: an agent that greps the vault directory finds
-  only what has been materialised (a note it was pointed at by
-  `getFullPath`, or one that was opened), never the vault as a whole,
-  because the tree is not mirrored. Point such a plugin at specific
-  notes rather than expecting it to discover the vault by walking
-  `basePath`.
+  one-way, event-driven push, not a reconciler. Reading works too, as
+  long as it happens **in Obsidian's own process**: the patched `fs`
+  answers listings from the vault model and fetches a file's content
+  when it is read. What such a plugin hands to a *subprocess* is the
+  gap — Claude Code, `git` and friends run with their own `fs` and see
+  only what is physically on disk. Point them at specific files (the
+  path from `getFullPath` is real by the time you get it) rather than
+  letting them discover the vault by walking `basePath`.
 
 ## Why we can't auto-test all of this
 
