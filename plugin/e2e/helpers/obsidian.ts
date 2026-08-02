@@ -174,24 +174,62 @@ export async function driveConnectFlow(page: Page): Promise<void> {
     .locator('.prompt input, input.prompt-input, .suggestion-container input')
     .first();
 
-  let opened = false;
-  for (let i = 0; i < 5 && !opened; i++) {
-    await page.keyboard.press('Control+P');
-    opened = await paletteInput
-      .waitFor({ state: 'visible', timeout: 4_000 })
-      .then(() => true)
-      .catch(() => false);
-    if (!opened) await page.keyboard.press('Escape').catch(() => { /* ignore */ });
-  }
-  if (!opened) {
-    throw new Error('driveConnectFlow: command palette never opened (Obsidian not interactive)');
-  }
+  // Fire the command through Obsidian's own command registry first.
+  //
+  // Keyboard-driving the palette is the single largest source of red in
+  // this suite — "command palette never opened (Obsidian not
+  // interactive)" is most of the failures on a typical CI run — and it
+  // is never a product fault: under Xvfb the window can be up and
+  // painting while keyboard input still goes nowhere, and five Ctrl+P
+  // retries over 20 s do not outlast that. `executeCommandById` needs
+  // no focus, no keyboard and no fuzzy match, so what these specs are
+  // actually about — does connect work — stops depending on whether a
+  // headless window felt like accepting a keystroke.
+  //
+  // The palette is not left untested: `smoke.spec.ts` drives it
+  // directly, and the fallback below still runs whenever the command
+  // registry is unreachable.
+  const firedId = await page.evaluate(() => {
+    const app = (window as unknown as {
+      app?: {
+        commands?: {
+          commands?: Record<string, unknown>;
+          executeCommandById?: (id: string) => boolean;
+        };
+      };
+    }).app;
+    const registry = app?.commands;
+    if (!registry?.executeCommandById || !registry.commands) return null;
+    // The plugin registers `connect`; Obsidian namespaces it by plugin id.
+    const id = Object.keys(registry.commands).find(k => k.endsWith('remote-ssh:connect'));
+    if (!id) return null;
+    return registry.executeCommandById(id) ? id : null;
+  });
 
-  await paletteInput.fill('');
-  await page.keyboard.type('Remote SSH: Connect', { delay: 20 });
-  // Let the fuzzy filter settle on the matching command.
-  await page.waitForTimeout(600);
-  await page.keyboard.press('Enter');
+  if (firedId === null) {
+    let opened = false;
+    for (let i = 0; i < 5 && !opened; i++) {
+      await page.keyboard.press('Control+P');
+      opened = await paletteInput
+        .waitFor({ state: 'visible', timeout: 4_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!opened) await page.keyboard.press('Escape').catch(() => { /* ignore */ });
+    }
+    if (!opened) {
+      throw new Error(
+        'driveConnectFlow: remote-ssh:connect was not in Obsidian\'s command registry ' +
+        '(is the plugin loaded?) and the command palette never opened either — ' +
+        'Obsidian is not interactive',
+      );
+    }
+
+    await paletteInput.fill('');
+    await page.keyboard.type('Remote SSH: Connect', { delay: 20 });
+    // Let the fuzzy filter settle on the matching command.
+    await page.waitForTimeout(600);
+    await page.keyboard.press('Enter');
+  }
 
   // The per-profile connect modal appears for passphrase/confirm
   // profiles; for the scaffold's key-auth profile connect can fire
@@ -696,6 +734,30 @@ export async function runCommandViaPalette(
     .locator('.prompt input, input.prompt-input, .suggestion-container input')
     .first();
 
+  // Registry first, for the same reason as `driveConnectFlow`: the
+  // caller wants the command to RUN, and a headless window that will
+  // not take a keystroke should not be able to fail that. Matching is
+  // on the command's display name, which is what `query` already is.
+  const firedId = await page.evaluate((q) => {
+    const app = (window as unknown as {
+      app?: {
+        commands?: {
+          commands?: Record<string, { name?: string }>;
+          executeCommandById?: (id: string) => boolean;
+        };
+      };
+    }).app;
+    const registry = app?.commands;
+    if (!registry?.executeCommandById || !registry.commands) return null;
+    const wanted = q.toLowerCase();
+    const id = Object.entries(registry.commands)
+      .find(([cid, cmd]) => (cmd?.name ?? '').toLowerCase().includes(wanted)
+        || cid.toLowerCase().includes(wanted))?.[0];
+    if (!id) return null;
+    return registry.executeCommandById(id) ? id : null;
+  }, query);
+  if (firedId !== null) return;
+
   let opened = false;
   for (let i = 0; i < 5 && !opened; i++) {
     await page.keyboard.press('Control+P');
@@ -707,8 +769,8 @@ export async function runCommandViaPalette(
   }
   if (!opened) {
     throw new Error(
-      `runCommandViaPalette: command palette never opened for "${query}" ` +
-      '(Obsidian not interactive)',
+      `runCommandViaPalette: "${query}" was not in Obsidian's command registry and the ` +
+      'command palette never opened either (Obsidian not interactive)',
     );
   }
 
