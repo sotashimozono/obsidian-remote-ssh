@@ -20,7 +20,7 @@ jobs:
         working-directory: plugin
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
@@ -52,7 +52,7 @@ jobs:
         working-directory: plugin
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
@@ -119,7 +119,7 @@ jobs:
         working-directory: plugin
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -145,7 +145,7 @@ jobs:
         working-directory: plugin
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
@@ -216,7 +216,7 @@ jobs:
         working-directory: server
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           # Bumped 1.22 → 1.25 to follow `server/go.mod`'s `go 1.25.0`
           # directive after Dependabot pulled in `golang.org/x/image`
