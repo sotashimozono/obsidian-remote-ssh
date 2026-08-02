@@ -55,6 +55,11 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   // stranded on the local disk. 32 MB caps a single push.
   localWriteBack: true,
   localWriteBackMaxMB: 32,
+  // #429 read side — on-demand materialisation budget. Nothing is
+  // pre-fetched and nothing survives a disconnect; this only bounds how
+  // much of what was actually asked for may sit on the disk at once.
+  fsCacheMB: 128,
+  fsCacheMaxFileMB: 8,
   // Phase 4 marker for shadow vaults; null on a normal vault. Only
   // `ShadowVaultBootstrap` writes a non-null value.
   autoConnectProfileId: null,

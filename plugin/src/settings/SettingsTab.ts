@@ -123,6 +123,25 @@ export class SettingsTab extends PluginSettingTab {
           new Notice('Remote SSH: reconnect for this to take effect');
         }));
 
+    new Setting(containerEl)
+      .setName('On-demand file cache')
+      .setDesc(
+        'Budget in megabytes for materialising remote files on this device so paths handed to plugins ' +
+        '(getFullPath / getFilePath) point at a real file. The vault is never cloned: a ' +
+        'file is written only when something asks for it, anything bigger than the budget ' +
+        'is not downloaded at all, and the cache is deleted on disconnect. 0 disables it.',
+      )
+      .addText(t => t
+        .setPlaceholder('128')
+        .setValue(String(this.plugin.settings.fsCacheMB ?? 128))
+        .onChange(async v => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n >= 0 && n <= 100_000) {
+            this.plugin.settings.fsCacheMB = n;
+            await this.plugin.saveSettings();
+          }
+        }));
+
     this.renderTerminalPanel(containerEl);
   }
 

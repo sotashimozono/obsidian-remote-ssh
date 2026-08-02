@@ -177,6 +177,24 @@ export interface PluginSettings {
    */
   localWriteBackMaxMB?: number;
   /**
+   * #429 read side — budget, in MB, for materialising remote files onto
+   * the shadow disk so `getFullPath()` / `getFilePath()` return paths
+   * that actually resolve. The remote vault is never cloned: a file is
+   * written only because something asked for a real path to it (or read
+   * it through the vault API), a file bigger than the budget is not
+   * fetched at all, and the least recently used copies are evicted to
+   * stay inside it. The whole cache is deleted on disconnect. Default
+   * 128; 0 disables materialisation entirely.
+   */
+  fsCacheMB?: number;
+  /**
+   * Per-file ceiling for the same cache, in MB. Default 8 — big enough
+   * for notes and ordinary attachments, small enough that one video
+   * cannot evict everything else. Files above it are never materialised
+   * (`getFullPath` still returns the joined path, as before).
+   */
+  fsCacheMaxFileMB?: number;
+  /**
    * #149 — terminal pane preferences. All optional; the View applies
    * sensible defaults when missing. `terminalShell` overrides the
    * remote login shell (e.g. `/usr/bin/zsh -l`); blank/missing means

@@ -782,6 +782,10 @@ export default class RemoteSshPlugin extends Plugin {
           },
           removeRemote: (rel) => da.remove(rel),
           ignore,
+          // A file the disk cache materialised is the remote's own
+          // content; pushing it back would be an echo.
+          isMirroredCopy: (rel, st) =>
+            this.adapterMgr.materialized?.isMirroredCopy(rel, st) ?? false,
           maxBytes,
           debounceMs: 400,
           setTimer: (cb, ms) => window.setTimeout(cb, ms),

@@ -31,6 +31,13 @@ export interface LocalWriteWatcherDeps {
   removeRemote(rel: string): Promise<void>;
   /** True for paths the write-back must never touch (config tree, VCS, temp files). */
   ignore(rel: string): boolean;
+  /**
+   * True when the bytes on disk are a copy the plugin itself
+   * materialised from the remote (`MaterializedCache`), so pushing them
+   * back would be an echo of the remote's own content. Defaults to
+   * never — a deployment without the disk cache is unaffected.
+   */
+  isMirroredCopy?(rel: string, stat: LocalFileStat): boolean;
   /** Largest single file to push. Bigger files are skipped, loudly. */
   maxBytes: number;
   /** Coalesces a burst of writes; also the interval between stability samples. */
@@ -222,6 +229,13 @@ export class LocalWriteWatcher {
     if (this.pushed.get(rel) === sig) {
       this.sample.set(rel, sig);
       return;                          // already on the remote, byte-identical
+    }
+    if (this.deps.isMirroredCopy?.(rel, st)) {
+      // We put these bytes there ourselves, materialising the remote's
+      // own content. Pushing them back would be an echo — and on a
+      // stale copy it would be an echo that overwrites a newer remote.
+      this.sample.set(rel, sig);
+      return;
     }
     if (this.sample.get(rel) !== sig) {
       // First sighting of this generation. Wait one more debounce and
