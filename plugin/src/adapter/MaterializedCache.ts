@@ -80,15 +80,6 @@ export class MaterializedCache {
   }
 
   /**
-   * Most bytes worth fetching for one file. Handed to the synchronous
-   * fetch so an over-limit file is refused by the transport instead of
-   * being pulled and then thrown away.
-   */
-  fetchLimit(): number {
-    return Math.min(this.deps.maxFileBytes, this.deps.budgetBytes);
-  }
-
-  /**
    * Write `data` to the shadow disk and record it. Returns false when
    * the cache is disabled, the file is over a limit, or the write
    * fails — callers treat that as "not materialised" and carry on.

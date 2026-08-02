@@ -25,7 +25,6 @@ import * as fs from 'fs';
 import * as nodePath from 'path';
 import { pathToFileURL } from 'url';
 import type { MaterializedCache } from './MaterializedCache';
-import { syncHttpGetBinary } from '../util/syncHttpGet';
 import type { RemoteFsClient } from './RemoteFsClient';
 import type { WriterReflector } from './WriterReflector';
 import type { LocalOpRegistry } from './LocalOpRegistry';
@@ -219,30 +218,29 @@ export class SftpDataAdapter {
     const cache = this.materializedCache;
     if (!cache || cache.disabled()) return false;
     if (cache.has(normalizedPath)) return true;
+    // Already real on disk — the config tree, or a file somebody wrote.
+    // Checked before anything else so `getFullPath('.obsidian/…')`, which
+    // Obsidian itself calls throughout startup, costs one stat.
+    if (this.shadowBasePath
+      && fs.existsSync(nodePath.join(this.shadowBasePath, normalizedPath))) {
+      return true;
+    }
 
-    // Free hit: the bytes are already in the in-memory read cache
-    // (the note was just opened), so no request goes out at all.
+    // The ONLY synchronous source of bytes is the in-memory read cache
+    // (the note was opened, or written, this session). There is no
+    // synchronous way to reach the remote from here, and the obvious
+    // one is a trap: `ResourceBridge` runs its HTTP server on THIS
+    // event loop, so a blocking request to it can never be answered —
+    // the thread that would accept the connection is the thread doing
+    // the waiting. An earlier revision of this method shipped exactly
+    // that, and it hung connect until the request timed out.
+    //
+    // So the synchronous surface serves what is already here, and
+    // on-demand fetching lives on the async path (`fs.promises.*`,
+    // which can simply await `readBinary`).
     const cached = this.readCache.peek(this.toRemote(normalizedPath));
     if (cached) {
       return cache.put(normalizedPath, cached.data);
-    }
-    if (!this.resourceBridge?.isRunning()) return false;
-
-    let url: string;
-    try {
-      url = this.resourceBridge.urlFor(normalizedPath);
-    } catch {
-      return false;                    // bridge stopped between the check and here
-    }
-    const result = syncHttpGetBinary(url, cache.fetchLimit());
-    if (result.kind === 'ok') {
-      return cache.put(normalizedPath, result.bytes);
-    }
-    if (result.kind === 'too-large') {
-      logger.info(
-        `materializeSync("${normalizedPath}"): ${result.totalSize} bytes is over the ` +
-        'materialisation limit — nothing was written',
-      );
     }
     return false;
   }

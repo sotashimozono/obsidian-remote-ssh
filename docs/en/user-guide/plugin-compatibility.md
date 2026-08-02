@@ -153,11 +153,19 @@ Things that aren't a specific plugin but trip plugins in general:
     dir and everything outside the vault run the stock function
     untouched. Callback-style async `fs` is not patched.
     Names and sizes are answered from the vault model, so listing or
-    stat-ing the vault costs **no download at all**, and a file's
-    content is fetched only when something actually reads it.
-    `getFullPath(path)` / `getFilePath(path)` do the same before
-    returning, so the path they hand back resolves for `shell.openPath`,
-    an `<img>` or an external editor.
+    stat-ing the vault costs **no download at all**.
+    Content is where the two halves differ:
+    - `fs.promises.readFile` fetches the file on demand — that read *is*
+      the request.
+    - `fs.readFileSync`, and the paths from `getFullPath` /
+      `getFilePath`, resolve only for a file whose bytes are already
+      here: one opened or written this session, or already materialised.
+      **A synchronous call cannot fetch from the remote**, and the
+      tempting shortcut is a trap: the localhost bridge that serves
+      vault content runs on the same event loop as the plugin code, so
+      blocking on a request to it deadlocks the thread that would answer
+      it. Reach for the promise API when the file may not have been read
+      yet.
     The note tree is still **not** mirrored: that would be a local clone
     of the remote vault, which is what this design exists to avoid. The
     cache is bounded (Settings → Advanced, *On-demand file cache*,
