@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
 import { MaterializedCache, type MaterializedStat } from '../src/adapter/MaterializedCache';
-import { syncHttpGetBinary, totalFromContentRange } from '../src/util/syncHttpGet';
 
 /**
  * In-memory disk. `mtimeMs` advances on every write, so a rewrite is
@@ -120,53 +119,5 @@ describe('MaterializedCache', () => {
     d.files.delete('/root/note.md');
     expect(c.has('note.md')).toBe(false);
     expect(c.bytes()).toBe(0);
-  });
-});
-
-describe('syncHttpGetBinary', () => {
-  const stub = (over: Record<string, unknown>) => ({
-    open: vi.fn(), setRequestHeader: vi.fn(), overrideMimeType: vi.fn(), send: vi.fn(),
-    getResponseHeader: () => null,
-    status: 200, responseText: '',
-    ...over,
-  });
-
-  const withXhr = <T>(impl: object, run: () => T): T => {
-    const g = globalThis as { XMLHttpRequest?: unknown };
-    const saved = g.XMLHttpRequest;
-    g.XMLHttpRequest = function XHR() { return impl; } as unknown;
-    try { return run(); } finally { g.XMLHttpRequest = saved; }
-  };
-
-  it('maps the response back to raw bytes', () => {
-    const r = withXhr(stub({ status: 200, responseText: 'H\u00ff\u0000' }), () =>
-      syncHttpGetBinary('http://127.0.0.1:1/r/tok?p=a', 1024));
-    expect(r.kind).toBe('ok');
-    expect(r.kind === 'ok' && [...r.bytes]).toEqual([0x48, 0xff, 0x00]);
-  });
-
-  it('refuses a file whose Content-Range says it is over the limit', () => {
-    const r = withXhr(
-      stub({ status: 206, responseText: 'partial', getResponseHeader: () => 'bytes 0-6/999999' }),
-      () => syncHttpGetBinary('http://127.0.0.1:1/r/tok?p=a', 8),
-    );
-    expect(r).toEqual({ kind: 'too-large', totalSize: 999999 });
-  });
-
-  it('reports unavailable instead of throwing when there is no vehicle', () => {
-    const g = globalThis as { XMLHttpRequest?: unknown };
-    const saved = g.XMLHttpRequest;
-    delete g.XMLHttpRequest;
-    try {
-      expect(syncHttpGetBinary('http://127.0.0.1:1/r/tok?p=a', 8).kind).toBe('unavailable');
-    } finally {
-      g.XMLHttpRequest = saved;
-    }
-  });
-
-  it('parses the total out of a Content-Range header', () => {
-    expect(totalFromContentRange('bytes 0-1023/4096')).toBe(4096);
-    expect(totalFromContentRange('bytes 0-1023/*')).toBeNull();
-    expect(totalFromContentRange(null)).toBeNull();
   });
 });

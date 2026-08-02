@@ -245,12 +245,6 @@ export class ResourceBridge {
       res.writeHead(405, { 'Allow': 'GET, HEAD' }).end();
       return;
     }
-    // `<img src>` needs no CORS, but the synchronous XHR that
-    // `getFullPath` uses to materialise a file on demand does — the
-    // renderer's origin (`app://obsidian.md`) is not this server's.
-    // The token in the path is what actually guards the bridge; this
-    // header only stops the browser from hiding an authorised reply.
-    res.setHeader('Access-Control-Allow-Origin', '*');
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const m = /^\/r\/([0-9a-f]+)$/.exec(url.pathname);
     if (!m) {

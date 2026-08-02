@@ -232,14 +232,17 @@ test.describe('capability probe: can Node fs be routed to the remote daemon? (#4
       'patching the fs module object must be observable through a fresh require()',
     ).toBe(true);
     expect(report.hasChildProcess, 'child_process is the fallback sync bridge').toBe(true);
-    // Already shipped and depended upon: `SftpDataAdapter.getFullPath` uses a
-    // synchronous XHR to the bridge to materialise the file it is asked about.
-    // If this is red, that feature is inert — every returned path points at
-    // nothing again — and `syncHttpGet.ts` needs a different vehicle.
-    expect(
-      (report.syncXhr as { allowed?: boolean } | undefined)?.allowed,
-      'synchronous XHR to the ResourceBridge is the vehicle on-demand ' +
-      'materialisation runs on; without it getFullPath cannot resolve',
-    ).toBe(true);
+    // `syncXhr` is measured but deliberately NOT asserted, and the reason is
+    // the finding this probe exists to record: a synchronous XHR to the
+    // ResourceBridge CANNOT work, because the bridge's HTTP server runs on
+    // this very event loop. Blocking the renderer to wait for it blocks the
+    // thread that would accept the connection — a self-deadlock that stalls
+    // until the request times out. A revision of `getFullPath` shipped
+    // exactly that and hung connect for minutes. Synchronous materialisation
+    // is now limited to bytes already in the read cache; on-demand fetching
+    // lives on the async path.
+    //
+    // The measurement stays because the numbers are the evidence any future
+    // "just do it synchronously" idea has to answer for.
   });
 });
