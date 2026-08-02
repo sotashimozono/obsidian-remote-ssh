@@ -1701,3 +1701,74 @@ describe('SftpDataAdapter — config write-through to the local shadow disk (#34
     await expect(fs.stat(victim)).rejects.toThrow();
   });
 });
+
+/**
+ * The disk cache must never take ownership of `<configDir>/**`.
+ *
+ * `pullPluginBinaries` fetches `<configDir>/plugins/<id>/main.js` THROUGH
+ * this adapter. When the read-through filed those bytes in the cache
+ * ledger, the ledger's own housekeeping — LRU eviction, and the wipe on
+ * disconnect — deleted the plugin from the shadow disk, and the next
+ * launch silently did not load it. Two e2e specs caught it as "the
+ * plugin was never staged" / "was never loaded".
+ */
+describe('SftpDataAdapter — the materialised cache and the config tree', () => {
+  const makeCache = () => {
+    const owned = new Set<string>();
+    return {
+      owned,
+      cache: {
+        put: (rel: string) => { owned.add(rel); return true; },
+        has: (rel: string) => owned.has(rel),
+        disabled: () => false,
+        isMirroredCopy: () => false,
+        forget: (rel: string) => { owned.delete(rel); },
+        clear: () => { owned.clear(); },
+        bytes: () => 0,
+        size: () => owned.size,
+        tooBig: () => false,
+      },
+    };
+  };
+
+  it('does not file a config-tree read in the cache ledger', async () => {
+    const fake = makeFakeClient({
+      files: {
+        '/srv/vault/.obsidian/plugins/some-plugin/main.js': { data: Buffer.from('module.exports={}'), mtime: 1 },
+        '/srv/vault/note.md': { data: Buffer.from('# note'), mtime: 1 },
+      },
+    });
+    const readCache = new ReadCache();
+    const dirCache = new DirCache();
+    const { owned, cache } = makeCache();
+    const adapter = new SftpDataAdapter(
+      fake.client, '/srv/vault', readCache, dirCache, 'v',
+      new PathMapper('client-a', '.obsidian'),
+    );
+    adapter.setMaterializedCache(cache as never);
+
+    await adapter.read('.obsidian/plugins/some-plugin/main.js');
+    expect(
+      [...owned],
+      'a plugin binary entered the cache ledger — eviction or disconnect would delete it',
+    ).toEqual([]);
+
+    await adapter.read('note.md');
+    expect([...owned], 'an ordinary note should still be cached').toEqual(['note.md']);
+  });
+
+  it('materializeSync refuses config paths outright', () => {
+    const fake = makeFakeClient();
+    const { owned, cache } = makeCache();
+    const adapter = new SftpDataAdapter(
+      fake.client, '/srv/vault', new ReadCache(), new DirCache(), 'v',
+      new PathMapper('client-a', '.obsidian'),
+    );
+    adapter.setMaterializedCache(cache as never);
+
+    // No shadow base path is set, so the real-disk answer is "no" — the
+    // point is that it never reaches the cache either way.
+    expect(adapter.materializeSync('.obsidian/plugins/x/main.js')).toBe(false);
+    expect([...owned]).toEqual([]);
+  });
+});
