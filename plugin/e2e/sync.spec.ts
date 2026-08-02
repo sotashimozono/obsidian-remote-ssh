@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import {
   launchObsidian,
-  driveConnectFlow,
+  connectAndWaitForShadowVault,
   findShadowVaultPath,
   waitForShadowVaultLoaded,
   dismissBlockingModals,
@@ -123,8 +123,7 @@ test.beforeAll(async () => {
   // path. Deliberately NOT wrapped in try/catch: if the connect flow throws, the
   // plugin is broken and this suite must go RED. Swallowing it into a
   // `test.skip` is what let a broken connect ship green in 1.0.49.
-  await driveConnectFlow(obsidian.page);
-  shadowVaultPath = await findShadowVaultPath(scaffold.vaultPath, 15_000);
+  shadowVaultPath = await connectAndWaitForShadowVault(obsidian.page, scaffold.vaultPath);
   await obsidian.cleanup();
   obsidian = await launchObsidian(shadowVaultPath);
 

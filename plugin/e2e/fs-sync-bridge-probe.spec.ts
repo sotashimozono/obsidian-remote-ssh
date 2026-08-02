@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
   launchObsidian,
-  driveConnectFlow,
+  connectAndWaitForShadowVault,
   findShadowVaultPath,
   waitForShadowVaultLoaded,
   type ObsidianHandle,
@@ -58,8 +58,7 @@ test.beforeAll(async () => {
 
   scaffold = scaffoldTestVault();
   obsidian = await launchObsidian(scaffold.vaultPath);
-  await driveConnectFlow(obsidian.page);
-  shadowVaultPath = await findShadowVaultPath(scaffold.vaultPath, 15_000);
+  shadowVaultPath = await connectAndWaitForShadowVault(obsidian.page, scaffold.vaultPath);
   await obsidian.cleanup();
   obsidian = await launchObsidian(shadowVaultPath);
   await waitForShadowVaultLoaded(obsidian.page, logPathFor(shadowVaultPath), 30_000);

@@ -280,9 +280,25 @@ export async function driveConnectFlow(page: Page): Promise<void> {
   // profiles; for the scaffold's key-auth profile connect can fire
   // straight off Enter (no modal). Click the button if it shows; its
   // absence is not an error.
-  const connectBtn = page.locator('.modal button:has-text("Connect")').first();
-  if (await connectBtn.isVisible({ timeout: 5_000 }).catch(() => false)) {
-    await connectBtn.click();
+  // ConnectModal is TWO panes, and clicking once only gets through the
+  // first. The profile list offers a "Connect" per row (ConnectModal.ts:54);
+  // choosing one opens that profile's pane, whose own Connect button
+  // (`.remote-ssh-connect-button`, ConnectModal.ts:115) is what actually
+  // fires the handshake. Clicking once left the modal parked on the second
+  // pane, so no shadow vault ever appeared and the spec reported "connect
+  // command likely never fired" — with the command having fired perfectly.
+  //
+  // Click through both, preferring the pane's own button once it is up. A
+  // profile that needs no second confirmation simply has nothing left to
+  // click, which is why absence is not an error.
+  for (let stage = 0; stage < 2; stage++) {
+    const paneBtn = page.locator('.modal .remote-ssh-connect-button').first();
+    const btn = (await paneBtn.isVisible({ timeout: stage === 0 ? 5_000 : 2_000 }).catch(() => false))
+      ? paneBtn
+      : page.locator('.modal button:has-text("Connect")').first();
+    if (!(await btn.isVisible({ timeout: 2_000 }).catch(() => false))) break;
+    await btn.click().catch(() => { /* the pane may have closed under us */ });
+    await page.waitForTimeout(400);   // let the next pane render
   }
 }
 
@@ -315,7 +331,7 @@ export async function connectAndWaitForShadowVault(
       await page.waitForTimeout(1_500);
       continue;
     }
-    const perAttempt = Math.min(15_000, Math.max(3_000, deadline - Date.now()));
+    const perAttempt = Math.min(30_000, Math.max(3_000, deadline - Date.now()));
     try {
       return await findShadowVaultPath(scaffoldVaultPath, perAttempt);
     } catch (e) {

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
   launchObsidian,
-  driveConnectFlow,
+  connectAndWaitForShadowVault,
   findShadowVaultPath,
   waitForShadowVaultLoaded,
   type ObsidianHandle,
@@ -238,8 +238,7 @@ test.beforeAll(async () => {
   // Building blocks rather than `connectAndOpenShadow`, to KEEP the shadow vault
   // path: every relaunch below reuses it, and the on-disk assertions read
   // straight out of it.
-  await driveConnectFlow(obsidian.page);
-  shadowVaultPath = await findShadowVaultPath(scaffold.vaultPath, 15_000);
+  shadowVaultPath = await connectAndWaitForShadowVault(obsidian.page, scaffold.vaultPath);
   await obsidian.cleanup();
   obsidian = await launchObsidian(shadowVaultPath);
 
