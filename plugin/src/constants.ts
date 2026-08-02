@@ -49,6 +49,17 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   // rather than eager-walking the whole (potentially huge, deep) tree at
   // connect. Default on; safe to turn off for small vaults.
   lazyFolderLoad: true,
+  // #429 — push writes a plugin (or a subprocess it spawned) makes
+  // under `adapter.basePath` up to the remote. On by default: the
+  // alternative is the reported bug, where those bytes are silently
+  // stranded on the local disk. 32 MB caps a single push.
+  localWriteBack: true,
+  localWriteBackMaxMB: 32,
+  // #429 read side — on-demand materialisation budget. Nothing is
+  // pre-fetched and nothing survives a disconnect; this only bounds how
+  // much of what was actually asked for may sit on the disk at once.
+  fsCacheMB: 128,
+  fsCacheMaxFileMB: 8,
   // Phase 4 marker for shadow vaults; null on a normal vault. Only
   // `ShadowVaultBootstrap` writes a non-null value.
   autoConnectProfileId: null,

@@ -108,6 +108,40 @@ export class SettingsTab extends PluginSettingTab {
           }
         }));
 
+    new Setting(containerEl)
+      .setName('Push out-of-band file writes to the remote')
+      .setDesc(
+        'Some plugins write notes with raw filesystem calls (or hand the job to a ' +
+        'subprocess) instead of the vault API. Those writes land in the local shadow ' +
+        'folder. With this on they are carried up to the remote vault and appear in the ' +
+        'file explorer; with it off they stay local.',
+      )
+      .addToggle(t => t.setValue(this.plugin.settings.localWriteBack !== false)
+        .onChange(async v => {
+          this.plugin.settings.localWriteBack = v;
+          await this.plugin.saveSettings();
+          new Notice('Remote SSH: reconnect for this to take effect');
+        }));
+
+    new Setting(containerEl)
+      .setName('On-demand file cache')
+      .setDesc(
+        'Budget in megabytes for materialising remote files on this device so paths handed to plugins ' +
+        '(getFullPath / getFilePath) point at a real file. The vault is never cloned: a ' +
+        'file is written only when something asks for it, anything bigger than the budget ' +
+        'is not downloaded at all, and the cache is deleted on disconnect. 0 disables it.',
+      )
+      .addText(t => t
+        .setPlaceholder('128')
+        .setValue(String(this.plugin.settings.fsCacheMB ?? 128))
+        .onChange(async v => {
+          const n = parseInt(v, 10);
+          if (Number.isFinite(n) && n >= 0 && n <= 100_000) {
+            this.plugin.settings.fsCacheMB = n;
+            await this.plugin.saveSettings();
+          }
+        }));
+
     this.renderTerminalPanel(containerEl);
   }
 

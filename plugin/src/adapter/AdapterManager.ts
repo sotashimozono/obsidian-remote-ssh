@@ -6,6 +6,7 @@ import type { PluginSettings } from '../types';
 import { ReadCache } from '../cache/ReadCache';
 import { DirCache } from '../cache/DirCache';
 import { SftpDataAdapter } from './SftpDataAdapter';
+import { MaterializedCache } from './MaterializedCache';
 import { AdapterPatcher } from './AdapterPatcher';
 import { ResourceBridge } from './ResourceBridge';
 import { WriteConflictModal } from '../ui/WriteConflictModal';
@@ -24,6 +25,7 @@ import { PathMapper } from '../path/PathMapper';
 import { logger } from '../util/logger';
 import { errorMessage } from '../util/errorMessage';
 import * as path from 'path';
+import * as fs from 'fs';
 
 /**
  * The set of FileSystemAdapter methods that get monkey-patched onto
@@ -49,6 +51,11 @@ export const PATCHED_METHODS = [
   // through the replacement makes the contract explicit and gives
   // tests a single hook to assert on. #170, follow-up to #133.
   'basePath', 'getBasePath',
+  // Path surface — the stock FileSystemAdapter versions join onto the
+  // local base and so hand out a path to nothing, because the note tree
+  // is virtual (#429). The replacements materialise the file first,
+  // within the cache budget, so what they return actually resolves.
+  'getFullPath', 'getFilePath',
 ] as const;
 
 /**
@@ -68,6 +75,7 @@ export class AdapterManager {
   private ancestorTracker: AncestorTracker | null = null;
   private offlineQueue: OfflineQueue | null = null;
   private resourceBridge: ResourceBridge | null = null;
+  private materializedCache: MaterializedCache | null = null;
 
   constructor(
     private readonly app: App,
@@ -81,6 +89,15 @@ export class AdapterManager {
 
   get dataAdapter(): SftpDataAdapter | null {
     return this._dataAdapter;
+  }
+
+  /**
+   * The session's materialisation ledger. `LocalWriteWatcher` consults
+   * it so a copy we put on disk is never pushed back to the remote as
+   * if the user had written it.
+   */
+  get materialized(): MaterializedCache | null {
+    return this.materializedCache;
   }
 
   isPatched(): boolean {
@@ -245,6 +262,29 @@ export class AdapterManager {
     // stateless (only mutates the live Vault) and the adapter object
     // outlives a reconnect's swapClient, so wiring once here holds for
     // the whole patched lifetime — no per-swap re-policy needed.
+    // Bounded on-demand disk cache behind getFullPath / getFilePath and
+    // the read-through in read/readBinary. Zero budget switches the
+    // whole thing off; nothing is ever pre-fetched either way.
+    this.materializedCache = new MaterializedCache({
+      absOf: (rel) => path.join(shadowBasePath, rel),
+      writeFile: (abs, data) => {
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        fs.writeFileSync(abs, data);
+        const s = fs.statSync(abs, { throwIfNoEntry: false });
+        return s ? { size: s.size, mtimeMs: s.mtimeMs } : null;
+      },
+      statFile: (abs) => {
+        const s = fs.statSync(abs, { throwIfNoEntry: false });
+        return s?.isFile() ? { size: s.size, mtimeMs: s.mtimeMs } : null;
+      },
+      deleteFile: (abs) => fs.rmSync(abs, { force: true }),
+      budgetBytes: shadowBasePath
+        ? Math.max(0, this.getSettings().fsCacheMB ?? 128) * 1024 * 1024
+        : 0,
+      maxFileBytes: Math.max(0, this.getSettings().fsCacheMaxFileMB ?? 8) * 1024 * 1024,
+    });
+    this._dataAdapter.setMaterializedCache(this.materializedCache);
+
     const localOpRegistry = new LocalOpRegistry();
     this._dataAdapter.setWriterReflector(
       new VaultModelBuilder(this.app.vault, { TFile, TFolder }),
@@ -291,6 +331,12 @@ export class AdapterManager {
     this._dataAdapter = null;
     this.readCache = null;
     this.dirCache = null;
+    // The disk cache is per-session: drop every untouched copy we put
+    // on the shadow disk so a disconnect leaves behind only what the
+    // user (or a plugin) actually created there. A copy somebody edited
+    // is left alone — the watcher owns it now.
+    this.materializedCache?.clear();
+    this.materializedCache = null;
     this.ancestorTracker?.clear();
     this.ancestorTracker = null;
     this.transferTracker?.clear();
