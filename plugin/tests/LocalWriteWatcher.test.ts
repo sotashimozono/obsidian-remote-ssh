@@ -24,6 +24,8 @@ function harness(files: Record<string, string> = {}, maxBytes = 1024 * 1024) {
   const push = vi.fn(async (_rel: string, _data: Buffer) => {});
   const removeRemote = vi.fn(async (_rel: string) => {});
   const onError = vi.fn((_rel: string, _msg: string) => {});
+  /** Paths the disk cache currently claims as its own materialised copy. */
+  const mirrored = new Set<string>();
 
   const w = new LocalWriteWatcher({
     watch: (cb) => { onChange = cb; return { close: () => { closed = true; } }; },
@@ -34,6 +36,7 @@ function harness(files: Record<string, string> = {}, maxBytes = 1024 * 1024) {
     push,
     removeRemote,
     ignore: makeLocalWriteIgnore('.obsidian', ['.git', 'node_modules']),
+    isMirroredCopy: (rel) => mirrored.has(rel),
     maxBytes,
     debounceMs: 400,
     setTimer: (cb) => { pending = cb; return 1; },
@@ -42,7 +45,7 @@ function harness(files: Record<string, string> = {}, maxBytes = 1024 * 1024) {
   });
 
   return {
-    w, push, removeRemote, onError,
+    w, push, removeRemote, onError, mirrored,
     trigger: (rel: string | null) => onChange?.(rel),
     /** Fire the pending debounce and let the async flush settle. */
     tick: async () => {
@@ -195,6 +198,26 @@ describe('LocalWriteWatcher', () => {
     await h.tick();
     expect(h.push).toHaveBeenCalledTimes(2);
     expect(h.w.pushedCount()).toBe(1);
+  });
+
+  it('does not push back a copy the disk cache materialised', async () => {
+    const h = harness();
+    h.w.start();
+    h.write('remote-note.md', 'bytes fetched from the remote');
+    // The disk cache reports this exact (size, mtime) as its own copy.
+    h.mirrored.add('remote-note.md');
+    h.trigger('remote-note.md');
+    await h.tick();
+    await h.tick();
+    expect(h.push, 'the materialised copy was echoed back to the remote').not.toHaveBeenCalled();
+
+    // A plugin then edits it: no longer our copy, so it must travel.
+    h.mirrored.delete('remote-note.md');
+    h.write('remote-note.md', 'edited by a plugin');
+    h.trigger('remote-note.md');
+    await h.tick();
+    await h.tick();
+    expect(h.push).toHaveBeenCalledTimes(1);
   });
 
   it('stop() closes the watcher and drops pending work', () => {
