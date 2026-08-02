@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import {
   launchObsidian,
-  driveConnectFlow,
+  connectAndWaitForShadowVault,
   findShadowVaultPath,
   waitForShadowVaultLoaded,
   type ObsidianHandle,
@@ -123,6 +123,10 @@ const COLD_NOTE = `${NOTE_PREFIX}${STAMP}-cold.md`;
 const CONTROL_BODY = `# control ${STAMP}\n\nwritten through app.vault.adapter.write()\n`;
 const PLUGIN_BODY = `# plugin ${STAMP}\n\nwritten with raw fs under adapter.basePath\n`;
 const REMOTE_ONLY_BODY = `# remote only ${STAMP}\n\nseeded straight onto the remote over SFTP\n`;
+const COLD_BODY = `# cold ${STAMP}
+
+nobody asks for this until the cold-read test
+`;
 const REAL_PLUGIN_BODY = `# claudian repro ${STAMP}\n\nfs.writeFileSync from a plugin onload()\n`;
 
 /** A note the docker fixture vault always has — the read-side subject. */
@@ -242,8 +246,7 @@ test.beforeAll(async () => {
   // Building blocks rather than `connectAndOpenShadow`, because the shadow
   // vault PATH is itself part of the subject matter here: it is the local root
   // that `adapter.basePath` hands out to plugins.
-  await driveConnectFlow(obsidian.page);
-  shadowVaultPath = await findShadowVaultPath(scaffold.vaultPath, 15_000);
+  shadowVaultPath = await connectAndWaitForShadowVault(obsidian.page, scaffold.vaultPath);
   await obsidian.cleanup();
   obsidian = await launchObsidian(shadowVaultPath);
 
