@@ -1,6 +1,6 @@
 {
   "name": "obsidian-remote-ssh",
-  "version": "1.1.8-beta.11",
+  "version": "1.1.8-beta.12",
   "description": "VS Code Remote SSH-like experience for Obsidian",
   "main": "main.js",
   "scripts": {

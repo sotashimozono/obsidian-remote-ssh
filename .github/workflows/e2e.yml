@@ -21,13 +21,18 @@ name: E2E smoke (Playwright + Obsidian)
 
 on:
   pull_request:
-    # Both release branches. `next` is where features (and the
-    # connect-lifecycle / connect-failure specs) land first — gating
-    # it here is what stops a broken connect reaching stable again
-    # (1.0.49 shipped connect-broken because nothing exercised the
-    # real connect path on a next PR). Mark "Obsidian E2E smoke" as a
-    # required check on next in branch protection to make it binding.
-    branches: [main, next]
+    # No `branches:` filter — every open PR, whatever its base.
+    # `next` is where features (and the connect-lifecycle /
+    # connect-failure specs) land first, and gating there is what
+    # stops a broken connect reaching stable again (1.0.49 shipped
+    # connect-broken because nothing exercised the real connect path
+    # on a next PR). But a feature track like `cli` accumulates the
+    # same risk for weeks before it ever opens a PR into `next`, so
+    # restricting the gate to the release branches just delays the
+    # signal. Mark "Obsidian E2E smoke" as a required check on next
+    # in branch protection to make it binding.
+    #
+    # The paths filter stays: it is what keeps docs-only PRs free.
     paths:
       # Plugin or daemon source — anything that could change the
       # Obsidian-side behaviour the spec drives.

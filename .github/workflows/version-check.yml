@@ -27,6 +27,13 @@ name: Version check
 # (`1.0.44-beta.10` > `1.0.44-beta.2`, `1.0.44` > `1.0.44-beta.N`) is
 # handled correctly.
 
+# This is the ONE workflow that keeps a `branches:` filter. Every
+# other gate runs on any open PR, but the rules below ARE the
+# two-channel release model — "beta shape on next, stable shape on
+# main, strictly greater than base". A feature track like `cli` is
+# not a release channel: its stacked PRs share one version on
+# purpose, so enforcing a bump per PR there would go red for
+# following the convention rather than for breaking it.
 on:
   pull_request:
     branches: [main, next]
