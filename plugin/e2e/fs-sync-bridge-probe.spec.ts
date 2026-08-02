@@ -176,6 +176,40 @@ test.describe('capability probe: can Node fs be routed to the remote daemon? (#4
         };
       }
 
+      // ── 7. synchronous XHR against the ResourceBridge ─────────────────────
+      // This is the vehicle the shipped `getFullPath` / `getFilePath`
+      // materialisation actually uses, so it is the one probe whose answer is
+      // already load-bearing. Chromium deprecates main-thread synchronous XHR
+      // but still permits it; if Obsidian's build does not, on-demand
+      // materialisation silently degrades to "return the path, no file" — and
+      // we want to learn that from CI, not from a user.
+      //
+      // The URL carries the bridge's session token, so only its scheme is
+      // reported; the token must never reach a CI log.
+      const bridgeUrl = (window as unknown as {
+        app?: { vault?: { adapter?: { getResourcePath?: (p: string) => string } } };
+      }).app?.vault?.adapter?.getResourcePath?.('remote_demo1.md') ?? null;
+      out.bridgeUrlScheme = bridgeUrl === null ? null : bridgeUrl.slice(0, bridgeUrl.indexOf(':'));
+      if (bridgeUrl && bridgeUrl.startsWith('http')) {
+        try {
+          const t0 = performance.now();
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', bridgeUrl, false);          // false = synchronous
+          xhr.overrideMimeType('text/plain; charset=x-user-defined');
+          xhr.send();
+          out.syncXhr = {
+            allowed: true,
+            status: xhr.status,
+            bytes: xhr.responseText.length,
+            ms: Math.round(performance.now() - t0),
+          };
+        } catch (e) {
+          out.syncXhr = { allowed: false, error: String(e) };
+        }
+      } else {
+        out.syncXhr = { allowed: false, error: `no http bridge URL (got ${String(bridgeUrl)})` };
+      }
+
       return out;
     });
 
@@ -198,5 +232,14 @@ test.describe('capability probe: can Node fs be routed to the remote daemon? (#4
       'patching the fs module object must be observable through a fresh require()',
     ).toBe(true);
     expect(report.hasChildProcess, 'child_process is the fallback sync bridge').toBe(true);
+    // Already shipped and depended upon: `SftpDataAdapter.getFullPath` uses a
+    // synchronous XHR to the bridge to materialise the file it is asked about.
+    // If this is red, that feature is inert — every returned path points at
+    // nothing again — and `syncHttpGet.ts` needs a different vehicle.
+    expect(
+      (report.syncXhr as { allowed?: boolean } | undefined)?.allowed,
+      'synchronous XHR to the ResourceBridge is the vehicle on-demand ' +
+      'materialisation runs on; without it getFullPath cannot resolve',
+    ).toBe(true);
   });
 });
