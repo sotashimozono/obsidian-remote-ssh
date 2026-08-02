@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { nativeFs } from './nativeFs';
 import { logger } from './logger';
 import { errorMessage } from './errorMessage';
 
@@ -45,7 +46,7 @@ const nodeDeps: WatchTreeDeps = {
   },
   listDirs: (dir) => {
     try {
-      return fs.readdirSync(dir, { withFileTypes: true })
+      return nativeFs.readdirSync(dir, { withFileTypes: true })
         .filter(e => e.isDirectory())
         .map(e => e.name);
     } catch {
@@ -173,7 +174,7 @@ export function listTreeFiles(
     const relDir = stack.pop()!;
     let entries: fs.Dirent[];
     try {
-      entries = fs.readdirSync(relDir === '' ? root : path.join(root, relDir), { withFileTypes: true });
+      entries = nativeFs.readdirSync(relDir === '' ? root : path.join(root, relDir), { withFileTypes: true });
     } catch {
       continue;                       // vanished or unreadable — nothing to report
     }
