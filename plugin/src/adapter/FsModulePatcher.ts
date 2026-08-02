@@ -36,10 +36,27 @@ export interface FsModulePatcherDeps {
    * caller gets the real filesystem's answer.
    */
   materialize(rel: string): boolean;
+  /**
+   * Same, for the promise-based surface, where blocking is neither
+   * needed nor wanted: it can go through the ordinary async read path
+   * instead of the synchronous bridge fetch.
+   */
+  materializeAsync(rel: string): Promise<boolean>;
 }
 
 /** The functions we take over. Everything else stays stock. */
 const PATCHED = ['readFileSync', 'readdirSync', 'existsSync', 'statSync', 'lstatSync'] as const;
+
+/**
+ * The promise-based equivalents. `require('fs/promises')` and
+ * `fs.promises` are the same object in Node, so patching it once covers
+ * both spellings — and it is the surface most plugins written in the
+ * last few years actually use.
+ */
+const PATCHED_PROMISES = ['readFile', 'readdir', 'stat', 'lstat', 'access'] as const;
+
+/** `fs.constants.W_OK`. An access check for writability is never answered from the model. */
+const W_OK = 2;
 
 /**
  * Makes the remote vault visible to plugins that use Node's `fs`
@@ -79,6 +96,7 @@ const PATCHED = ['readFileSync', 'readdirSync', 'existsSync', 'statSync', 'lstat
  */
 export class FsModulePatcher {
   private readonly originals = new Map<string, unknown>();
+  private readonly promiseOriginals = new Map<string, unknown>();
   private patched = false;
 
   constructor(private readonly deps: FsModulePatcherDeps) {}
@@ -104,6 +122,7 @@ export class FsModulePatcher {
       mod.statSync = this.makeStatSync('statSync');
       mod.lstatSync = this.makeStatSync('lstatSync');
       this.patched = true;
+      this.patchPromises();
       logger.info(`FsModulePatcher: patched fs.[${PATCHED.join(', ')}] for the shadow vault root`);
       return true;
     } catch (e) {
@@ -119,7 +138,101 @@ export class FsModulePatcher {
       try { mod[name] = fn; } catch { /* best effort */ }
     }
     this.originals.clear();
+    const promises = mod.promises as Record<string, unknown> | undefined;
+    if (promises) {
+      for (const [name, fn] of this.promiseOriginals) {
+        try { promises[name] = fn; } catch { /* best effort */ }
+      }
+    }
+    this.promiseOriginals.clear();
     this.patched = false;
+  }
+
+  /**
+   * Take over `fs.promises` too. Best-effort and separate from the sync
+   * patch: a build that hides `fs.promises` (or changes its shape) must
+   * cost us the async surface, not the whole feature.
+   */
+  private patchPromises(): void {
+    const promises = this.deps.fsModule.promises as Record<string, unknown> | undefined;
+    if (!promises || PATCHED_PROMISES.some(n => typeof promises[n] !== 'function')) {
+      logger.info('FsModulePatcher: fs.promises is not in the expected shape — sync surface only');
+      return;
+    }
+    for (const name of PATCHED_PROMISES) this.promiseOriginals.set(name, promises[name]);
+    promises.readFile = this.makeReadFilePromise();
+    promises.readdir = this.makeReaddirPromise();
+    promises.stat = this.makeStatPromise('stat');
+    promises.lstat = this.makeStatPromise('lstat');
+    promises.access = this.makeAccessPromise();
+    logger.info(`FsModulePatcher: patched fs.promises.[${PATCHED_PROMISES.join(', ')}]`);
+  }
+
+  private promiseOrig<T>(name: string): T {
+    return this.promiseOriginals.get(name) as T;
+  }
+
+  private makeReadFilePromise() {
+    const original = this.promiseOrig<(...a: unknown[]) => Promise<unknown>>('readFile');
+    return async (target: unknown, ...rest: unknown[]): Promise<unknown> => {
+      const rel = this.toVaultRel(target);
+      if (rel !== null && rel !== '' && !this.existsOnDisk(target)) {
+        try {
+          await this.deps.materializeAsync(rel);
+        } catch (e) {
+          logger.info(`FsModulePatcher: materialise "${rel}" failed (${errorMessage(e)})`);
+        }
+      }
+      return original(target, ...rest);
+    };
+  }
+
+  private makeReaddirPromise() {
+    const original = this.promiseOrig<(...a: unknown[]) => Promise<unknown>>('readdir');
+    return async (target: unknown, ...rest: unknown[]): Promise<unknown> => {
+      const rel = this.toVaultRel(target);
+      if (rel === null) return original(target, ...rest);
+      const modelChildren = this.deps.tree.children(rel);
+      if (!modelChildren) return original(target, ...rest);
+      let real: unknown[] = [];
+      try {
+        real = await original(target, ...rest) as unknown[];
+      } catch {
+        real = [];                     // virtual-only directory
+      }
+      return mergeListing(real, modelChildren, wantsFileTypes(rest[0]));
+    };
+  }
+
+  private makeStatPromise(name: 'stat' | 'lstat') {
+    const original = this.promiseOrig<(...a: unknown[]) => Promise<unknown>>(name);
+    return async (target: unknown, ...rest: unknown[]): Promise<unknown> => {
+      if (this.existsOnDisk(target)) return original(target, ...rest);
+      const rel = this.toVaultRel(target);
+      if (rel === null || rel === '') return original(target, ...rest);
+      const entry = this.deps.tree.entry(rel);
+      if (!entry) return original(target, ...rest);
+      return makeStats(entry);
+    };
+  }
+
+  private makeAccessPromise() {
+    const original = this.promiseOrig<(...a: unknown[]) => Promise<unknown>>('access');
+    return async (target: unknown, ...rest: unknown[]): Promise<unknown> => {
+      try {
+        return await original(target, ...rest);
+      } catch (e) {
+        // Readability can be answered from the model; writability cannot
+        // — the file is not there, and claiming otherwise would send a
+        // caller straight into a failing write.
+        const mode = typeof rest[0] === 'number' ? rest[0] : 0;
+        if ((mode & W_OK) !== 0) throw e;
+        const rel = this.toVaultRel(target);
+        if (rel === null) throw e;
+        if (rel === '' || this.deps.tree.entry(rel) !== null) return undefined;
+        throw e;
+      }
+    };
   }
 
   /**
@@ -178,17 +291,7 @@ export class FsModulePatcher {
       } catch {
         real = [];                     // virtual-only directory: the model is the answer
       }
-      const withFileTypes = Boolean(
-        rest[0] && typeof rest[0] === 'object'
-        && (rest[0] as { withFileTypes?: boolean }).withFileTypes,
-      );
-      const seen = new Set(
-        real.map(e => (typeof e === 'string' ? e : String((e as { name?: string }).name ?? ''))),
-      );
-      const extra = modelChildren
-        .filter(c => !seen.has(c.name))
-        .map(c => (withFileTypes ? makeDirent(c.name, c.entry.isDir) : c.name));
-      return [...real, ...extra];
+      return mergeListing(real, modelChildren, wantsFileTypes(rest[0]));
     };
   }
 
@@ -222,6 +325,33 @@ export class FsModulePatcher {
       return false;
     }
   }
+}
+
+/** True when the caller passed `{ withFileTypes: true }` to a readdir. */
+function wantsFileTypes(options: unknown): boolean {
+  return Boolean(
+    options && typeof options === 'object'
+    && (options as { withFileTypes?: boolean }).withFileTypes,
+  );
+}
+
+/**
+ * Real directory entries first, then the vault entries the disk does not
+ * have. A name present in both is listed once — the real one, since that
+ * is what a subsequent read would open.
+ */
+function mergeListing(
+  real: unknown[],
+  modelChildren: { name: string; entry: VaultEntry }[],
+  withFileTypes: boolean,
+): unknown[] {
+  const seen = new Set(
+    real.map(e => (typeof e === 'string' ? e : String((e as { name?: string }).name ?? ''))),
+  );
+  const extra = modelChildren
+    .filter(c => !seen.has(c.name))
+    .map(c => (withFileTypes ? makeDirent(c.name, c.entry.isDir) : c.name));
+  return [...real, ...extra];
 }
 
 /**
