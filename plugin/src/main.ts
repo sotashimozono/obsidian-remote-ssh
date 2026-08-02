@@ -31,6 +31,9 @@ import { ObsidianRegistry } from './shadow/ObsidianRegistry';
 import { ShadowVaultBootstrap } from './shadow/ShadowVaultBootstrap';
 import type { SharedConfigReader, BootstrapResult } from './shadow/ShadowVaultBootstrap';
 import { SharedConfigWatcher } from './shadow/SharedConfigWatcher';
+import { LocalWriteWatcher, makeLocalWriteIgnore } from './adapter/LocalWriteWatcher';
+import { FsModulePatcher } from './adapter/FsModulePatcher';
+import { watchTree, listTreeFiles } from './util/watchTree';
 import { ShadowVaultManager } from './shadow/ShadowVaultManager';
 import { WindowSpawner } from './shadow/WindowSpawner';
 import { ShadowStartupCoordinator } from './shadow/ShadowStartupCoordinator';
@@ -116,6 +119,8 @@ export default class RemoteSshPlugin extends Plugin {
    * stopped on disconnect/unload).
    */
   private sharedConfigWatcher: SharedConfigWatcher | null = null;
+  private localWriteWatcher: LocalWriteWatcher | null = null;
+  private fsModulePatcher: FsModulePatcher | null = null;
   private observability: ObservabilityInstaller | null = null;
   /**
    * #149 — re-entrant guard for `openRemoteTerminal()`. The
@@ -734,6 +739,131 @@ export default class RemoteSshPlugin extends Plugin {
       }
       watcher.start();
       this.sharedConfigWatcher = watcher;
+
+      // #429: everything above moves the CONFIG tree. The note tree has
+      // the mirror-image hole — `adapter.basePath` hands out this local
+      // root (#170), so a plugin that joins onto it and writes with raw
+      // `fs`, or a subprocess it spawned (the reported case is Claudian,
+      // a Claude Code wrapper), lands bytes here that nothing ever
+      // carries anywhere. A real filesystem watcher is the only thing
+      // that sees a write from another process; it pushes through the
+      // patched adapter, so the mtime precondition, conflict resolver
+      // and vault-model reflection all apply as they do for any write.
+      this.localWriteWatcher?.stop();
+      this.localWriteWatcher = null;
+      if (this.settings.localWriteBack !== false) {
+        const vaultRoot = hostAdapter.getBasePath();
+        const ignore = makeLocalWriteIgnore(
+          this.app.vault.configDir,
+          profile.walkIgnoreDirs ?? DEFAULT_WALK_IGNORE_DIRS,
+        );
+        const abs = (rel: string): string => path.join(vaultRoot, rel);
+        const maxBytes = Math.max(1, this.settings.localWriteBackMaxMB ?? 32) * 1024 * 1024;
+        const lww = new LocalWriteWatcher({
+          watch: (onChange) => watchTree(vaultRoot, onChange, ignore),
+          scan: () => listTreeFiles(vaultRoot, ignore),
+          stat: (rel) => {
+            const s = fs.statSync(abs(rel), { throwIfNoEntry: false });
+            return s?.isFile() ? { size: s.size, mtimeMs: s.mtimeMs } : null;
+          },
+          read: (rel) => {
+            try { return fs.readFileSync(abs(rel)); } catch { return null; }
+          },
+          push: async (rel, data) => {
+            // `.md` goes through the text path so a mid-air collision
+            // gets the 3-way merge UI rather than a binary overwrite
+            // prompt; everything else is bytes.
+            if (rel.toLowerCase().endsWith('.md')) {
+              await da.write(rel, data.toString('utf-8'));
+            } else {
+              await da.writeBinary(
+                rel,
+                data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer,
+              );
+            }
+          },
+          removeRemote: (rel) => da.remove(rel),
+          ignore,
+          // A file the disk cache materialised is the remote's own
+          // content; pushing it back would be an echo.
+          isMirroredCopy: (rel, st) =>
+            this.adapterMgr.materialized?.isMirroredCopy(rel, st) ?? false,
+          maxBytes,
+          debounceMs: 400,
+          setTimer: (cb, ms) => window.setTimeout(cb, ms),
+          clearTimer: (h) => window.clearTimeout(h as number),
+          onError: (_rel, message) => new Notice(`Remote SSH: ${message}`),
+        });
+        lww.start();
+        this.localWriteWatcher = lww;
+      }
+
+      // #429 read side. The write-back above carries bytes OUT; nothing
+      // carried the vault IN, because the note tree is virtual: a plugin
+      // doing `fs.readdirSync(basePath)` saw the config dir and no notes,
+      // and `fs.readFileSync` on a note the user is looking at got ENOENT.
+      //
+      // Rather than mirror the tree (that is a clone of the remote, which
+      // this design refuses), answer from what already exists: names and
+      // stats come from `vault.fileMap` — free, no download — and content
+      // only when a `readFileSync` actually asks for it.
+      this.fsModulePatcher?.restore();
+      this.fsModulePatcher = null;
+      if (this.settings.fsModulePatch !== false) {
+        const req = (window as unknown as { require?: (m: string) => unknown }).require;
+        const fsModule = typeof req === 'function'
+          ? (req('fs') as Record<string, unknown> | null)
+          : null;
+        if (!fsModule) {
+          logger.info(
+            'fs patch: window.require is unavailable in this renderer — plugins that read ' +
+            'the vault through Node fs will not see it',
+          );
+        } else {
+          const asEntry = (f: unknown) => {
+            if (f instanceof TFile) return { isDir: false, size: f.stat.size, mtimeMs: f.stat.mtime };
+            if (f instanceof TFolder) return { isDir: true, size: 0, mtimeMs: 0 };
+            return null;
+          };
+          const patcher = new FsModulePatcher({
+            fsModule,
+            root: hostAdapter.getBasePath(),
+            configDir: this.app.vault.configDir,
+            tree: {
+              children: (relDir) => {
+                const folder = relDir === ''
+                  ? this.app.vault.getRoot()
+                  : this.app.vault.getAbstractFileByPath(relDir);
+                if (!(folder instanceof TFolder)) return null;
+                return folder.children.flatMap((c) => {
+                  const entry = asEntry(c);
+                  return entry ? [{ name: c.name, entry }] : [];
+                });
+              },
+              entry: (rel) => asEntry(this.app.vault.getAbstractFileByPath(rel)),
+            },
+            materialize: (rel) => da.materializeSync(rel),
+            // The promise surface can afford the ordinary async read
+            // path — no synchronous bridge fetch needed. The size is
+            // checked against the budget FIRST, from the model, so an
+            // over-budget file is never pulled just to be refused.
+            materializeAsync: async (rel) => {
+              const f = this.app.vault.getAbstractFileByPath(rel);
+              if (!(f instanceof TFile)) return false;
+              const cache = this.adapterMgr.materialized;
+              if (!cache || cache.disabled() || cache.tooBig(f.stat.size)) return false;
+              try {
+                await da.readBinary(rel);
+                return true;
+              } catch (e) {
+                logger.info(`fs.promises materialise "${rel}" failed: ${errorMessage(e)}`);
+                return false;
+              }
+            },
+          });
+          if (patcher.patch()) this.fsModulePatcher = patcher;
+        }
+      }
     }
 
     // Adapter is patched; build the file model so File Explorer
@@ -827,6 +957,10 @@ export default class RemoteSshPlugin extends Plugin {
       // setReconnecting flag goes with it.
       this.sharedConfigWatcher?.stop();
       this.sharedConfigWatcher = null;
+      this.localWriteWatcher?.stop();
+      this.localWriteWatcher = null;
+      this.fsModulePatcher?.restore();
+      this.fsModulePatcher = null;
       this.adapterMgr.restore();
       this.setState(SyncState.ERROR);
       // s.reason is a string from ReconnectManager; wrap into Error
@@ -865,6 +999,14 @@ export default class RemoteSshPlugin extends Plugin {
     // flush pushes through the (about-to-be-restored) adapter.
     this.sharedConfigWatcher?.stop();
     this.sharedConfigWatcher = null;
+    // Same for the #429 write-back: its push goes through the adapter
+    // we are about to restore.
+    this.localWriteWatcher?.stop();
+    this.localWriteWatcher = null;
+    // Hand Node's fs back before the adapter goes: a stale patch would
+    // keep answering for a vault model that is about to be torn down.
+    this.fsModulePatcher?.restore();
+    this.fsModulePatcher = null;
     this.adapterMgr.restore();
     // Drop lazy-load state — the walker it captured is now disconnected. A
     // stray File-Explorer click after this finds a null loader and no-ops.
