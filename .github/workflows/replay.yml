@@ -37,7 +37,7 @@ jobs:
           # --abbrev=0 origin/main` resolves the latest release.
           # Default checkout depth = 1, which omits tag refs.
           fetch-depth: 0
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
