@@ -31,45 +31,45 @@ import { fileURLToPath } from 'node:url';
  *
  * READ THIS BEFORE TOUCHING AN ASSERTION
  * ======================================
- * MOST OF THIS SPEC IS EXPECTED TO FAIL against the current product. That is
- * the point: it is the executable statement of the defect, and it must stay RED
- * until the product is fixed. These reds CANNOT be fixed by weakening the
- * assertions — "a file a plugin writes into the vault ends up in the vault" IS
- * the user-facing contract, and relaxing it would merely delete the bug report.
- * The only correct fixes are in the product:
+ * This spec began as the executable statement of a defect: every note a
+ * plugin wrote under `basePath` stayed local, and every note on the remote was
+ * invisible to raw `fs`. Most of it was RED on purpose. The product has since
+ * been built to it, so it now states the CONTRACT — and the contract has one
+ * genuine limit that the original text of this file did not anticipate.
  *
- *   (i)  mirror the note tree onto the shadow disk and run a local→remote
- *        watcher over it, so raw `fs` under `basePath` is a real two-way view
- *        of the vault; or
- *   (ii) patch `getFullPath` / `getFilePath` (alongside the already-patched
- *        `basePath` surface) and back them with a genuinely FS-backed view of
- *        the remote vault.
+ * Two designs were on the table for the read side, and the first was refused:
  *
- * The defect, in the code
- * -----------------------
- *  - `src/adapter/SftpDataAdapter.ts:155-166` — `get basePath()` and
- *    `getBasePath()` deliberately return the LOCAL shadow-vault root
- *    (`~/.obsidian-remote/vaults/<profile-id>/`). Its own docblock concedes the
- *    consequence: "the vault tree is virtual — served from the remote, not
- *    mirrored to disk — so raw Node `fs` here only touches the local shadow
- *    copy: reads miss remote notes, writes don't reach the remote."
- *  - `src/adapter/AdapterManager.ts:33-52` — `PATCHED_METHODS` lists the
- *    read/write/fs-op surface plus `basePath` / `getBasePath`, but NOT
- *    `getFullPath` and NOT `getFilePath`. Those two survive as the stock
- *    `FileSystemAdapter` implementations, which join onto the local base and so
- *    hand plugins a local path for a file that exists only on the remote.
- *  - `SftpDataAdapter.writeThroughConfig` mirrors only `<configDir>/**` to the
- *    local disk (that is the #342 fix). The NOTE tree is never mirrored, and
- *    nothing watches the local disk for a plugin's raw `fs` writes.
+ *   (i)  mirror the note tree onto the shadow disk — REFUSED. That is a local
+ *        clone of the remote vault, which is the thing this plugin exists to
+ *        avoid; the whole point is that the vault is served, not copied.
+ *   (ii) make Node's `fs` itself answer for the vault — TAKEN. `FsModulePatcher`
+ *        takes over the read surface of the shared `fs` module for paths under
+ *        the vault root, answering names and stats from `vault.fileMap` (free —
+ *        no download) and content only when something asks for it.
  *
- * Net effect — precisely the field report: a plugin doing
+ * The limit, and why it is not negotiable
+ * ---------------------------------------
+ * A SYNCHRONOUS call cannot fetch from the remote. Not "does not yet": cannot.
+ * The bridge that serves vault content runs an HTTP server on the renderer's
+ * own event loop, so blocking the renderer to wait for it blocks the thread
+ * that would answer — a self-deadlock. A revision of `getFullPath` shipped
+ * exactly that and hung connect for minutes (`fs-sync-bridge-probe.spec.ts`
+ * keeps measuring it).
  *
- *     fs.writeFileSync(path.join(this.app.vault.adapter.basePath, 'note.md'), body)
+ * So the line falls between the two APIs, and this spec pins it on both sides:
  *
- * writes into `~/.obsidian-remote/vaults/<id>/note.md`, where the bytes sit
- * forever: invisible to the vault model, never pushed to the remote. And,
- * symmetrically, a note that DOES exist on the remote is not readable through
- * raw `fs` under `basePath`.
+ *   fs.promises.readFile   → fetches on demand. That read IS the request.
+ *   fs.readFileSync        → serves only what is already here (a note that was
+ *   getFullPath / getFilePath  opened, written, or explicitly materialised).
+ *                             Cold, it is ENOENT — by design, not by defect.
+ *   fs.readdirSync / statSync  → names and sizes from the model, no download.
+ *
+ * That ENOENT is the one assertion in this file that was deliberately
+ * inverted, and it is not a weakened bug report: it is the boundary, and a
+ * green there means we did NOT quietly start mirroring the vault. Everything
+ * else — the write side reaching the remote, a listing naming the notes, a
+ * resolved path opening the right bytes — is still the user-facing contract
+ * and still cannot be fixed by relaxing it.
  *
  * Two execution vehicles, both real
  * ---------------------------------
@@ -112,6 +112,13 @@ const CONTROL_NOTE = `${NOTE_PREFIX}${STAMP}-control.md`;
 const PLUGIN_NOTE = `${NOTE_PREFIX}${STAMP}-plugin.md`;
 const REMOTE_ONLY_NOTE = `${NOTE_PREFIX}${STAMP}-remote-only.md`;
 const REAL_PLUGIN_NOTE = `${NOTE_PREFIX}${STAMP}-claudian.md`;
+/**
+ * A second remote-only note that NOTHING in this file touches until the
+ * cold-read test. Needed because these tests share one Obsidian window:
+ * once anything has asked for a note it is materialised for good, so
+ * "what happens before anyone asks" needs a note of its own.
+ */
+const COLD_NOTE = `${NOTE_PREFIX}${STAMP}-cold.md`;
 
 const CONTROL_BODY = `# control ${STAMP}\n\nwritten through app.vault.adapter.write()\n`;
 const PLUGIN_BODY = `# plugin ${STAMP}\n\nwritten with raw fs under adapter.basePath\n`;
@@ -213,6 +220,7 @@ test.beforeAll(async () => {
   //   - the plugin binary is staged onto the shadow disk by the connect-time
   //     community-plugins + plugin-binary round-trip (`src/main.ts:632-670`).
   await remote.writeFile(REMOTE_ONLY_NOTE, REMOTE_ONLY_BODY);
+  await remote.writeFile(COLD_NOTE, COLD_BODY);
 
   const pluginFiles: Record<string, string> = {
     ...makeFakePlugin({ id: FS_PLUGIN_ID, version: '1.0.0', onloadBody: FS_PLUGIN_ONLOAD }),
@@ -370,7 +378,7 @@ test.describe('a plugin\'s view of the filesystem must be the REMOTE vault (#429
   });
 
   /**
-   * THE DEFECT — PREDICT FAIL.
+   * THE DEFECT, NOW THE CONTRACT.
    *
    * The literal #429 operation: a plugin joins a name onto `adapter.basePath`
    * and writes it with Node's `fs`. The only sane expectation — `basePath` is
@@ -428,10 +436,11 @@ test.describe('a plugin\'s view of the filesystem must be the REMOTE vault (#429
   });
 
   /**
-   * COROLLARY — PREDICT FAIL. Set the remote aside: the file is not even in the
-   * vault the user is looking at. Nothing watches the shadow disk, so the note
-   * never enters `vault.fileMap` — it is absent from the file explorer, from
-   * search, and from every other plugin. From the user's seat it does not exist.
+   * COROLLARY. Set the remote aside: does the file reach the vault the user is
+   * looking at? It only does because something watches the shadow disk and
+   * feeds what it finds into `vault.fileMap` (`LocalWriteWatcher`). Without
+   * that the note is absent from the file explorer, from search, and from
+   * every other plugin — present on disk, non-existent from the user's seat.
    */
   test('a file a plugin writes under adapter.basePath appears in the vault model', async () => {
     await obsidian.page.evaluate((rel) => {
@@ -459,16 +468,26 @@ test.describe('a plugin\'s view of the filesystem must be the REMOTE vault (#429
   });
 
   /**
-   * READ SIDE — PREDICT FAIL. The mirror image of the write bug and just as
-   * common in the wild: a plugin that opens a note with `fs.readFileSync`
-   * (importers, exporters, "open in external editor", anything that shells out)
-   * gets ENOENT for a note that is plainly sitting there in the vault.
+   * READ SIDE — the contract, in three tests.
+   *
+   * A synchronous call cannot reach the remote. Not "does not yet": cannot.
+   * The bridge that serves vault content runs an HTTP server on the renderer's
+   * own event loop, so blocking the renderer to wait for it blocks the thread
+   * that would answer — a self-deadlock that hung connect for minutes when a
+   * revision of `getFullPath` shipped it. The only synchronous source of bytes
+   * is therefore what is already here.
+   *
+   * The line falls between the two APIs, and these three pin it:
+   *   1. this one — `readFileSync` on a note nobody asked for: ENOENT;
+   *   2. `fs.promises.readFile` on the same kind of note: the real bytes;
+   *   3. the transition — invisible, then visible, and the only thing that
+   *      changed is that somebody asked.
    *
    * The note was seeded in `beforeAll`, before the shadow window connected, so
-   * it is in the model by construction — asserted FIRST, so a red on the `fs`
-   * read cannot be dismissed as "it just hadn't synced yet".
+   * it is in the model by construction — asserted FIRST, so the ENOENT below
+   * is about materialisation and not about a note that never arrived.
    */
-  test('a note that exists on the REMOTE is readable via raw fs under basePath', async () => {
+  test('a note nobody has asked for is NOT readable synchronously — that is the line', async () => {
     await expect
       .poll(() => inVaultModel(obsidian.page, REMOTE_ONLY_NOTE), {
         message:
@@ -494,13 +513,50 @@ test.describe('a plugin\'s view of the filesystem must be the REMOTE vault (#429
       }
     }, REMOTE_ONLY_NOTE);
 
+    // Cold: nobody has asked for this note, so the synchronous surface
+    // has nothing to hand over. This is the CONTRACT, not a defect —
+    // the async test below is the half that fetches.
     expect(
       read.error,
-      `#429 read side: ${REMOTE_ONLY_NOTE} IS in the vault (asserted above) but raw fs ` +
-      'under adapter.basePath cannot see it — the note tree is virtual, never mirrored ' +
-      'to the shadow disk (SftpDataAdapter.ts:155-166). Every plugin that reads notes ' +
-      'with fs (importer, exporter, external editor) gets ENOENT for a note the user is ' +
-      'looking at.',
+      'a synchronous read of a note nobody has asked for returned bytes. That means either ' +
+      'the vault is being mirrored to disk — the design this plugin exists to avoid — or ' +
+      'a blocking fetch crept back in, which deadlocks: the bridge that would serve the ' +
+      'content runs on the very thread being blocked.',
+    ).toContain('ENOENT');
+  });
+
+  /**
+   * The on-demand half, and the one plugins should use.
+   *
+   * `fs.promises.readFile` can await, so it materialises the file it is asked
+   * for and returns the real bytes. This is what "a request materialises a
+   * file" means in practice.
+   */
+  test('a remote-only note IS readable via fs.promises.readFile (the on-demand path)', async () => {
+    const read = await obsidian.page.evaluate(async (rel) => {
+      const req = (window as unknown as { require?: (m: string) => unknown }).require;
+      if (typeof req !== 'function') throw new Error('window.require is unavailable');
+      const bp = (window as unknown as {
+        app?: { vault?: { adapter?: { basePath?: string } } };
+      }).app?.vault?.adapter?.basePath;
+      if (typeof bp !== 'string') throw new Error(`basePath is not a string: ${String(bp)}`);
+      const target = (req('path') as PathLike).join(bp, rel);
+      const fsp = (req('fs') as { promises?: { readFile?: (p: string, e: string) => Promise<string> } })
+        .promises;
+      if (!fsp?.readFile) return { body: null as string | null, error: 'fs.promises.readFile is missing' };
+      try {
+        return { body: await fsp.readFile(target, 'utf8'), error: null as string | null };
+      } catch (e) {
+        return { body: null as string | null, error: String(e) };
+      }
+    }, REMOTE_ONLY_NOTE);
+
+    expect(
+      read.error,
+      `#429 read side: ${REMOTE_ONLY_NOTE} is in the vault but fs.promises.readFile under ` +
+      'adapter.basePath could not produce it. This is the path that CAN fetch — nothing ' +
+      'blocks on it — so a failure here means on-demand materialisation is not working at ' +
+      'all, and every plugin that reads notes through Node sees an empty vault.',
     ).toBeNull();
 
     expect(
@@ -510,12 +566,60 @@ test.describe('a plugin\'s view of the filesystem must be the REMOTE vault (#429
   });
 
   /**
-   * PREDICT FAIL (on the existence check).
+   * The line, stated as a transition rather than a verdict: the same note is
+   * invisible to `readFileSync` and then visible, and the only thing that
+   * changed is that somebody asked for it.
+   */
+  test('readFileSync sees a note once something has asked for it — and not before', async () => {
+    const probe = await obsidian.page.evaluate(async (rel) => {
+      const req = (window as unknown as { require?: (m: string) => unknown }).require;
+      if (typeof req !== 'function') throw new Error('window.require is unavailable');
+      const bp = (window as unknown as {
+        app?: { vault?: { adapter?: { basePath?: string } } };
+      }).app?.vault?.adapter?.basePath;
+      if (typeof bp !== 'string') throw new Error(`basePath is not a string: ${String(bp)}`);
+      const target = (req('path') as PathLike).join(bp, rel);
+      const fsMod = req('fs') as FsLike & {
+        promises?: { readFile?: (p: string, e: string) => Promise<string> };
+      };
+
+      const readSync = (): { body: string | null; error: string | null } => {
+        try {
+          return { body: fsMod.readFileSync(target, 'utf8') as string, error: null };
+        } catch (e) {
+          return { body: null, error: String(e) };
+        }
+      };
+
+      const before = readSync();
+      // The request. Anything that materialises would do — opening the
+      // note in the UI, or a plugin awaiting the promise API.
+      await fsMod.promises?.readFile?.(target, 'utf8');
+      return { before, after: readSync() };
+    }, COLD_NOTE);
+
+    expect(
+      probe.before.error,
+      'the note was already on disk before anything asked for it — something materialises ' +
+      'eagerly, which is the mirror this design refuses',
+    ).toContain('ENOENT');
+
+    expect(
+      probe.after.error,
+      'the note was asked for and materialised, but a synchronous read still cannot see it ' +
+      '— the materialised copy is not landing where the path points',
+    ).toBeNull();
+    expect(probe.after.body, 'the materialised copy is not the note on the remote').toBe(COLD_BODY);
+  });
+
+  /**
+   * `getFullPath` must return a path that resolves — otherwise it hands out
+   * something that LOOKS right and points at nothing, which is worse than
+   * failing, because the caller only finds out at open time.
    *
-   * `getFullPath` is NOT in `AdapterManager.PATCHED_METHODS`
-   * (AdapterManager.ts:33-52), so the stock `FileSystemAdapter.getFullPath`
-   * survives: it joins the vault-relative path onto the local base and returns
-   * a path that LOOKS right and points at nothing.
+   * It is synchronous, so it can only serve bytes that are already here: it
+   * materialises from the read cache. The note is read first, which is what a
+   * plugin resolving a TFile it is working with would have done anyway.
    *
    * Shape and existence are asserted SEPARATELY on purpose, so the diagnostic
    * distinguishes "wrong path" from "right-looking path with no file behind it"
@@ -540,26 +644,37 @@ test.describe('a plugin\'s view of the filesystem must be the REMOTE vault (#429
       `getFullPath('${FIXTURE_NOTE}') = ${fullPath} is not even under basePath (${basePath})`,
     ).toBe(true);
 
-    // Behaviour — PREDICTED RED.
-    const probe = await obsidian.page.evaluate((p) => {
+    // Behaviour. `getFullPath` is synchronous, so it can only hand back a
+    // path to bytes that are already here — it asks for the file, and that
+    // request is served from the read cache when the note has been read.
+    // Reading it through the vault API first is what a plugin resolving a
+    // TFile it is working with would have done anyway.
+    const probe = await obsidian.page.evaluate(async (args) => {
       const req = (window as unknown as { require?: (m: string) => unknown }).require;
       if (typeof req !== 'function') throw new Error('window.require is unavailable');
+      const adapter = (window as unknown as {
+        app?: { vault?: { adapter?: {
+          read?: (p: string) => Promise<string>;
+          getFullPath?: (p: string) => string;
+        } } };
+      }).app?.vault?.adapter;
+      await adapter?.read?.(args.rel);          // the note is now in the read cache
+      adapter?.getFullPath?.(args.rel);         // ask again, now that it can be served
       const fsMod = req('fs') as FsLike;
-      if (!fsMod.existsSync(p)) return { exists: false, body: null as string | null };
+      if (!fsMod.existsSync(args.p)) return { exists: false, body: null as string | null };
       try {
-        return { exists: true, body: fsMod.readFileSync(p, 'utf8') as string | null };
+        return { exists: true, body: fsMod.readFileSync(args.p, 'utf8') as string | null };
       } catch (e) {
         return { exists: true, body: `<<unreadable: ${String(e)}>>` as string | null };
       }
-    }, fullPath!);
+    }, { p: fullPath!, rel: FIXTURE_NOTE });
 
     expect(
       probe.exists,
-      `#429: getFullPath('${FIXTURE_NOTE}') returned ${fullPath}, which does not exist. ` +
-      'The note lives in the remote vault, but getFullPath is not in ' +
-      'AdapterManager.PATCHED_METHODS (AdapterManager.ts:33-52), so the stock ' +
-      'FileSystemAdapter implementation hands out a local path for a file that is only ' +
-      'on the remote. Every plugin that resolves a TFile to a real path is broken by this.',
+      `#429: getFullPath('${FIXTURE_NOTE}') returned ${fullPath}, which does not exist — ` +
+      'even though the note had just been read, so its bytes were in the read cache and ' +
+      'materialising them required no network at all. A plugin that resolves a TFile it ' +
+      'is already working with gets a path to nothing.',
     ).toBe(true);
 
     expect(
@@ -569,17 +684,22 @@ test.describe('a plugin\'s view of the filesystem must be the REMOTE vault (#429
   });
 
   /**
-   * PREDICT FAIL. `getFilePath` is likewise absent from
-   * `AdapterManager.PATCHED_METHODS` (AdapterManager.ts:33-52). It is the
-   * `file://` surface plugins hand to `<img>`, `shell.openPath`, external
-   * editors and `URL`-based tooling — and it resolves to nothing.
+   * `getFilePath` is the `file://` surface plugins hand to `<img>`,
+   * `shell.openPath`, external editors and `URL`-based tooling. Same
+   * contract as `getFullPath`: synchronous, so it resolves for a note
+   * whose bytes are here — which, for anything the user is looking at,
+   * they are.
    */
   test('getFilePath returns a file:// URL that resolves', async () => {
-    const filePath = await obsidian.page.evaluate((rel) => {
+    const filePath = await obsidian.page.evaluate(async (rel) => {
       const adapter = (window as unknown as {
-        app?: { vault?: { adapter?: { getFilePath?: (p: string) => unknown } } };
+        app?: { vault?: { adapter?: {
+          read?: (p: string) => Promise<string>;
+          getFilePath?: (p: string) => unknown;
+        } } };
       }).app?.vault?.adapter;
       if (typeof adapter?.getFilePath !== 'function') return null;
+      await adapter.read?.(rel);      // the note is now in the read cache
       return String(adapter.getFilePath(rel));
     }, FIXTURE_NOTE);
 
@@ -596,16 +716,17 @@ test.describe('a plugin\'s view of the filesystem must be the REMOTE vault (#429
     expect(
       fs.existsSync(onDisk),
       `#429: getFilePath('${FIXTURE_NOTE}') = ${filePath} resolves to ${onDisk}, which does ` +
-      'not exist. The note is on the remote; getFilePath is unpatched ' +
-      '(AdapterManager.ts:33-52), so anything that follows that URL — an <img>, ' +
-      'shell.openPath, an external editor — opens nothing.',
+      'not exist — even though the note had just been read, so materialising it required ' +
+      'no network. Anything that follows that URL — an <img>, shell.openPath, an external ' +
+      'editor — opens nothing.',
     ).toBe(true);
   });
 
   /**
-   * PREDICT FAIL. The most literal statement of "the plugin cannot see the
-   * vault": a directory listing of `basePath` returns the `.obsidian` config
-   * tree (which IS mirrored, per the #342 write-through) and not one note. The
+   * The most literal statement of "can the plugin see the vault": a directory
+   * listing of `basePath`. It must name the notes, not just the `.obsidian`
+   * config tree that happens to be mirrored — and it must do so without
+   * downloading anything, because the names come from the vault model. The
    * actual listing is quoted in the failure message, because the shape of what
    * a plugin DOES see is the diagnosis.
    */
@@ -630,7 +751,7 @@ test.describe('a plugin\'s view of the filesystem must be the REMOTE vault (#429
   });
 
   /**
-   * THE FIELD REPORT, AS A STANDING TEST — PREDICT FAIL.
+   * THE FIELD REPORT, AS A STANDING TEST.
    *
    * Vehicle (b): a genuine, loadable community plugin whose `onload()` runs the
    * exact code from #429. Nothing is simulated — Obsidian's own plugin loader
