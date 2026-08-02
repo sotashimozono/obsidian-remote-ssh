@@ -848,13 +848,14 @@ export default class RemoteSshPlugin extends Plugin {
             // checked against the budget FIRST, from the model, so an
             // over-budget file is never pulled just to be refused.
             materializeAsync: async (rel) => {
+              // Size first, from the model: an over-budget file must not
+              // be pulled just to be refused.
               const f = this.app.vault.getAbstractFileByPath(rel);
               if (!(f instanceof TFile)) return false;
               const cache = this.adapterMgr.materialized;
               if (!cache || cache.disabled() || cache.tooBig(f.stat.size)) return false;
               try {
-                await da.readBinary(rel);
-                return true;
+                return await da.materializeAsync(rel);
               } catch (e) {
                 logger.info(`fs.promises materialise "${rel}" failed: ${errorMessage(e)}`);
                 return false;

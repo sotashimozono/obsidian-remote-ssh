@@ -1731,7 +1731,7 @@ describe('SftpDataAdapter — the materialised cache and the config tree', () =>
     };
   };
 
-  it('does not file a config-tree read in the cache ledger', async () => {
+  it('materialises only on request, and never for the config tree', async () => {
     const fake = makeFakeClient({
       files: {
         '/srv/vault/.obsidian/plugins/some-plugin/main.js': { data: Buffer.from('module.exports={}'), mtime: 1 },
@@ -1747,14 +1747,22 @@ describe('SftpDataAdapter — the materialised cache and the config tree', () =>
     );
     adapter.setMaterializedCache(cache as never);
 
-    await adapter.read('.obsidian/plugins/some-plugin/main.js');
+    // Reading is not a request to materialise: opening a note must not
+    // leave a copy in the vault directory, where Obsidian's own watcher
+    // would see a file appear behind its back.
+    await adapter.read('note.md');
+    expect([...owned], 'a plain read materialised a file').toEqual([]);
+
+    // An explicit request does materialise — but never for the config
+    // tree, which the cache would then delete on eviction/disconnect.
+    expect(await adapter.materializeAsync('.obsidian/plugins/some-plugin/main.js')).toBe(false);
     expect(
       [...owned],
       'a plugin binary entered the cache ledger — eviction or disconnect would delete it',
     ).toEqual([]);
 
-    await adapter.read('note.md');
-    expect([...owned], 'an ordinary note should still be cached').toEqual(['note.md']);
+    expect(await adapter.materializeAsync('note.md')).toBe(true);
+    expect([...owned], 'an explicit request did not materialise the note').toEqual(['note.md']);
   });
 
   it('materializeSync refuses config paths outright', () => {
