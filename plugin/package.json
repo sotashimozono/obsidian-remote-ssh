@@ -57,7 +57,7 @@
     "fast-check": "^4.9.0",
     "jsdom": "^29.1.1",
     "obsidian": "~1.12.3",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.5"
   }
 }
