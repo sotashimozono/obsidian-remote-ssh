@@ -36,7 +36,70 @@ export default defineConfig({
   // Playwright's own locator diagnostic, well inside the 120 s test budget.
   actionTimeout: 30_000,
   retries: 1,
-  workers: 1, // Obsidian is a single-instance app
+  // Obsidian is a single-instance app, so a machine can only ever drive ONE
+  // window: `workers: 1` is not tunable. But that constraint is PER MACHINE —
+  // it does not stop us splitting the suite across several CI runners. See
+  // `projects` below.
+  workers: 1,
+  // ─── shards ──────────────────────────────────────────────────────────────
+  //
+  // The suite grew to 60+ tests and ~30 minutes on one runner, serially. The
+  // groups below let CI fan them out across runners (`--project=<name>`), one
+  // Obsidian per machine, so wall time collapses to the slowest group.
+  //
+  // ALL THREE RUN ON EVERY PR. The split is for speed, not for dropping
+  // coverage — a suite you only run sometimes is a suite you don't trust.
+  //
+  // A second, load-bearing benefit: each runner brings up its OWN docker sshd,
+  // so the groups cannot contaminate each other's remote vault. We hit exactly
+  // that: a fixture plugin left in the remote `community-plugins.json` by one
+  // spec reddened `sync.spec` in another. Isolation by construction beats
+  // remembering to clean up.
+  //
+  // Grouped by COST, so the three finish at roughly the same time — not by
+  // theme. Rebalance when a group's wall time drifts.
+  projects: [
+    {
+      // Fast: connect lifecycle + the core round-trips. Seconds each.
+      name: 'core',
+      testMatch: [
+        '**/smoke.spec.ts',
+        '**/connect-*.spec.ts',
+        '**/sync.spec.ts',
+        '**/reflect.spec.ts',
+        '**/restart-settings.spec.ts',
+        '**/plugin-code-roundtrip.spec.ts',
+        '**/fs-sync-bridge-probe.spec.ts',
+      ],
+    },
+    {
+      // The knowledge layer: links, metadata, graph, images. Heavy polls and
+      // multi-MB image fixtures.
+      name: 'features',
+      testMatch: [
+        '**/links-metadata.spec.ts',
+        '**/vault-features.spec.ts',
+        '**/images.spec.ts',
+      ],
+    },
+    {
+      // Heaviest: cache-pressure pushes >72 MiB over SSH to provably exceed the
+      // 64 MiB ReadCache budget, and fs-visibility relaunches Obsidian a lot.
+      name: 'stress',
+      testMatch: [
+        '**/cache-pressure.spec.ts',
+        '**/fs-visibility.spec.ts',
+      ],
+    },
+    // The screencast RECORDER — asserts nothing, emits PNG frames for the
+    // README GIF. Once `projects` exists, a spec in NO project never runs at
+    // all, so `testIgnore` alone would silently kill the demo capture. It gets
+    // its own project, and that project only exists when the recorder workflow
+    // asks for it.
+    ...(process.env.E2E_DEMO
+      ? [{ name: 'demo', testMatch: ['**/demo.spec.ts'] }]
+      : []),
+  ],
   use: {
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
