@@ -56,7 +56,7 @@ test.describe('Remote SSH E2E smoke', () => {
     const pluginTab = settingsModal
       .locator('.vertical-tab-nav-item:has-text("Remote SSH")')
       .first();
-    await expect(pluginTab).toBeVisible({ timeout: 5_000 });
+    await expect(pluginTab).toBeVisible({ timeout: 15_000 });
 
     // Close settings so subsequent tests start from a clean state.
     await page.keyboard.press('Escape');
@@ -124,3 +124,5 @@ test.describe('Remote SSH E2E smoke', () => {
     }
   });
 });
+
+

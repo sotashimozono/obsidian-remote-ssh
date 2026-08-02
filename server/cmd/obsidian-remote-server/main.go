@@ -19,6 +19,7 @@ import (
 
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/auth"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/correlator"
+	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/extensions"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/handlers"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/handlers/thumbnails"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/server"
@@ -44,6 +45,7 @@ func run(args []string) (int, error) {
 		vaultRoot   = fs.String("vault-root", "", "absolute path of the vault on this host (required)")
 		socketPath  = fs.String("socket", "", "unix socket to listen on (default ~/.obsidian-remote/server.sock)")
 		tokenPath   = fs.String("token-file", "", "file to write the session token to (default ~/.obsidian-remote/token)")
+		capsPath    = fs.String("capabilities-file", "", "capabilities manifest file (default ~/.obsidian-remote/capabilities.json)")
 		versionFlag = fs.Bool("version", false, "print version and exit")
 		verbose     = fs.Bool("verbose", false, "log connection and dispatch events to stderr")
 	)
@@ -76,6 +78,9 @@ func run(args []string) (int, error) {
 	if *tokenPath == "" {
 		*tokenPath = filepath.Join(defaultDir, "token")
 	}
+	if *capsPath == "" {
+		*capsPath = filepath.Join(defaultDir, "capabilities.json")
+	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	if *verbose {
@@ -90,6 +95,15 @@ func run(args []string) (int, error) {
 		return 1, err
 	}
 	defer func() { _ = os.Remove(*tokenPath) }()
+
+	capManager, err := extensions.LoadAndVerify(*capsPath)
+	if err != nil {
+		return 1, fmt.Errorf("load capabilities: %w", err)
+	}
+	logStore, err := extensions.NewLogStore(defaultDir)
+	if err != nil {
+		return 1, fmt.Errorf("init extension log store: %w", err)
+	}
 
 	// Clean up any dangling socket from a prior crashed run.
 	_ = os.Remove(*socketPath)
@@ -135,6 +149,11 @@ func run(args []string) (int, error) {
 	disp := srv.Dispatcher()
 	disp.Handle("auth", handlers.Auth(token))
 	disp.Handle("server.info", handlers.ServerInfo(disp, Version, absRoot))
+	extRunner := handlers.NewExtensionRunner(capManager, logStore, absRoot)
+	disp.Handle("extension.schema", handlers.RequireAuth(extRunner.Schema()))
+	disp.Handle("extension.invoke", handlers.RequireAuth(extRunner.Invoke()))
+	disp.Handle("extension.kill", handlers.RequireAuth(extRunner.Kill()))
+	disp.Handle("cli.kill", handlers.RequireAuth(extRunner.KillCompat()))
 	// fs.* handlers are gated behind session auth.
 	// Read side.
 	disp.Handle("fs.stat", handlers.RequireAuth(handlers.FsStat(absRoot)))

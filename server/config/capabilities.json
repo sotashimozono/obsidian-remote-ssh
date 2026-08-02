@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "extensions": [
+    {
+      "tool": "gemini",
+      "description": "Gemini CLI entrypoint",
+      "command": "/usr/local/bin/gemini",
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "allowWorkingDir": true,
+      "persistDefault": true,
+      "outputMode": "batch",
+      "args": [
+        {
+          "name": "prompt",
+          "required": true,
+          "maxLength": 65535,
+          "pattern": "^\\s*[^\\s-][\\s\\S]*$"
+        }
+      ]
+    }
+  ]
+}

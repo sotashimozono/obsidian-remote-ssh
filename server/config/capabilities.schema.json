@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obsidian-remote-ssh.dev/schema/capabilities.schema.json",
+  "title": "Obsidian Remote Extension Capabilities",
+  "type": "object",
+  "required": ["version", "extensions"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "extensions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/extension"
+      }
+    }
+  },
+  "$defs": {
+    "argRule": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" },
+        "pattern": { "type": "string" },
+        "maxLength": { "type": "integer", "minimum": 1 },
+        "allowFlags": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "extension": {
+      "type": "object",
+      "required": ["tool", "command", "sha256"],
+      "properties": {
+        "tool": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._-]{1,64}$"
+        },
+        "description": { "type": "string" },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "args": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/argRule" }
+        },
+        "allowWorkingDir": {
+          "type": "boolean"
+        },
+        "persistDefault": {
+          "type": "boolean"
+        },
+        "outputMode": {
+          "type": "string",
+          "enum": ["batch", "single"]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -125,8 +125,8 @@ type ReadBinaryRangeResult struct {
 }
 
 type WriteTextParams struct {
-	Path          string `json:"path"`
-	Content       string `json:"content"`
+	Path    string `json:"path"`
+	Content string `json:"content"`
 	// ExpectedMtime, when non-zero, causes the write to fail with
 	// PreconditionFailed if the remote file's mtime differs.
 	ExpectedMtime int64 `json:"expectedMtime,omitempty"`
@@ -166,33 +166,17 @@ type CopyParams struct {
 }
 
 // WalkParams are the inputs to fs.walk — a single-RPC alternative to
-// recursively calling fs.list. `MaxEntries` caps one page so a
-// pathological vault doesn't OOM the client; the daemon halts and
-// sets `Truncated: true` when more remain.
-//
-// `Offset` paginates a large tree. The walk order is deterministic
-// (filepath.WalkDir = per-directory lexical, depth-first), so the
-// client fetches the next page by sending `Offset = total entries
-// already received`; the daemon skips that many emittable entries
-// before filling the next page. Stateless (no daemon-side cursor to
-// leak) at the cost of re-walking skipped entries — cheap, since it
-// is a local-FS traversal on the remote, not network I/O. A
-// concurrent mutation between pages can drift the boundary by a few
-// entries; tolerable for the cold-open populate (a reconnect
-// re-walks from scratch).
-//
-// `Ignore` prunes directory subtrees by exact basename (e.g.
-// "node_modules", ".git"). A pruned dir is never emitted, never
-// descended into, and never counted toward pagination — this is what
-// keeps a large shared remote root (a git/deps-heavy work dir) from
-// blowing up the walk. The same list must be sent on every page so
-// the deterministic order / offset accounting stays stable.
+// recursively calling fs.list. `MaxEntries` caps the response size so
+// pathological vaults don't OOM the client; the daemon halts and sets
+// `Truncated: true` so the caller can fall back to per-folder listing.
 type WalkParams struct {
-	Path       string   `json:"path"`
-	Recursive  bool     `json:"recursive,omitempty"`
-	MaxEntries int      `json:"maxEntries,omitempty"`
-	Offset     int      `json:"offset,omitempty"`
-	Ignore     []string `json:"ignore,omitempty"`
+	Path       string `json:"path"`
+	Recursive  bool   `json:"recursive,omitempty"`
+	MaxEntries int    `json:"maxEntries,omitempty"`
+	// Offset skips the first N walk results. Useful for paging.
+	Offset int `json:"offset,omitempty"`
+	// Ignore is a list of path prefixes (vault-relative) to skip.
+	Ignore []string `json:"ignore,omitempty"`
 }
 
 // WalkEntry is one row in fs.walk's flat output. Unlike fs.list's
@@ -254,6 +238,62 @@ type UnwatchParams struct {
 	SubscriptionID string `json:"subscriptionId"`
 }
 
+// ExtensionArgRule constrains one named argument in a dynamic extension tool.
+type ExtensionArgRule struct {
+	Name      string `json:"name"`
+	Required  bool   `json:"required,omitempty"`
+	Pattern   string `json:"pattern,omitempty"`
+	MaxLength int    `json:"maxLength,omitempty"`
+	// AllowFlags permits values that start with '-' for this arg.
+	AllowFlags bool `json:"allowFlags,omitempty"`
+}
+
+// ExtensionCapability defines one executable tool from capabilities.json.
+type ExtensionCapability struct {
+	Tool            string             `json:"tool"`
+	Description     string             `json:"description,omitempty"`
+	Command         string             `json:"command"`
+	SHA256          string             `json:"sha256"`
+	Args            []ExtensionArgRule `json:"args,omitempty"`
+	AllowWorkingDir bool               `json:"allowWorkingDir,omitempty"`
+	PersistDefault  bool               `json:"persistDefault,omitempty"`
+	OutputMode      string             `json:"outputMode,omitempty"` // "batch" (default) or "single"
+}
+
+// ExtensionSchemaResult returns the current dynamic capabilities document.
+type ExtensionSchemaResult struct {
+	Version        int                   `json:"version"`
+	ManifestSHA256 string                `json:"manifestSha256"`
+	Extensions     []ExtensionCapability `json:"extensions"`
+}
+
+// ExtensionInvokeParams is the generic command invocation contract.
+type ExtensionInvokeParams struct {
+	InvocationID string            `json:"invocationId,omitempty"`
+	Tool         string            `json:"tool"`
+	Args         map[string]string `json:"args,omitempty"`
+	WorkingDir   string            `json:"workingDir,omitempty"`
+	Persist      *bool             `json:"persist,omitempty"`
+	ResumeFrom   int64             `json:"resumeFrom,omitempty"`
+}
+
+// ExtensionInvokeResult identifies the accepted execution stream.
+type ExtensionInvokeResult struct {
+	InvocationID string `json:"invocationId"`
+	Accepted     bool   `json:"accepted"`
+}
+
+// ExtensionKillParams requests termination of an active invocation.
+type ExtensionKillParams struct {
+	InvocationID string `json:"invocationId"`
+}
+
+// ExtensionKillResult reports whether the target invocation was terminated.
+type ExtensionKillResult struct {
+	InvocationID string `json:"invocationId"`
+	Killed       bool   `json:"killed"`
+}
+
 // ─── server-push notifications ──────────────────────────────────────────────
 
 // FsChangeEvent is the kind of change the server observed on a watched path.
@@ -274,6 +314,34 @@ type FsChangedParams struct {
 	Mtime int64 `json:"mtime,omitempty"`
 	// NewPath is set iff Event == FsChangeEventRenamed.
 	NewPath string `json:"newPath,omitempty"`
+}
+
+// CliOutputParams is the legacy single-chunk stream notification.
+type CliOutputParams struct {
+	InvocationID string `json:"invocationId"`
+	Stream       string `json:"stream"` // "stdout" | "stderr"
+	Data         string `json:"data"`
+	Seq          int64  `json:"seq,omitempty"`
+}
+
+// CliOutputBatchItem is one row inside cli.output.batch.
+type CliOutputBatchItem struct {
+	Stream string `json:"stream"`
+	Data   string `json:"data"`
+	Seq    int64  `json:"seq,omitempty"`
+}
+
+// CliOutputBatchParams is the default high-throughput output shape.
+type CliOutputBatchParams struct {
+	InvocationID string               `json:"invocationId"`
+	Items        []CliOutputBatchItem `json:"items"`
+}
+
+// CliDoneParams signals execution completion.
+type CliDoneParams struct {
+	InvocationID string `json:"invocationId"`
+	ExitCode     int    `json:"exitCode"`
+	Signal       string `json:"signal,omitempty"`
 }
 
 // ─── JSON-RPC envelopes ─────────────────────────────────────────────────────
@@ -361,4 +429,6 @@ const (
 	ErrorPathOutsideVault      = -32015
 	ErrorPreconditionFailed    = -32020
 	ErrorProtocolVersionTooOld = -32021
+	ErrorExtensionDenied       = -32030
+	ErrorBinaryHashMismatch    = -32031
 )

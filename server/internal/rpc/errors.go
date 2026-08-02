@@ -75,6 +75,16 @@ func ErrPreconditionFailed(msg string) *Error {
 	return Err(proto.ErrorPreconditionFailed, msg, nil)
 }
 
+// ErrExtensionDenied signals that a tool is not allowed by the manifest.
+func ErrExtensionDenied(tool string) *Error {
+	return Err(proto.ErrorExtensionDenied, "extension denied: "+tool, nil)
+}
+
+// ErrBinaryHashMismatch signals executable digest mismatch against manifest.
+func ErrBinaryHashMismatch(tool string) *Error {
+	return Err(proto.ErrorBinaryHashMismatch, "binary hash mismatch: "+tool, nil)
+}
+
 // encodeResult marshals a result value for WriteSuccess. Centralised
 // here so the dispatcher and tests agree on JSON shape (omit null,
 // preserve zero values, etc).
