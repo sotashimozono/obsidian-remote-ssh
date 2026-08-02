@@ -10,7 +10,7 @@
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/plugin-compatibility</link>
     <guid>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/user-guide/plugin-compatibility</guid>
     <description><![CDATA[ Which Obsidian community plugins work cleanly with obsidian-remote-ssh's shadow vault model. Known-good, known-broken, and quirky-but-fixable plugin behaviours. ]]></description>
-    <pubDate>Sun, 02 Aug 2026 10:22:12 GMT</pubDate>
+    <pubDate>Sun, 02 Aug 2026 10:36:26 GMT</pubDate>
   </item><item>
     <title>Architecture</title>
     <link>https://codes.sota-shimozono.com/obsidian-remote-ssh/dev/en/architecture/</link>
