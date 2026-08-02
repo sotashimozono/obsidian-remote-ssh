@@ -189,6 +189,51 @@ export async function driveConnectFlow(page: Page): Promise<void> {
   // The palette is not left untested: `smoke.spec.ts` drives it
   // directly, and the fallback below still runs whenever the command
   // registry is unreachable.
+  // Wait for the command to EXIST before trying to run it.
+  //
+  // This is what the old flow got wrong, and what the palette hid: a
+  // connect driven before `onload` finished registering commands has
+  // nothing to run. Through the palette that failure is SILENT — typing
+  // a command name that is not there still leaves some other suggestion
+  // highlighted, so Enter runs that instead, no shadow vault appears,
+  // and the error the spec eventually reports is "connect command
+  // likely never fired" with no hint as to why.
+  const registered = await page
+    .waitForFunction(
+      () => {
+        const registry = (window as unknown as {
+          app?: { commands?: { commands?: Record<string, unknown> } };
+        }).app?.commands?.commands;
+        return Boolean(registry)
+          && Object.keys(registry as Record<string, unknown>).some(k => k.endsWith('remote-ssh:connect'));
+      },
+      undefined,
+      { timeout: 30_000, polling: 250 },
+    )
+    .then(() => true)
+    .catch(() => false);
+
+  if (!registered) {
+    // Name which of the two things went wrong, with the evidence.
+    const diag = await page.evaluate(() => {
+      const w = window as unknown as {
+        app?: {
+          plugins?: { enabledPlugins?: Set<string>; plugins?: Record<string, unknown> };
+          commands?: { commands?: Record<string, unknown> };
+        };
+      };
+      return {
+        loadedPlugins: Object.keys(w.app?.plugins?.plugins ?? {}),
+        enabledPlugins: [...(w.app?.plugins?.enabledPlugins ?? [])],
+        commandCount: Object.keys(w.app?.commands?.commands ?? {}).length,
+      };
+    }).catch(() => null);
+    throw new Error(
+      'driveConnectFlow: remote-ssh:connect never appeared in Obsidian\'s command registry '
+      + `within 30s — the plugin did not load. ${JSON.stringify(diag)}`,
+    );
+  }
+
   const firedId = await page.evaluate(() => {
     const app = (window as unknown as {
       app?: {
