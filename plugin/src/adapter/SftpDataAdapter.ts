@@ -193,7 +193,7 @@ export class SftpDataAdapter {
    * exactly what they got before, no worse.
    */
   getFullPath(normalizedPath: string): string {
-    this.ensureMaterialized(normalizedPath);
+    this.materializeSync(normalizedPath);
     return nodePath.join(this.shadowBasePath, normalizedPath);
   }
 
@@ -208,42 +208,43 @@ export class SftpDataAdapter {
   }
 
   /**
-   * Best-effort synchronous materialisation. Silent about everything
-   * except the two outcomes a user could act on (over the limit, and
-   * a bridge that isn't running), and never throws: the caller wants a
-   * path, and a path is what it gets either way.
+   * Put one file on the shadow disk, synchronously, and report whether
+   * it is there afterwards. This is the single "a request came in"
+   * entry point: `getFullPath` / `getFilePath` call it, and so does the
+   * patched `fs.readFileSync`. Never throws — a caller that wanted a
+   * path still gets one, and a caller that wanted bytes falls back to
+   * the real filesystem's own ENOENT.
    */
-  private ensureMaterialized(normalizedPath: string): void {
+  materializeSync(normalizedPath: string): boolean {
     const cache = this.materializedCache;
-    if (!cache || cache.disabled()) return;
-    if (cache.has(normalizedPath)) return;
+    if (!cache || cache.disabled()) return false;
+    if (cache.has(normalizedPath)) return true;
 
     // Free hit: the bytes are already in the in-memory read cache
     // (the note was just opened), so no request goes out at all.
     const cached = this.readCache.peek(this.toRemote(normalizedPath));
     if (cached) {
-      cache.put(normalizedPath, cached.data);
-      return;
+      return cache.put(normalizedPath, cached.data);
     }
-    if (!this.resourceBridge?.isRunning()) return;
+    if (!this.resourceBridge?.isRunning()) return false;
 
     let url: string;
     try {
       url = this.resourceBridge.urlFor(normalizedPath);
     } catch {
-      return;                          // bridge stopped between the check and here
+      return false;                    // bridge stopped between the check and here
     }
     const result = syncHttpGetBinary(url, cache.fetchLimit());
     if (result.kind === 'ok') {
-      cache.put(normalizedPath, result.bytes);
-      return;
+      return cache.put(normalizedPath, result.bytes);
     }
     if (result.kind === 'too-large') {
       logger.info(
-        `getFullPath("${normalizedPath}"): ${result.totalSize} bytes is over the ` +
-        'materialisation limit — the path is returned but no file was written',
+        `materializeSync("${normalizedPath}"): ${result.totalSize} bytes is over the ` +
+        'materialisation limit — nothing was written',
       );
     }
+    return false;
   }
 
   /**

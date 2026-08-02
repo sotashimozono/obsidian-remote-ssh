@@ -60,6 +60,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   // much of what was actually asked for may sit on the disk at once.
   fsCacheMB: 128,
   fsCacheMaxFileMB: 8,
+  // Answer raw `fs` reads for the vault: names/stats from the model,
+  // content on demand. Scoped to the shadow root, outside the config dir.
+  fsModulePatch: true,
   // Phase 4 marker for shadow vaults; null on a normal vault. Only
   // `ShadowVaultBootstrap` writes a non-null value.
   autoConnectProfileId: null,
