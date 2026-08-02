@@ -843,6 +843,23 @@ export default class RemoteSshPlugin extends Plugin {
               entry: (rel) => asEntry(this.app.vault.getAbstractFileByPath(rel)),
             },
             materialize: (rel) => da.materializeSync(rel),
+            // The promise surface can afford the ordinary async read
+            // path — no synchronous bridge fetch needed. The size is
+            // checked against the budget FIRST, from the model, so an
+            // over-budget file is never pulled just to be refused.
+            materializeAsync: async (rel) => {
+              const f = this.app.vault.getAbstractFileByPath(rel);
+              if (!(f instanceof TFile)) return false;
+              const cache = this.adapterMgr.materialized;
+              if (!cache || cache.disabled() || cache.tooBig(f.stat.size)) return false;
+              try {
+                await da.readBinary(rel);
+                return true;
+              } catch (e) {
+                logger.info(`fs.promises materialise "${rel}" failed: ${errorMessage(e)}`);
+                return false;
+              }
+            },
           });
           if (patcher.patch()) this.fsModulePatcher = patcher;
         }

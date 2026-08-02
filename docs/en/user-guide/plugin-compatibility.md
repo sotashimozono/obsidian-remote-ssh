@@ -146,9 +146,12 @@ Things that aren't a specific plugin but trip plugins in general:
     pushed. The whole behaviour is switchable: *Push out-of-band file
     writes to the remote*.
   - **Reads work from inside Obsidian, on demand.** `readFileSync`,
-    `readdirSync`, `existsSync`, `statSync` and `lstatSync` are taken
-    over *for paths under the vault folder only* — the config dir and
-    everything outside the vault run the stock function untouched.
+    `readdirSync`, `existsSync`, `statSync` and `lstatSync` — plus the
+    promise forms `fs.promises.readFile / readdir / stat / lstat /
+    access`, which is the same object `require('fs/promises')` returns —
+    are taken over *for paths under the vault folder only*; the config
+    dir and everything outside the vault run the stock function
+    untouched. Callback-style async `fs` is not patched.
     Names and sizes are answered from the vault model, so listing or
     stat-ing the vault costs **no download at all**, and a file's
     content is fetched only when something actually reads it.
