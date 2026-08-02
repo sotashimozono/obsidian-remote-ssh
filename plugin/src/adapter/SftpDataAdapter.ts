@@ -199,10 +199,23 @@ export class SftpDataAdapter {
     return rel === dir || rel.startsWith(`${dir}/`);
   }
 
-  /** Read-through into the disk cache, minus the tree it must not own. */
-  private cacheOnRead(normalizedPath: string, buf: Buffer): void {
-    if (this.isConfigTree(normalizedPath)) return;
-    this.materializedCache?.put(normalizedPath, buf);
+  /**
+   * Put one file on the shadow disk by fetching it — the asynchronous
+   * half of "a request materialises a file", used by the patched
+   * `fs.promises.readFile`. Nothing blocks here, so this can take the
+   * ordinary read path.
+   *
+   * Callers that know the size (from the vault model) should check it
+   * against the cache limits first; this refuses an over-limit payload
+   * after the fact, which costs one transfer.
+   */
+  async materializeAsync(normalizedPath: string): Promise<boolean> {
+    const cache = this.materializedCache;
+    if (!cache || cache.disabled()) return false;
+    if (this.isConfigTree(normalizedPath)) return false;
+    if (cache.has(normalizedPath)) return true;
+    const buf = await this.readBuffer(normalizedPath);
+    return cache.put(normalizedPath, buf);
   }
 
   /**
@@ -489,7 +502,6 @@ export class SftpDataAdapter {
 
   async read(normalizedPath: string): Promise<string> {
     const buf = await this.readBuffer(normalizedPath);
-    this.cacheOnRead(normalizedPath, buf);
     const text = buf.toString('utf8');
     // Snapshot the just-read content so a subsequent conflicting write
     // can show the user a real ancestor pane in the 3-way modal.
@@ -502,7 +514,6 @@ export class SftpDataAdapter {
 
   async readBinary(normalizedPath: string): Promise<ArrayBuffer> {
     const buf = await this.readBuffer(normalizedPath);
-    this.cacheOnRead(normalizedPath, buf);
     // Copy into a fresh ArrayBuffer so callers can't accidentally mutate
     // the cached Buffer's underlying memory through the returned view.
     const ab = new ArrayBuffer(buf.byteLength);
