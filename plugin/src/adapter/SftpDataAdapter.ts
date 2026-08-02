@@ -179,6 +179,33 @@ export class SftpDataAdapter {
   }
 
   /**
+   * True for anything under the vault's config dir.
+   *
+   * The disk cache must never take ownership of that tree, and the
+   * reason is a bug this guard exists to prevent: `pullPluginBinaries`
+   * fetches `<configDir>/plugins/<id>/main.js` THROUGH this adapter, so
+   * the read-through below would file it in the cache ledger — and the
+   * ledger deletes what it owns on eviction and on disconnect. The next
+   * launch would then find the plugin gone and silently not load it.
+   *
+   * `<configDir>/**` already has an owner: `writeThroughConfig` on the
+   * way out, the bootstrap's pull/push on the way in. Both keep real
+   * files there on purpose.
+   */
+  private isConfigTree(normalizedPath: string): boolean {
+    const dir = this.pathMapper?.configDir;
+    if (!dir) return false;
+    const rel = normalizedPath.startsWith('/') ? normalizedPath.slice(1) : normalizedPath;
+    return rel === dir || rel.startsWith(`${dir}/`);
+  }
+
+  /** Read-through into the disk cache, minus the tree it must not own. */
+  private cacheOnRead(normalizedPath: string, buf: Buffer): void {
+    if (this.isConfigTree(normalizedPath)) return;
+    this.materializedCache?.put(normalizedPath, buf);
+  }
+
+  /**
    * Absolute path of a vault file on this device — and, unlike the
    * stock `FileSystemAdapter`, a path that has a real file behind it.
    *
@@ -217,10 +244,14 @@ export class SftpDataAdapter {
   materializeSync(normalizedPath: string): boolean {
     const cache = this.materializedCache;
     if (!cache || cache.disabled()) return false;
+    if (this.isConfigTree(normalizedPath)) {
+      // Never ours (see isConfigTree); answer from the real disk only.
+      return Boolean(this.shadowBasePath)
+        && fs.existsSync(nodePath.join(this.shadowBasePath, normalizedPath));
+    }
     if (cache.has(normalizedPath)) return true;
-    // Already real on disk — the config tree, or a file somebody wrote.
-    // Checked before anything else so `getFullPath('.obsidian/…')`, which
-    // Obsidian itself calls throughout startup, costs one stat.
+    // Already real on disk — materialised earlier, or written by
+    // somebody. One stat, no network.
     if (this.shadowBasePath
       && fs.existsSync(nodePath.join(this.shadowBasePath, normalizedPath))) {
       return true;
@@ -458,7 +489,7 @@ export class SftpDataAdapter {
 
   async read(normalizedPath: string): Promise<string> {
     const buf = await this.readBuffer(normalizedPath);
-    this.materializedCache?.put(normalizedPath, buf);
+    this.cacheOnRead(normalizedPath, buf);
     const text = buf.toString('utf8');
     // Snapshot the just-read content so a subsequent conflicting write
     // can show the user a real ancestor pane in the 3-way modal.
@@ -471,7 +502,7 @@ export class SftpDataAdapter {
 
   async readBinary(normalizedPath: string): Promise<ArrayBuffer> {
     const buf = await this.readBuffer(normalizedPath);
-    this.materializedCache?.put(normalizedPath, buf);
+    this.cacheOnRead(normalizedPath, buf);
     // Copy into a fresh ArrayBuffer so callers can't accidentally mutate
     // the cached Buffer's underlying memory through the returned view.
     const ab = new ArrayBuffer(buf.byteLength);
