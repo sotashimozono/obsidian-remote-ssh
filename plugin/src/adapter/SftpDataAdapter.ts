@@ -23,6 +23,9 @@ function isThumbnailEligible(vaultPath: string): boolean {
 }
 import * as fs from 'fs';
 import * as nodePath from 'path';
+import { pathToFileURL } from 'url';
+import type { MaterializedCache } from './MaterializedCache';
+import { syncHttpGetBinary } from '../util/syncHttpGet';
 import type { RemoteFsClient } from './RemoteFsClient';
 import type { WriterReflector } from './WriterReflector';
 import type { LocalOpRegistry } from './LocalOpRegistry';
@@ -163,6 +166,84 @@ export class SftpDataAdapter {
    */
   getBasePath(): string {
     return this.shadowBasePath;
+  }
+
+  /**
+   * Bounded on-demand disk cache. Null (the default) leaves every
+   * materialisation call a no-op, which is what unit tests and any
+   * non-shadow caller want.
+   */
+  private materializedCache: MaterializedCache | null = null;
+
+  setMaterializedCache(cache: MaterializedCache | null): void {
+    this.materializedCache = cache;
+  }
+
+  /**
+   * Absolute path of a vault file on this device — and, unlike the
+   * stock `FileSystemAdapter`, a path that has a real file behind it.
+   *
+   * The stock implementation just joins onto the base, which over a
+   * virtual note tree means handing a plugin a path to nothing (#429).
+   * Asking for a full path IS the request that materialises the file:
+   * we fetch it synchronously through the ResourceBridge and write it
+   * into the bounded cache, so `fs.readFileSync(adapter.getFullPath(p))`
+   * works for the file that was asked about. Files over the cache
+   * limits are not fetched, and callers still get the joined path —
+   * exactly what they got before, no worse.
+   */
+  getFullPath(normalizedPath: string): string {
+    this.ensureMaterialized(normalizedPath);
+    return nodePath.join(this.shadowBasePath, normalizedPath);
+  }
+
+  /**
+   * `file://` URL for a vault file. Same contract as
+   * {@link getFullPath}: the file is materialised first, because what
+   * follows this URL is usually `<img>`, `shell.openPath` or an
+   * external editor — none of which can be intercepted.
+   */
+  getFilePath(normalizedPath: string): string {
+    return pathToFileURL(this.getFullPath(normalizedPath)).href;
+  }
+
+  /**
+   * Best-effort synchronous materialisation. Silent about everything
+   * except the two outcomes a user could act on (over the limit, and
+   * a bridge that isn't running), and never throws: the caller wants a
+   * path, and a path is what it gets either way.
+   */
+  private ensureMaterialized(normalizedPath: string): void {
+    const cache = this.materializedCache;
+    if (!cache || cache.disabled()) return;
+    if (cache.has(normalizedPath)) return;
+
+    // Free hit: the bytes are already in the in-memory read cache
+    // (the note was just opened), so no request goes out at all.
+    const cached = this.readCache.peek(this.toRemote(normalizedPath));
+    if (cached) {
+      cache.put(normalizedPath, cached.data);
+      return;
+    }
+    if (!this.resourceBridge?.isRunning()) return;
+
+    let url: string;
+    try {
+      url = this.resourceBridge.urlFor(normalizedPath);
+    } catch {
+      return;                          // bridge stopped between the check and here
+    }
+    const result = syncHttpGetBinary(url, cache.fetchLimit());
+    if (result.kind === 'ok') {
+      cache.put(normalizedPath, result.bytes);
+      return;
+    }
+    if (result.kind === 'too-large') {
+      logger.info(
+        `getFullPath("${normalizedPath}"): ${result.totalSize} bytes is over the ` +
+        'materialisation limit — the path is returned but no file was written',
+      );
+    }
   }
 
   /**
@@ -378,6 +459,7 @@ export class SftpDataAdapter {
 
   async read(normalizedPath: string): Promise<string> {
     const buf = await this.readBuffer(normalizedPath);
+    this.materializedCache?.put(normalizedPath, buf);
     const text = buf.toString('utf8');
     // Snapshot the just-read content so a subsequent conflicting write
     // can show the user a real ancestor pane in the 3-way modal.
@@ -390,6 +472,7 @@ export class SftpDataAdapter {
 
   async readBinary(normalizedPath: string): Promise<ArrayBuffer> {
     const buf = await this.readBuffer(normalizedPath);
+    this.materializedCache?.put(normalizedPath, buf);
     // Copy into a fresh ArrayBuffer so callers can't accidentally mutate
     // the cached Buffer's underlying memory through the returned view.
     const ab = new ArrayBuffer(buf.byteLength);
