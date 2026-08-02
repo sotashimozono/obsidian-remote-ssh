@@ -5,11 +5,12 @@ name: Integration
 # startup) so it lives on its own workflow with no concurrency
 # group sharing — main CI keeps moving while this runs.
 
+# No `branches:` filter on `pull_request` — see ci.yml for the
+# rationale (gate every open PR, whatever its base).
 on:
   push:
     branches: [main, next]
   pull_request:
-    branches: [main, next]
 
 concurrency:
   group: integration-${{ github.ref }}

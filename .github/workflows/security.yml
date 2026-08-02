@@ -28,8 +28,10 @@ name: Security
 on:
   push:
     branches: [main, next]
+  # No `branches:` filter — see ci.yml. Scanners are already
+  # `continue-on-error`, so widening this adds visibility on feature-
+  # track PRs without adding a way to block the queue.
   pull_request:
-    branches: [main, next]
   schedule:
     - cron: '0 6 * * 1'
   workflow_dispatch:

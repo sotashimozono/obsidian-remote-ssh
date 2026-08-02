@@ -60,9 +60,18 @@ npm run sshd:stop
 A working dev vault path can be configured via `REMOTE_SSH_DEV_VAULT`
 env var; `npm run build:full` then ships the plugin into that vault.
 
-The E2E suite also runs nightly via `.github/workflows/e2e.yml`
-(03:00 UTC / 12:00 JST). Trigger off-cycle from GitHub Actions →
-"E2E smoke (Playwright + Obsidian)" → "Run workflow".
+In CI, `.github/workflows/e2e.yml` runs the suite on every open PR
+that touches plugin/server/docker sources — whatever branch the PR is
+based on — plus weekly (Sundays 03:00 UTC / 12:00 JST) to catch
+environment drift. Trigger off-cycle from GitHub Actions → "E2E smoke
+(Playwright + Obsidian)" → "Run workflow".
+
+Note on bases: the CI gates (lint, type-check, tests, integration,
+E2E, replay, commitlint, security scans) run on **any** open PR, so a
+PR into a feature track such as `cli` is checked exactly like one into
+`next`. The single exception is `version-check.yml`, which encodes the
+`next`/`main` release model and therefore only runs on PRs into those
+two branches.
 
 ## Branch + commit convention
 

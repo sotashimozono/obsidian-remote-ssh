@@ -6,10 +6,12 @@ name: Cross-version test replay
 # it's actually broken (see `plugin/scripts/replay-prev-tests.mjs`
 # for the rationale).
 #
-# **Trigger:** PRs into `main` only — push-to-main is redundant
-# (already checked at PR time) and would just burn CI cycles. The
-# matching push-to-main run can be added later if signal stays
-# clean over a few weeks of operation.
+# **Trigger:** every open PR, whatever its base — no `branches:`
+# filter. The frozen contract is `origin/main`'s latest tag, which is
+# the same reference regardless of where the PR is headed, so the
+# check is just as meaningful on a feature-track PR as on a `next`
+# one. Push is deliberately absent: outside a PR there is nothing to
+# gate, and the merge commit was already checked at PR time.
 #
 # **Status:** advisory (`continue-on-error: true` on the job's
 # `Run replay` step so a regression surfaces in the PR's checks
@@ -17,7 +19,6 @@ name: Cross-version test replay
 # signal-to-noise ratio has been proven over real PR traffic.
 on:
   pull_request:
-    branches: [main, next]
 
 concurrency:
   group: replay-${{ github.ref }}
