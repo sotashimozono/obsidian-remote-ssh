@@ -13,10 +13,15 @@ name: Commitlint
 # PRs whose commits already passed; running on every push to main
 # would be redundant and would re-fire on the merge commit which
 # has its own (also Conventional) format.
+#
+# Every PR, whatever its base — no `branches:` filter. A commit
+# landing on a feature track (`cli`) reaches `next` later carrying
+# whatever message it was written with, so catching the format there
+# is strictly earlier than catching it on the track's promotion PR.
+# This is also the first gate an outside contributor meets.
 
 on:
   pull_request:
-    branches: [main, next]
 
 concurrency:
   group: commitlint-${{ github.ref }}

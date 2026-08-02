@@ -1,10 +1,14 @@
 name: CI
 
+# `pull_request` carries NO `branches:` filter on purpose. The gate
+# belongs wherever a PR is open, not only on the two release branches
+# — a PR into a long-lived feature track (`cli`, and any future one)
+# is exactly where an unreviewed regression can sit for weeks. Push
+# stays pinned to main/next: outside a PR there is nothing to gate.
 on:
   push:
     branches: [main, next]
   pull_request:
-    branches: [main, next]
 
 concurrency:
   group: ci-${{ github.ref }}
