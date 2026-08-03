@@ -174,6 +174,28 @@ jobs:
         # nothing is dropped, it is just spread across runners.
         run: npx playwright test --config e2e/playwright.config.ts --project=${{ matrix.shard }}
 
+      # `Connect failed: Connection timed out after 30000ms` is the last
+      # standing flake and it has now appeared in all three shards. The plugin
+      # log goes quiet after `TOFU: Trusting new host key` and says nothing
+      # more — from the client side there is no way to tell a handshake the
+      # server never answered from one it refused, or from one it never
+      # received. sshd runs with `-e`, so its account of the same seconds is
+      # one `docker logs` away. Without it the next round of this is guesswork,
+      # and this suite has already paid for enough of that.
+      - name: Capture test sshd log on failure
+        if: failure()
+        run: |
+          docker logs --timestamps obsidian-remote-ssh-test-sshd > /tmp/sshd.log 2>&1 || true
+          echo "--- captured $(wc -l < /tmp/sshd.log) lines ---"
+
+      - name: Upload test sshd log on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-sshd-log-${{ matrix.shard }}-${{ github.run_id }}
+          path: /tmp/sshd.log
+          retention-days: 14
+
       - name: Tear down test sshd
         if: always()
         run: npm run sshd:stop
