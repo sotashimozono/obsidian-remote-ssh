@@ -1437,6 +1437,96 @@ async function readShadowModel(
 }
 
 /**
+ * What is REALLY on the shadow disk, what the plugin thinks it put there, and
+ * what its write-back watcher did — the three answers the #429 reds need.
+ *
+ * Run 30781101691 left two questions unanswerable from CI output alone. A note
+ * nobody asked for read back synchronously (`fs-visibility:493`), and a
+ * plugin's `writeFileSync` under `basePath` succeeded locally and never
+ * reached the remote (`:770`, and `plugin-code-roundtrip:344` in the same
+ * shape). "Something materialised eagerly" and "the watcher did not push" are
+ * guesses until the disk and the log say so.
+ *
+ * The listing is taken from THIS process's `fs`, which is the real one:
+ * `FsModulePatcher` only ever replaces the module inside Obsidian's renderer,
+ * so the test runner sees the actual filesystem and cannot be told a virtual
+ * story about it. The log lines are the product's own
+ * (`LocalWriteWatcher: watching the shadow vault root …`,
+ * `LocalWriteWatcher: pushed out-of-band write …`,
+ * `MaterializedCache: … exceeds the cache limit`), so a push that never
+ * happened is distinguishable from one that was refused.
+ *
+ * Read-only and best-effort throughout.
+ */
+export async function dumpMaterialisationState(
+  page: Page,
+  shadowVaultPath: string,
+): Promise<string> {
+  const onDisk: string[] = [];
+  const walk = (dir: string, rel: string): void => {
+    if (onDisk.length >= 40) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.name === '.obsidian') continue;   // never the cache's to own (#488)
+      const child = `${rel}${rel ? '/' : ''}${e.name}`;
+      if (e.isDirectory()) {
+        walk(path.join(dir, e.name), child);
+      } else {
+        const size = fs.statSync(path.join(dir, e.name), { throwIfNoEntry: false })?.size ?? -1;
+        onDisk.push(`${child} (${size}b)`);
+      }
+    }
+  };
+  walk(shadowVaultPath, '');
+
+  const ledger = await page
+    .evaluate(() => {
+      const mc = (window as unknown as {
+        app?: {
+          plugins?: {
+            plugins?: Record<string, {
+              adapterMgr?: {
+                materialized?: { size?: () => number; bytes?: () => number } | null;
+              };
+            }>;
+          };
+        };
+      }).app?.plugins?.plugins?.['remote-ssh']?.adapterMgr?.materialized;
+      if (!mc) return 'unreachable';
+      return { entries: mc.size?.() ?? -1, bytes: mc.bytes?.() ?? -1 };
+    })
+    .catch((e: unknown) => `unreadable: ${String(e)}`);
+
+  let watcher = '<no plugin log>';
+  try {
+    const logPath = path.join(
+      shadowVaultPath, '.obsidian', 'plugins', 'remote-ssh', 'console.log',
+    );
+    if (fs.existsSync(logPath)) {
+      const lines = fs.readFileSync(logPath, 'utf8')
+        .replace(/\0/g, '')
+        .split('\n')
+        .filter((l) => /LocalWriteWatcher|MaterializedCache|materialis/i.test(l));
+      watcher = lines.length ? lines.slice(-15).join(' | ') : '<no watcher/cache lines>';
+    }
+  } catch (e) {
+    watcher = `<unreadable: ${String(e)}>`;
+  }
+
+  return (
+    `on the real shadow disk (${onDisk.length}${onDisk.length >= 40 ? '+' : ''} files): ` +
+    `${onDisk.length ? onDisk.join(', ') : '(empty)'}\n` +
+    `  materialisation ledger: ${JSON.stringify(ledger)}\n` +
+    `  plugin log (watcher/cache): ${watcher}`
+  );
+}
+
+/**
  * Diagnostic snapshot string: the in-page model + the shadow window's
  * structured-log tail (where `VaultModelBuilder: built Nf + Md` / its
  * per-entry errors land). Attached to assertion failures so a red

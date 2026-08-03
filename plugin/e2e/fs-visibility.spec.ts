@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test';
 import {
   launchObsidian,
   connectAndWaitForShadowVault,
+  dumpMaterialisationState,
   findShadowVaultPath,
   waitForShadowVaultLoaded,
   type ObsidianHandle,
@@ -524,7 +525,8 @@ test.describe('a plugin\'s view of the filesystem must be the REMOTE vault (#429
       'a synchronous read of a note nobody has asked for returned bytes. That means either ' +
       'the vault is being mirrored to disk — the design this plugin exists to avoid — or ' +
       'a blocking fetch crept back in, which deadlocks: the bridge that would serve the ' +
-      'content runs on the very thread being blocked.',
+      'content runs on the very thread being blocked.\n' +
+      `  ${await dumpMaterialisationState(obsidian.page, shadowVaultPath)}`,
     ).toContain('ENOENT');
   });
 
@@ -604,7 +606,8 @@ test.describe('a plugin\'s view of the filesystem must be the REMOTE vault (#429
     expect(
       probe.before.error,
       'the note was already on disk before anything asked for it — something materialises ' +
-      'eagerly, which is the mirror this design refuses',
+      'eagerly, which is the mirror this design refuses\n' +
+      `  ${await dumpMaterialisationState(obsidian.page, shadowVaultPath)}`,
     ).toContain('ENOENT');
 
     expect(
@@ -826,19 +829,29 @@ test.describe('a plugin\'s view of the filesystem must be the REMOTE vault (#429
       `complete its write against a remote vault. Error: ${probe!.error}`,
     ).toBeNull();
 
-    await expect
-      .poll(() => remote.exists(REAL_PLUGIN_NOTE), {
-        message:
-          `#429, verbatim: the ${FS_PLUGIN_ID} plugin ran fs.writeFileSync(path.join(` +
-          `this.app.vault.adapter.basePath, '${REAL_PLUGIN_NOTE}')) in onload(), the write ` +
-          `SUCCEEDED (it wrote ${probe!.wrote}), and the note is nowhere on the remote ` +
-          'vault. This is exactly what users report: "Claudian creates .md files in the ' +
-          'local folder instead of the remote vault". The fix belongs in the product — ' +
-          'mirror the note tree and watch it, or give basePath / getFullPath / getFilePath ' +
-          'an FS-backed view of the remote — never in this assertion.',
-        timeout: 30_000,
-      })
-      .toBe(true);
+    // The dump goes on the FAILURE, not into `poll`'s message: that message is
+    // built once, up front, and the question here — did `LocalWriteWatcher`
+    // ever see this file — is only answerable after the wait has expired.
+    try {
+      await expect
+        .poll(() => remote.exists(REAL_PLUGIN_NOTE), {
+          message:
+            `#429, verbatim: the ${FS_PLUGIN_ID} plugin ran fs.writeFileSync(path.join(` +
+            `this.app.vault.adapter.basePath, '${REAL_PLUGIN_NOTE}')) in onload(), the write ` +
+            `SUCCEEDED (it wrote ${probe!.wrote}), and the note is nowhere on the remote ` +
+            'vault. This is exactly what users report: "Claudian creates .md files in the ' +
+            'local folder instead of the remote vault". The fix belongs in the product — ' +
+            'mirror the note tree and watch it, or give basePath / getFullPath / getFilePath ' +
+            'an FS-backed view of the remote — never in this assertion.',
+          timeout: 30_000,
+        })
+        .toBe(true);
+    } catch (e) {
+      throw new Error(
+        `${e instanceof Error ? e.message : String(e)}\n` +
+        `  ${await dumpMaterialisationState(obsidian.page, shadowVaultPath)}`,
+      );
+    }
 
     expect(
       await remote.readFile(REAL_PLUGIN_NOTE),
