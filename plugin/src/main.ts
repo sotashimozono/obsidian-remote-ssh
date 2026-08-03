@@ -34,6 +34,7 @@ import { SharedConfigWatcher } from './shadow/SharedConfigWatcher';
 import { LocalWriteWatcher, makeLocalWriteIgnore } from './adapter/LocalWriteWatcher';
 import { FsModulePatcher } from './adapter/FsModulePatcher';
 import { watchTree, listTreeFiles } from './util/watchTree';
+import { nativeFs } from './util/nativeFs';
 import { ShadowVaultManager } from './shadow/ShadowVaultManager';
 import { WindowSpawner } from './shadow/WindowSpawner';
 import { ShadowStartupCoordinator } from './shadow/ShadowStartupCoordinator';
@@ -763,11 +764,11 @@ export default class RemoteSshPlugin extends Plugin {
           watch: (onChange) => watchTree(vaultRoot, onChange, ignore),
           scan: () => listTreeFiles(vaultRoot, ignore),
           stat: (rel) => {
-            const s = fs.statSync(abs(rel), { throwIfNoEntry: false });
+            const s = nativeFs.statSync(abs(rel), { throwIfNoEntry: false });
             return s?.isFile() ? { size: s.size, mtimeMs: s.mtimeMs } : null;
           },
           read: (rel) => {
-            try { return fs.readFileSync(abs(rel)); } catch { return null; }
+            try { return nativeFs.readFileSync(abs(rel)); } catch { return null; }
           },
           push: async (rel, data) => {
             // `.md` goes through the text path so a mid-air collision
