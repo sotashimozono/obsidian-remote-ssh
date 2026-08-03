@@ -338,10 +338,51 @@ export async function connectAndWaitForShadowVault(
       lastErr = e; // not registered yet — re-drive the connect command
     }
   }
+  // Three very different faults share this symptom: the fixture is not set
+  // up, the harness never reached the button, or connect genuinely failed.
+  // Attach the evidence that separates them — the plugin's own log says how
+  // far connect got, the visible modal buttons say whether the click landed.
+  const evidence = await collectConnectEvidence(page, scaffoldVaultPath);
   throw new Error(
     `connectAndWaitForShadowVault: no shadow vault after ${attempts} connect ` +
-    `attempt(s) in ${timeoutMs}ms — ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
+    `attempt(s) in ${timeoutMs}ms — ${lastErr instanceof Error ? lastErr.message : String(lastErr)}\n` +
+    `  plugin log (tail): ${evidence.logTail}\n` +
+    `  visible modal buttons: ${evidence.modalButtons}`,
   );
+}
+
+/**
+ * What the failure message needs in order to be diagnosable: how far the
+ * plugin itself got, and what the modal was showing when we gave up. Both
+ * are best-effort — a diagnostic that throws would replace the real error.
+ */
+async function collectConnectEvidence(
+  page: Page,
+  scaffoldVaultPath: string,
+): Promise<{ logTail: string; modalButtons: string }> {
+  let logTail = '<no plugin log>';
+  try {
+    const logPath = path.join(
+      scaffoldVaultPath, '.obsidian', 'plugins', 'remote-ssh', 'console.log',
+    );
+    if (fs.existsSync(logPath)) {
+      logTail = fs.readFileSync(logPath, 'utf8').trimEnd().split('\n').slice(-12).join(' | ');
+    }
+  } catch (e) {
+    logTail = `<unreadable: ${String(e)}>`;
+  }
+
+  let modalButtons = '<none>';
+  try {
+    const labels = await page.evaluate(() =>
+      [...document.querySelectorAll('.modal button')]
+        .map(b => (b.textContent ?? '').trim())
+        .filter(Boolean));
+    if (labels.length) modalButtons = labels.join(' / ');
+  } catch (e) {
+    modalButtons = `<unreadable: ${String(e)}>`;
+  }
+  return { logTail, modalButtons };
 }
 
 /**
