@@ -33,14 +33,32 @@ import { logPathFor } from './helpers/log-oracle';
  *
  * ## What each section decides
  *
- *  1. how much content Obsidian actually pulled, in bytes — the cost being
- *     argued about, measured rather than assumed
- *  2. whether `metadataCache` has any writable store at all — the shape an
+ *  1. the SCALING LAW, not a byte count. An absolute number off an 11-file
+ *     fixture says nothing about the case that matters — a multi-GB vault.
+ *     What generalises is the RATIO: bytes Obsidian pulled over the total
+ *     size of the markdown in the model. Sizes come from the tree walk
+ *     (`TFile.stat.size`), so computing the denominator costs no transfer. A
+ *     ratio near 1 proves "Obsidian reads the whole vault", and that is what
+ *     extrapolates: at 5 GB it pulls 5 GB.
+ *  2. THE decisive experiment: relaunch on the SAME shadow vault and measure
+ *     again. Near-zero on the second run means Obsidian persisted its
+ *     metadata and reuses it — which is the mechanism a server-computed index
+ *     could be seeded into, and B1+B3 is reachable. Equal to the first run
+ *     means it re-reads everything on every start, and the GB is paid every
+ *     launch.
+ *  3. whether `metadataCache` has any writable store at all — the shape an
  *     injected index would have to take
- *  3. whether `resolvedLinks` / `unresolvedLinks`, the one pair the public
+ *  4. whether `resolvedLinks` / `unresolvedLinks`, the one pair the public
  *     typings declare as plain writable records, really drive backlinks
- *  4. whether Obsidian persists metadata somewhere a pre-seeded entry could
- *     stand in for reading the file
+ *  5. where Obsidian persists metadata, if it does
+ *
+ * ## The knot this is trying to cut
+ *
+ * Everything in `vault.fileMap` is what makes links, Dataview and graph work
+ * — and it is also exactly what makes Obsidian read every note. Fewer files
+ * in the model means less transfer and broken links; all of them means links
+ * work and the whole vault crosses the wire. Section 2 is whether that knot
+ * can be cut at all.
  *
  * Key NAMES are reported, never values: a vault's metadata is the user's
  * content, and this runs in CI.
@@ -69,34 +87,42 @@ test.afterAll(async () => {
   scaffold?.cleanup();
 });
 
-test.describe('capability probe: can the metadata index come from the remote? (#429)', () => {
-  test('PROBE — report what decides server-side indexing', async () => {
-    test.setTimeout(180_000);
-
-    // Let Obsidian's own indexing settle, so the byte count below is the
-    // finished cost rather than a snapshot taken mid-walk.
-    await obsidian.page.waitForTimeout(15_000);
-
-    const report = await obsidian.page.evaluate(async () => {
+/**
+ * One measurement pass, run against whichever launch is current. Extracted so
+ * the SECOND launch can be measured with exactly the same code — the point of
+ * section 2 is comparing two runs, and a comparison is only worth anything if
+ * both sides were measured identically.
+ */
+async function measure(page: ObsidianHandle['page']): Promise<Record<string, unknown>> {
+  return page.evaluate(async () => {
       const out: Record<string, unknown> = {};
       const app = (globalThis as unknown as { app?: Record<string, unknown> }).app as
         | Record<string, any>
         | undefined;
       if (!app) return { error: 'no app' };
 
-      // ── 1. THE COST: how many bytes of note content did Obsidian pull? ────
-      // Every byte in the adapter's read cache arrived over the wire. Nothing
-      // in this spec opens a note, so whatever is in there was pulled by
-      // Obsidian's own indexing and by nothing else.
+      // ── 1. THE SCALING LAW ───────────────────────────────────────────────
+      // Not "how many bytes" — an absolute number off a small fixture says
+      // nothing about a multi-GB vault. The RATIO generalises: bytes pulled
+      // over the total size of the markdown in the model. Sizes come from the
+      // tree walk, so the denominator costs no transfer. Near 1 means
+      // Obsidian reads the whole vault, and THAT extrapolates to GB.
       const stats = app.plugins?.plugins?.['remote-ssh']?.adapterMgr?.readCache?.stats?.();
       const files: unknown[] = Object.values(app.vault?.fileMap ?? {});
       const md = files.filter((f: any) => f?.extension === 'md');
+      const totalMdBytes = md.reduce((n: number, f: any) => n + (f?.stat?.size ?? 0), 0);
+      const pulled = typeof stats?.bytes === 'number' ? stats.bytes : null;
       out.cost = {
         readCache: stats ?? 'unreachable',
         filesInModel: files.length,
         markdownInModel: md.length,
+        totalMdBytes,
+        // The number the decision turns on.
+        pulledOverTotal: pulled !== null && totalMdBytes > 0
+          ? Number((pulled / totalMdBytes).toFixed(3))
+          : null,
         // Non-null metadata means Obsidian parsed the file, which means it
-        // read it. The ratio is how much of the vault it insisted on having.
+        // read it. The fraction is how much of the vault it insisted on.
         withParsedMetadata: md.filter(
           (f: any) => app.metadataCache?.getFileCache?.(f) != null,
         ).length,
@@ -148,7 +174,52 @@ test.describe('capability probe: can the metadata index come from the remote? (#
       };
 
       return out;
-    });
+  });
+}
+
+test.describe('capability probe: can the metadata index come from the remote? (#429)', () => {
+  test('PROBE — report what decides server-side indexing', async () => {
+    test.setTimeout(300_000);
+
+    // Let Obsidian's own indexing settle, so the numbers are the finished cost
+    // rather than a snapshot taken mid-walk.
+    await obsidian.page.waitForTimeout(15_000);
+    const firstRun = await measure(obsidian.page);
+
+    // ── THE decisive experiment ──────────────────────────────────────────
+    // Relaunch on the SAME shadow vault. If Obsidian persisted its metadata
+    // and reuses it, the second run pulls ~nothing — and that persistence is
+    // the mechanism a server-computed index can be seeded into, so B1+B3 is
+    // reachable. If it pulls the same again, the whole vault crosses the wire
+    // on EVERY start, which at GB scale is the thing that cannot be done.
+    await obsidian.cleanup();
+    obsidian = await launchObsidian(shadowVaultPath);
+    await waitForShadowVaultLoaded(obsidian.page, logPathFor(shadowVaultPath), 30_000);
+    await obsidian.page.waitForTimeout(15_000);
+    const secondRun = await measure(obsidian.page);
+
+    const bytesOf = (r: Record<string, unknown>): number | null => {
+      const c = r.cost as { readCache?: { bytes?: number } } | undefined;
+      return typeof c?.readCache?.bytes === 'number' ? c.readCache.bytes : null;
+    };
+    const b1 = bytesOf(firstRun);
+    const b2 = bytesOf(secondRun);
+    const report = {
+      firstRun,
+      secondRun,
+      verdict: {
+        firstRunBytes: b1,
+        secondRunBytes: b2,
+        secondOverFirst: b1 !== null && b2 !== null && b1 > 0
+          ? Number((b2 / b1).toFixed(3))
+          : null,
+        reading: b1 === null || b2 === null
+          ? 'could not measure both runs'
+          : b1 > 0 && b2 / b1 < 0.2
+            ? 'metadata SURVIVES a restart — seeding a server-computed index is reachable'
+            : 'the vault is re-read on every start — at GB scale this is the blocker',
+      },
+    };
 
     // eslint-disable-next-line no-console
     console.log(`[e2e] metadata index probe:\n${JSON.stringify(report, null, 2)}`);
@@ -161,11 +232,11 @@ test.describe('capability probe: can the metadata index come from the remote? (#
     // only when it measured nothing, because a probe that quietly returns
     // nothing is worse than no probe: it reads as an answer.
     expect(
-      (report as { error?: string }).error ?? null,
+      (firstRun as { error?: string }).error ?? null,
       'the probe could not reach `app` at all, so it measured nothing',
     ).toBeNull();
 
-    const cost = (report as { cost?: { markdownInModel?: number } }).cost;
+    const cost = (firstRun as { cost?: { markdownInModel?: number } }).cost;
     expect(
       cost?.markdownInModel ?? 0,
       'no markdown in the vault model — the probe ran against an empty vault, so every ' +
