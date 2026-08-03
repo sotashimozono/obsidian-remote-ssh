@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import {
   launchObsidian,
   connectAndOpenShadow,
+  closeSettings,
   describePages,
   findPageWith,
   type ObsidianHandle,
@@ -75,10 +76,17 @@ test.describe('Remote SSH E2E smoke', () => {
       `after Ctrl+,.\n  windows: ${await describePages(page)}`,
     ).not.toBeNull();
 
-    // Close settings so subsequent tests start from a clean state.
-    const pluginTab = settingsPage!.locator(pluginTabSel).first();
-    await settingsPage!.keyboard.press('Escape');
-    await expect(pluginTab).toBeHidden({ timeout: 5_000 });
+    // Close settings so subsequent tests start from a clean state — and say so
+    // if it does not close. Escape alone does not: on the standalone Settings
+    // window the tab stayed visible for the full 5 s, resolving 14 times to
+    // `<div data-setting-id="remote-ssh" class="vertical-tab-nav-item tappable">`.
+    // `closeSettings` tries the product's own `app.setting.close()` first and
+    // closes the stray window as a last resort.
+    expect(
+      await closeSettings(page),
+      'Settings would not close by any means, so every later spec inherits it.\n' +
+      `  windows: ${await describePages(page)}`,
+    ).toBe(true);
   });
 
   test('3 — command palette shows Remote SSH commands', async () => {
