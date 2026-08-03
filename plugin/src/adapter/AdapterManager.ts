@@ -26,6 +26,7 @@ import { logger } from '../util/logger';
 import { errorMessage } from '../util/errorMessage';
 import * as path from 'path';
 import * as fs from 'fs';
+import { nativeFs } from '../util/nativeFs';
 
 /**
  * The set of FileSystemAdapter methods that get monkey-patched onto
@@ -270,11 +271,11 @@ export class AdapterManager {
       writeFile: (abs, data) => {
         fs.mkdirSync(path.dirname(abs), { recursive: true });
         fs.writeFileSync(abs, data);
-        const s = fs.statSync(abs, { throwIfNoEntry: false });
+        const s = nativeFs.statSync(abs, { throwIfNoEntry: false });
         return s ? { size: s.size, mtimeMs: s.mtimeMs } : null;
       },
       statFile: (abs) => {
-        const s = fs.statSync(abs, { throwIfNoEntry: false });
+        const s = nativeFs.statSync(abs, { throwIfNoEntry: false });
         return s?.isFile() ? { size: s.size, mtimeMs: s.mtimeMs } : null;
       },
       deleteFile: (abs) => fs.rmSync(abs, { force: true }),

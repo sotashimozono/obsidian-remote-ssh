@@ -22,6 +22,7 @@ function isThumbnailEligible(vaultPath: string): boolean {
   return THUMBNAIL_EXTENSIONS.has(vaultPath.slice(dot + 1).toLowerCase());
 }
 import * as fs from 'fs';
+import { nativeFs } from '../util/nativeFs';
 import * as nodePath from 'path';
 import { pathToFileURL } from 'url';
 import type { MaterializedCache } from './MaterializedCache';
@@ -260,13 +261,13 @@ export class SftpDataAdapter {
     if (this.isConfigTree(normalizedPath)) {
       // Never ours (see isConfigTree); answer from the real disk only.
       return Boolean(this.shadowBasePath)
-        && fs.existsSync(nodePath.join(this.shadowBasePath, normalizedPath));
+        && nativeFs.existsSync(nodePath.join(this.shadowBasePath, normalizedPath));
     }
     if (cache.has(normalizedPath)) return true;
     // Already real on disk — materialised earlier, or written by
     // somebody. One stat, no network.
     if (this.shadowBasePath
-      && fs.existsSync(nodePath.join(this.shadowBasePath, normalizedPath))) {
+      && nativeFs.existsSync(nodePath.join(this.shadowBasePath, normalizedPath))) {
       return true;
     }
 
@@ -1070,7 +1071,7 @@ export class SftpDataAdapter {
       // Skipping costs nothing: the remote write already succeeded, and for
       // plugin CODE the local copy is owned by the pull/push binary
       // round-trip (`PLUGIN_BINARY_FILES`), not by this cache.
-      if (fs.lstatSync(abs, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      if (nativeFs.lstatSync(abs, { throwIfNoEntry: false })?.isSymbolicLink()) {
         logger.warn(`writeThroughConfig: "${rel}" is a symlink — not mirrored (would clobber its target)`);
         return;
       }
@@ -1078,7 +1079,7 @@ export class SftpDataAdapter {
       // whole-dir plugin symlink from an older build) would redirect the
       // write out of the shadow root even though `abs` looked contained.
       const dir = nodePath.dirname(abs);
-      const realDir = fs.existsSync(dir) ? fs.realpathSync(dir) : null;
+      const realDir = nativeFs.existsSync(dir) ? nativeFs.realpathSync(dir) : null;
       if (realDir && realDir !== root && !realDir.startsWith(root + nodePath.sep)) {
         logger.warn(`writeThroughConfig: "${rel}" resolves outside the shadow root via a symlinked parent — not mirrored`);
         return;
