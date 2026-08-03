@@ -58,22 +58,27 @@ test.describe('Remote SSH E2E smoke', () => {
     // Assert it is reachable, in whichever window Obsidian put it; that
     // is what "accessible" means to a user. Requiring it in one specific
     // page asserted a fact about the harness, not about the product.
+    //
+    // Anchor on the tab itself, not `.modal-container`. In its own window
+    // Settings has no `.modal-container` — run 30775609866's inventory reads
+    // `modals:0` on the page titled "Settings - … - Obsidian 1.13.4" while
+    // `.modal button` there returns ["Turn on and reload","Browse","Check for
+    // updates"]. So the old locator reported "Settings did not open in any
+    // Obsidian window" about a window it was open in. What this test claims is
+    // that the Remote SSH tab is reachable, and the tab is its own evidence.
     await page.keyboard.press('Control+,');
-    const settingsPage = await findPageWith(page, '.modal-container', 10_000);
+    const pluginTabSel = '.vertical-tab-nav-item:has-text("Remote SSH")';
+    const settingsPage = await findPageWith(page, pluginTabSel, 10_000);
     expect(
       settingsPage,
-      `Settings did not open in any Obsidian window.\n  windows: ${await describePages(page)}`,
+      'the Remote SSH settings tab is not reachable in any Obsidian window ' +
+      `after Ctrl+,.\n  windows: ${await describePages(page)}`,
     ).not.toBeNull();
 
-    const settingsModal = settingsPage!.locator('.modal-container');
-    const pluginTab = settingsModal
-      .locator('.vertical-tab-nav-item:has-text("Remote SSH")')
-      .first();
-    await expect(pluginTab).toBeVisible({ timeout: 5_000 });
-
     // Close settings so subsequent tests start from a clean state.
+    const pluginTab = settingsPage!.locator(pluginTabSel).first();
     await settingsPage!.keyboard.press('Escape');
-    await expect(settingsModal).toBeHidden({ timeout: 5_000 });
+    await expect(pluginTab).toBeHidden({ timeout: 5_000 });
   });
 
   test('3 — command palette shows Remote SSH commands', async () => {
