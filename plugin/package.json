@@ -45,7 +45,7 @@
   },
   "devDependencies": {
     "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
-    "@playwright/test": "^1.62.0",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^26.1.2",
     "@types/ssh2": "^1.11.19",
     "@typescript-eslint/eslint-plugin": "^8.65.0",
