@@ -38,6 +38,16 @@ export interface LocalWriteWatcherDeps {
    * never — a deployment without the disk cache is unaffected.
    */
   isMirroredCopy?(rel: string, stat: LocalFileStat): boolean;
+  /**
+   * Whether the remote already has this path. Consulted ONLY for files
+   * found by the startup scan, whose provenance is unknown: a note a
+   * plugin wrote while nothing was watching, or a materialised copy that
+   * outlived the disconnect that should have removed it. Absent from the
+   * remote means the former, and it is pushed; present means we cannot
+   * tell which side is newer, and the remote is left alone. Omitted →
+   * startup-seeded files are never pushed.
+   */
+  remoteExists?(rel: string): Promise<boolean>;
   /** Largest single file to push. Bigger files are skipped, loudly. */
   maxBytes: number;
   /** Coalesces a burst of writes; also the interval between stability samples. */
@@ -135,6 +145,8 @@ export class LocalWriteWatcher {
   private readonly pushed = new Map<string, string>();
   /** Paths already reported to the user, so one broken file is not a Notice storm. */
   private readonly reported = new Set<string>();
+  /** Paths the startup scan found, whose provenance is unknown until checked. */
+  private readonly seededAtStart = new Set<string>();
 
   constructor(private readonly deps: LocalWriteWatcherDeps) {}
 
@@ -142,6 +154,29 @@ export class LocalWriteWatcher {
     if (this.closer) return;
     this.closer = this.deps.watch((rel) => this.onEvent(rel));
     logger.info('LocalWriteWatcher: watching the shadow vault root for out-of-band writes');
+
+    // Anything already on disk gets no event, ever. `watch` only reports
+    // CHANGES, so a file that was written before this call was invisible to
+    // the write-back for the whole session — and the one case that matters
+    // most is exactly that: a plugin writing under `basePath` in its own
+    // `onload()`, which runs while we are still connecting. That is the
+    // field report this feature exists for ("Claudian creates .md files in
+    // the local folder instead of the remote vault"), and `e2e/fs-visibility`
+    // pins it.
+    //
+    // It looked like it worked, before: `scan()` used to read the PATCHED
+    // `readdirSync`, so a single filename-less event enumerated the whole
+    // virtual vault and swept such files up with it. That was the write
+    // storm #490 removed, and removing it showed the legitimate path had
+    // never covered them.
+    //
+    // Seeded paths carry unknown provenance and are gated in `flushOne`.
+    for (const rel of this.deps.scan()) {
+      if (this.deps.ignore(rel)) continue;
+      this.seededAtStart.add(rel);
+      this.dirty.add(rel);
+    }
+    if (this.dirty.size > 0) this.arm();
   }
 
   stop(): void {
@@ -156,6 +191,7 @@ export class LocalWriteWatcher {
     this.dirty.clear();
     this.sample.clear();
     this.reported.clear();
+    this.seededAtStart.clear();
   }
 
   /** Number of paths this session has pushed. Test/diagnostic hook. */
@@ -254,6 +290,30 @@ export class LocalWriteWatcher {
       // re-reported on every later event for it.
       this.pushed.set(rel, sig);
       return;
+    }
+
+    // Provenance gate for the startup scan, and only for it. A file that
+    // was already on disk when we armed is either an out-of-band write
+    // nothing was watching for, or a materialised copy that outlived the
+    // disconnect meant to remove it — and after a relaunch the ledger is
+    // empty, so `isMirroredCopy` above cannot tell them apart.
+    //
+    // Absent from the remote decides it: nothing we materialised can be
+    // missing there, so it is the user's. Present, and we do not know which
+    // side is newer; pushing on a guess would overwrite a remote that may
+    // have moved on, so it is left for a real edit to trigger the normal
+    // path. Said out loud, because a file silently not pushed is the shape
+    // of bug this whole area keeps producing.
+    if (this.seededAtStart.delete(rel)) {
+      const onRemote = await this.deps.remoteExists?.(rel) ?? true;
+      if (onRemote) {
+        this.pushed.set(rel, sig);
+        logger.info(
+          `LocalWriteWatcher: "${rel}" was already on disk at connect and the remote has ` +
+          'it too — provenance unknown, so it is not pushed. An edit from here on is.',
+        );
+        return;
+      }
     }
 
     const data = this.deps.read(rel);
