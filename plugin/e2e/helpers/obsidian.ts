@@ -11,6 +11,32 @@ const CDP_PORT = Number(process.env.CDP_PORT ?? '9222');
 const PALETTE_INPUT = '.prompt input, input.prompt-input, .suggestion-container input';
 
 /**
+ * Obsidian's Settings UI, in either shape it takes.
+ *
+ * In its own window (1.13.4 under Xvfb) Settings is NOT wrapped in a
+ * `.modal-container` — run 30775609866's inventory reads
+ * `modals:0` while `.modal button` still returns
+ * `["Turn on and reload","Browse","Check for updates"]`. So `.modal-container`,
+ * which every sweep and assertion here anchored on, matches nothing in the
+ * window Settings is actually in: `dismissBlockingModals` called the workspace
+ * clean and smoke 2 reported "Settings did not open in any Obsidian window"
+ * with the dialog plainly up. The tab rail is the stable anchor.
+ */
+const SETTINGS_ROOT = '.vertical-tab-header, .modal-container .vertical-tab-nav-item';
+
+/**
+ * ConnectModal specifically — NOT any `.modal`.
+ *
+ * The Settings window carries its own `.modal`, so a bare `.modal` receipt is
+ * satisfied by a window ConnectModal was never in, and the button click that
+ * follows then finds nothing to click. Both panes are covered: the auth pane
+ * always renders `.remote-ssh-connect-button` (`ConnectModal.renderConnectButton`)
+ * and the multi-profile picker renders the "Connect to remote vault" heading.
+ */
+const CONNECT_MODAL =
+  '.modal .remote-ssh-connect-button, .modal h2:has-text("Connect to remote vault")';
+
+/**
  * Whether `locator` becomes visible within `timeoutMs`.
  *
  * NOT `locator.isVisible({ timeout })`: Playwright ignores that option and
@@ -161,6 +187,11 @@ async function describePageList(pages: Page[], driven?: Page): Promise<string> {
           title: document.title,
           size: `${window.innerWidth}x${window.innerHeight}`,
           modals: document.querySelectorAll('.modal-container').length,
+          // `.modal` separately from `.modal-container`: the standalone
+          // Settings window has the former and not the latter, and reading
+          // only the container is what made the sweep call it clean.
+          bareModals: document.querySelectorAll('.modal').length,
+          settingsTabs: document.querySelectorAll('.vertical-tab-nav-item').length,
           modalButtons: Array.from(document.querySelectorAll('.modal button'))
             .map((b) => (b.textContent ?? '').trim())
             .filter(Boolean),
@@ -365,8 +396,12 @@ export async function driveConnectFlow(page: Page): Promise<void> {
   // used `isVisible({ timeout })`, which Playwright documents as ignoring the
   // timeout — the check was instantaneous, so even in the right window it
   // would have raced ConnectModal's first paint.
+  //
+  // The receipt is ConnectModal, not `.modal`: the Settings window has one of
+  // those too, so a bare `.modal` would accept a window ConnectModal is not in
+  // and the click below would find nothing.
   const modalPage = firedId !== null
-    ? await findPageWith(page, '.modal', 5_000)
+    ? await findPageWith(page, CONNECT_MODAL, 5_000)
     : null;
 
   let flowPage = modalPage;
@@ -397,7 +432,7 @@ export async function driveConnectFlow(page: Page): Promise<void> {
     // Let the fuzzy filter settle on the matching command.
     await palettePage.waitForTimeout(600);
     await palettePage.keyboard.press('Enter');
-    flowPage = await findPageWith(page, '.modal', 5_000);
+    flowPage = await findPageWith(page, CONNECT_MODAL, 5_000);
   }
 
   // Click Connect, in whichever window ConnectModal rendered in.
@@ -862,31 +897,47 @@ export async function dismissBlockingModals(
 
 /**
  * Ask every window to close Obsidian's Settings dialog, and report how many
- * did. `app.setting.close()` is a no-op when Settings is not open, so this is
- * safe to call unconditionally on a clean workspace.
+ * did.
+ *
+ * Detection is on the settings TAB RAIL, not `.modal-container`. In the window
+ * Obsidian gives Settings there is no `.modal-container` at all, so the old
+ * probe answered "not open" about the one window it was open in — which is why
+ * the sweep reported a clean workspace and left it up.
+ *
+ * Escape is the fallback for exactly that window: it may have no `app` global
+ * to call `app.setting.close()` on (its inventory line reads `vault:null`), and
+ * a CDP key event is delivered to the target page without needing OS focus.
  */
 async function closeSettingsEverywhere(page: Page): Promise<number> {
   let closed = 0;
   for (const p of contextPages(page)) {
-    const didClose = await p
-      .evaluate(() => {
+    const wasOpen = await p
+      .evaluate((sel) => {
+        const open = Boolean(document.querySelector(sel));
         const setting = (window as unknown as {
-          app?: { setting?: { close?: () => void; containerEl?: HTMLElement } };
+          app?: { setting?: { close?: () => void } };
         }).app?.setting;
-        if (!setting?.close) return false;
-        const wasOpen = Boolean(document.querySelector('.modal-container .vertical-tab-header'));
-        setting.close();
-        return wasOpen;
-      })
+        setting?.close?.();
+        return open;
+      }, SETTINGS_ROOT)
       .catch(() => false);
-    if (didClose) {
-      console.warn(
-        '[e2e] dismissBlockingModals: closed Obsidian\'s Settings dialog (auto-opened by ' +
-        'the trust-dismiss path). Left up, it owns every later modal — that is how ' +
-        'ConnectModal ended up in a window no locator was looking at.',
-      );
-      closed++;
+    if (!wasOpen) continue;
+
+    // Still there? It is the standalone Settings window with no `app` to ask.
+    if (await isVisibleWithin(p.locator(SETTINGS_ROOT).first(), 1_000)) {
+      await p.keyboard.press('Escape').catch(() => { /* best effort */ });
+      await p
+        .locator(SETTINGS_ROOT)
+        .first()
+        .waitFor({ state: 'hidden', timeout: 3_000 })
+        .catch(() => { /* reported by the inventory if it matters */ });
     }
+    console.warn(
+      '[e2e] dismissBlockingModals: closed Obsidian\'s Settings dialog (auto-opened by ' +
+      'the trust-dismiss path). Left up, it owns every later modal — that is how ' +
+      'ConnectModal ended up in a window no locator was looking at.',
+    );
+    closed++;
   }
   return closed;
 }
