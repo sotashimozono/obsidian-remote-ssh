@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test';
 import {
   launchObsidian,
   connectAndOpenShadow,
+  describePages,
+  findPageWith,
   type ObsidianHandle,
 } from './helpers/obsidian';
 import { scaffoldTestVault, type ScaffoldResult } from './helpers/vault-scaffold';
@@ -49,40 +51,54 @@ test.describe('Remote SSH E2E smoke', () => {
     // is reachable. The previous version of this test only
     // annotated when the tab was visible — it never failed, so a
     // missing tab would silently slip through.
+    // Settings does not necessarily render in the window we press the
+    // shortcut in — Obsidian gives it its own page, which is why this
+    // assertion read "element(s) not found" for runs on end while the
+    // dialog was plainly up (run 30773839148's `test-failed-2.png`).
+    // Assert it is reachable, in whichever window Obsidian put it; that
+    // is what "accessible" means to a user. Requiring it in one specific
+    // page asserted a fact about the harness, not about the product.
     await page.keyboard.press('Control+,');
-    const settingsModal = page.locator('.modal-container');
-    await expect(settingsModal).toBeVisible({ timeout: 10_000 });
+    const settingsPage = await findPageWith(page, '.modal-container', 10_000);
+    expect(
+      settingsPage,
+      `Settings did not open in any Obsidian window.\n  windows: ${await describePages(page)}`,
+    ).not.toBeNull();
 
+    const settingsModal = settingsPage!.locator('.modal-container');
     const pluginTab = settingsModal
       .locator('.vertical-tab-nav-item:has-text("Remote SSH")')
       .first();
     await expect(pluginTab).toBeVisible({ timeout: 5_000 });
 
     // Close settings so subsequent tests start from a clean state.
-    await page.keyboard.press('Escape');
+    await settingsPage!.keyboard.press('Escape');
     await expect(settingsModal).toBeHidden({ timeout: 5_000 });
   });
 
   test('3 — command palette shows Remote SSH commands', async () => {
     const { page } = obsidian;
 
-    // Open command palette
+    // Open command palette — again, in whichever window it lands in.
     await page.keyboard.press('Control+P');
-    await page.waitForTimeout(500);
+    const palettePage = await findPageWith(page, '.prompt', 10_000);
+    expect(
+      palettePage,
+      `The command palette did not open in any Obsidian window.\n  windows: ${await describePages(page)}`,
+    ).not.toBeNull();
 
-    const palette = page.locator('.prompt');
-    await expect(palette).toBeVisible({ timeout: 10_000 });
+    const palette = palettePage!.locator('.prompt');
 
     // Type to filter for our commands
-    await page.keyboard.type('Remote SSH');
-    await page.waitForTimeout(500);
+    await palettePage!.keyboard.type('Remote SSH');
+    await palettePage!.waitForTimeout(500);
 
     // Check that at least one command appears
     const suggestions = palette.locator('.suggestion-item');
     const count = await suggestions.count();
 
     // Close palette
-    await page.keyboard.press('Escape');
+    await palettePage!.keyboard.press('Escape');
 
     expect(count).toBeGreaterThan(0);
   });
