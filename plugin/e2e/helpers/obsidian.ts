@@ -251,7 +251,16 @@ export async function driveConnectFlow(page: Page): Promise<void> {
     return registry.executeCommandById(id) ? id : null;
   });
 
-  if (firedId === null) {
+  // Fire-and-VERIFY. `executeCommandById` returning true means Obsidian found
+  // a command and called it — not that our plugin reacted. The last run
+  // proved the difference: the command reported success, the plugin's log
+  // stopped at "loaded", and no modal existed. So require the receipt that
+  // `promptConnect` actually ran (ConnectModal is the first thing it does),
+  // and fall through to the keyboard when it does not come.
+  const reacted = firedId !== null
+    && await page.locator('.modal').first().isVisible({ timeout: 3_000 }).catch(() => false);
+
+  if (!reacted) {
     let opened = false;
     for (let i = 0; i < 5 && !opened; i++) {
       await page.keyboard.press('Control+P');
