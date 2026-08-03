@@ -103,6 +103,33 @@ export function scaffoldTestVault(opts: ScaffoldOptions = {}): ScaffoldResult {
     pluginRoot, '..', 'docker', 'keys', 'id_test',
   );
 
+  // Assert what connect DEPENDS ON, before anything drives it.
+  //
+  // A missing key or an unstaged daemon produces exactly the same
+  // symptom as a broken product — "no shadow vault entry appeared,
+  // connect command likely never fired" — and that collapse cost three
+  // rounds of chasing the wrong cause. These throw as what they are:
+  // the fixture is not set up, not the product is broken.
+  if (!fs.existsSync(privateKeyPath)) {
+    throw new Error(
+      `fixture missing: the test private key is not at ${privateKeyPath}. ` +
+      'Connect cannot authenticate, and every spec would report it as a product failure. ' +
+      'Generate the docker fixture keys (docker/keys/id_test) before running the suite.',
+    );
+  }
+  if (transport === 'rpc') {
+    const stagedBinDir = path.join(pluginDir, 'server-bin');
+    const staged = fs.existsSync(stagedBinDir) ? fs.readdirSync(stagedBinDir) : [];
+    if (staged.length === 0) {
+      throw new Error(
+        `fixture missing: no daemon binary staged into ${stagedBinDir} (source: ` +
+        `${path.join(pluginRoot, 'server-bin')}). The 'rpc' transport needs one to ` +
+        'connect at all — build the server (go build ./server/...) or scaffold with ' +
+        "transport: 'sftp'.",
+      );
+    }
+  }
+
   // Write data.json with a pre-configured test profile
   const dataJson = {
     profiles: [
