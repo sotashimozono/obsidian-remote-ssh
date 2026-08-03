@@ -7,6 +7,26 @@ import * as os from 'node:os';
 
 const CDP_PORT = Number(process.env.CDP_PORT ?? '9222');
 
+/** Obsidian's command-palette / Quick-Switcher text input, across versions. */
+const PALETTE_INPUT = '.prompt input, input.prompt-input, .suggestion-container input';
+
+/**
+ * Whether `locator` becomes visible within `timeoutMs`.
+ *
+ * NOT `locator.isVisible({ timeout })`: Playwright ignores that option and
+ * answers immediately, so every call site that passed one was really asking
+ * "is it visible right now" and racing whatever it was waiting for.
+ */
+async function isVisibleWithin(
+  locator: ReturnType<Page['locator']>,
+  timeoutMs: number,
+): Promise<boolean> {
+  return locator
+    .waitFor({ state: 'visible', timeout: timeoutMs })
+    .then(() => true)
+    .catch(() => false);
+}
+
 /**
  * Expand a leading `~/` (and bare `~`) to the user's home dir.
  * `child_process.spawn` does not perform shell expansion, so a literal
@@ -51,6 +71,97 @@ export interface ObsidianHandle {
   page: Page;
   process: ChildProcess;
   cleanup: () => Promise<void>;
+}
+
+/**
+ * Every renderer page Obsidian currently has in this Playwright context.
+ *
+ * OBSIDIAN IS NOT ONE WINDOW, and assuming it was is what made five
+ * consecutive "connect never fired" diagnoses wrong. Run 30773839148 has the
+ * proof: the trace holds two pages in one context — `page@253e…` at 1024x800
+ * (the workspace, and the only one the harness ever acted on: 33 actions) and
+ * `page@cfa353…` at 900x700 with 76 screencast frames and ZERO actions. The
+ * failure screenshots pair up per test: `test-failed-1.png` is the workspace,
+ * modal-free, status bar "Remote SSH: Disconnected"; `test-failed-2.png`, same
+ * vault (`e2e-vault-yqL1Sc`), is a window titled "Settings - … - Obsidian
+ * 1.13.4" with `Connect: E2E Test` open on it and a live Connect button.
+ *
+ * So connect DID fire, ConnectModal DID open, and every locator we pointed at
+ * it was querying the other window. `driveConnectFlow` saw no receipt,
+ * `collectConnectEvidence` reported `visible modal buttons: <none>`, and
+ * smoke's `.modal-container` / `.prompt` were "element(s) not found" — all of
+ * them true statements about a window the surface was not in.
+ *
+ * Helpers that look for a UI surface therefore search every page, not `page`.
+ */
+function contextPages(page: Page): Page[] {
+  try {
+    const pages = page.context().pages().filter((p) => !p.isClosed());
+    return pages.length ? pages : [page];
+  } catch {
+    return [page];
+  }
+}
+
+/**
+ * The page where `selector` is actually visible, or `null`. Polls, because
+ * Obsidian opens the second window lazily — it does not exist yet when
+ * `launchObsidian` picks `pages()[0]`.
+ */
+export async function findPageWith(
+  page: Page,
+  selector: string,
+  timeoutMs = 10_000,
+): Promise<Page | null> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    for (const p of contextPages(page)) {
+      const visible = await p
+        .locator(selector)
+        .first()
+        .isVisible()
+        .catch(() => false);
+      if (visible) return p;
+    }
+    if (Date.now() >= deadline) return null;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
+/**
+ * One line per Obsidian window: which vault it holds, how big it is, what
+ * modal is on it, and whether it is the one under test. This is the evidence
+ * that separates "the product did nothing" from "the product did it in the
+ * other window" — the distinction that cost five rounds. Read-only and
+ * best-effort: a diagnostic that throws would replace the real error.
+ */
+export async function describePages(page: Page): Promise<string> {
+  const pages = contextPages(page);
+  const lines: string[] = [];
+  for (let i = 0; i < pages.length; i++) {
+    const p = pages[i];
+    const info = await p
+      .evaluate(() => {
+        const w = window as unknown as {
+          app?: { vault?: { getName?: () => string } };
+        };
+        return {
+          vault: w.app?.vault?.getName?.() ?? null,
+          title: document.title,
+          size: `${window.innerWidth}x${window.innerHeight}`,
+          modals: document.querySelectorAll('.modal-container').length,
+          modalButtons: Array.from(document.querySelectorAll('.modal button'))
+            .map((b) => (b.textContent ?? '').trim())
+            .filter(Boolean),
+          palette: Boolean(document.querySelector('.prompt')),
+        };
+      })
+      .catch((e: unknown) => ({
+        error: e instanceof Error ? e.message : String(e),
+      }));
+    lines.push(`#${i}${p === page ? ' (driven)' : ''} ${JSON.stringify(info)}`);
+  }
+  return lines.join(' ;; ');
 }
 
 /**
@@ -161,19 +272,6 @@ export async function launchObsidian(
  *      empty passphrase input does NOT submit; verified empirically)
  */
 export async function driveConnectFlow(page: Page): Promise<void> {
-  // CI's headless Obsidian is slow/racy to wire the command palette
-  // for ~seconds after the plugin loads (proven: the pre-existing
-  // smoke "settings tab" test fails first try, passes on retry). The
-  // old fixed `waitForTimeout`s raced that window — Ctrl+P / Enter
-  // landed before the palette accepted input, so the connect command
-  // never fired and the connect-lifecycle/reconnect specs hard-failed
-  // with "connect command likely never fired". Wait for the palette
-  // input to actually be present before typing; re-open it if the
-  // first Ctrl+P didn't take.
-  const paletteInput = page
-    .locator('.prompt input, input.prompt-input, .suggestion-container input')
-    .first();
-
   // Fire the command through Obsidian's own command registry first.
   //
   // Keyboard-driving the palette is the single largest source of red in
@@ -252,62 +350,70 @@ export async function driveConnectFlow(page: Page): Promise<void> {
   });
 
   // Fire-and-VERIFY. `executeCommandById` returning true means Obsidian found
-  // a command and called it — not that our plugin reacted. The last run
-  // proved the difference: the command reported success, the plugin's log
-  // stopped at "loaded", and no modal existed. So require the receipt that
-  // `promptConnect` actually ran (ConnectModal is the first thing it does),
-  // and fall through to the keyboard when it does not come.
-  const reacted = firedId !== null
-    && await page.locator('.modal').first().isVisible({ timeout: 3_000 }).catch(() => false);
+  // a command and called it — not that our plugin reacted. Require the receipt
+  // that `promptConnect` actually ran: ConnectModal is the first thing it does.
+  //
+  // Search EVERY window for it. The previous version asked only the driven
+  // page and concluded "the plugin never reacted"; run 30773839148's trace
+  // shows the modal was open the whole time on Obsidian's second page. It also
+  // used `isVisible({ timeout })`, which Playwright documents as ignoring the
+  // timeout — the check was instantaneous, so even in the right window it
+  // would have raced ConnectModal's first paint.
+  const modalPage = firedId !== null
+    ? await findPageWith(page, '.modal', 5_000)
+    : null;
 
-  if (!reacted) {
-    let opened = false;
-    for (let i = 0; i < 5 && !opened; i++) {
+  let flowPage = modalPage;
+
+  if (flowPage === null) {
+    // The palette is subject to the same window split as the modal, so find
+    // the window it opened in rather than assuming the driven one, and type
+    // into THAT window — keystrokes sent to the workspace while the palette
+    // is on another page filter nothing and Enter runs nothing.
+    let palettePage: Page | null = null;
+    for (let i = 0; i < 5 && palettePage === null; i++) {
       await page.keyboard.press('Control+P');
-      opened = await paletteInput
-        .waitFor({ state: 'visible', timeout: 4_000 })
-        .then(() => true)
-        .catch(() => false);
-      if (!opened) await page.keyboard.press('Escape').catch(() => { /* ignore */ });
+      palettePage = await findPageWith(page, PALETTE_INPUT, 4_000);
+      if (palettePage === null) {
+        await page.keyboard.press('Escape').catch(() => { /* ignore */ });
+      }
     }
-    if (!opened) {
+    if (palettePage === null) {
       throw new Error(
-        'driveConnectFlow: remote-ssh:connect was not in Obsidian\'s command registry ' +
-        '(is the plugin loaded?) and the command palette never opened either — ' +
-        'Obsidian is not interactive',
+        'driveConnectFlow: remote-ssh:connect was in Obsidian\'s command registry but ' +
+        'firing it opened no modal in ANY window, and the command palette never opened ' +
+        `in any window either — Obsidian is not interactive.\n  windows: ${await describePages(page)}`,
       );
     }
 
-    await paletteInput.fill('');
-    await page.keyboard.type('Remote SSH: Connect', { delay: 20 });
+    await palettePage.locator(PALETTE_INPUT).first().fill('');
+    await palettePage.keyboard.type('Remote SSH: Connect', { delay: 20 });
     // Let the fuzzy filter settle on the matching command.
-    await page.waitForTimeout(600);
-    await page.keyboard.press('Enter');
+    await palettePage.waitForTimeout(600);
+    await palettePage.keyboard.press('Enter');
+    flowPage = await findPageWith(page, '.modal', 5_000);
   }
 
-  // The per-profile connect modal appears for passphrase/confirm
-  // profiles; for the scaffold's key-auth profile connect can fire
-  // straight off Enter (no modal). Click the button if it shows; its
-  // absence is not an error.
-  // ConnectModal is TWO panes, and clicking once only gets through the
-  // first. The profile list offers a "Connect" per row (ConnectModal.ts:54);
-  // choosing one opens that profile's pane, whose own Connect button
-  // (`.remote-ssh-connect-button`, ConnectModal.ts:115) is what actually
-  // fires the handshake. Clicking once left the modal parked on the second
-  // pane, so no shadow vault ever appeared and the spec reported "connect
-  // command likely never fired" — with the command having fired perfectly.
+  // Click Connect, in whichever window ConnectModal rendered in.
   //
-  // Click through both, preferring the pane's own button once it is up. A
-  // profile that needs no second confirmation simply has nothing left to
-  // click, which is why absence is not an error.
-  for (let stage = 0; stage < 2; stage++) {
-    const paneBtn = page.locator('.modal .remote-ssh-connect-button').first();
-    const btn = (await paneBtn.isVisible({ timeout: stage === 0 ? 5_000 : 2_000 }).catch(() => false))
-      ? paneBtn
-      : page.locator('.modal button:has-text("Connect")').first();
-    if (!(await btn.isVisible({ timeout: 2_000 }).catch(() => false))) break;
-    await btn.click().catch(() => { /* the pane may have closed under us */ });
-    await page.waitForTimeout(400);   // let the next pane render
+  // The modal is one pane or two depending on the profile count
+  // (`ConnectModal.onOpen`): a single profile renders the auth pane straight
+  // away, several render a picker first whose per-row Connect opens that
+  // profile's pane. Either way `.remote-ssh-connect-button` is the button that
+  // fires the handshake, so prefer it and fall back to any Connect-labelled
+  // button for the picker row. A pane with nothing left to click is not an
+  // error — that is the shape of a profile needing no confirmation.
+  const clickPage = flowPage;
+  if (clickPage !== null) {
+    for (let stage = 0; stage < 2; stage++) {
+      const paneBtn = clickPage.locator('.modal .remote-ssh-connect-button').first();
+      const btn = (await isVisibleWithin(paneBtn, stage === 0 ? 5_000 : 2_000))
+        ? paneBtn
+        : clickPage.locator('.modal button:has-text("Connect")').first();
+      if (!(await isVisibleWithin(btn, 2_000))) break;
+      await btn.click().catch(() => { /* the pane may have closed under us */ });
+      await clickPage.waitForTimeout(400);   // let the next pane render
+    }
   }
 }
 
@@ -350,25 +456,27 @@ export async function connectAndWaitForShadowVault(
   // Three very different faults share this symptom: the fixture is not set
   // up, the harness never reached the button, or connect genuinely failed.
   // Attach the evidence that separates them — the plugin's own log says how
-  // far connect got, the visible modal buttons say whether the click landed.
+  // far connect got, and the per-window inventory says whether the modal was
+  // up somewhere we were not clicking.
   const evidence = await collectConnectEvidence(page, scaffoldVaultPath);
   throw new Error(
     `connectAndWaitForShadowVault: no shadow vault after ${attempts} connect ` +
     `attempt(s) in ${timeoutMs}ms — ${lastErr instanceof Error ? lastErr.message : String(lastErr)}\n` +
     `  plugin log (tail): ${evidence.logTail}\n` +
-    `  visible modal buttons: ${evidence.modalButtons}`,
+    `  windows: ${evidence.windows}`,
   );
 }
 
 /**
  * What the failure message needs in order to be diagnosable: how far the
- * plugin itself got, and what the modal was showing when we gave up. Both
- * are best-effort — a diagnostic that throws would replace the real error.
+ * plugin itself got, and what each Obsidian window was showing when we gave
+ * up. Both are best-effort — a diagnostic that throws would replace the real
+ * error.
  */
 async function collectConnectEvidence(
   page: Page,
   scaffoldVaultPath: string,
-): Promise<{ logTail: string; modalButtons: string }> {
+): Promise<{ logTail: string; windows: string }> {
   let logTail = '<no plugin log>';
   try {
     const logPath = path.join(
@@ -381,17 +489,13 @@ async function collectConnectEvidence(
     logTail = `<unreadable: ${String(e)}>`;
   }
 
-  let modalButtons = '<none>';
-  try {
-    const labels = await page.evaluate(() =>
-      [...document.querySelectorAll('.modal button')]
-        .map(b => (b.textContent ?? '').trim())
-        .filter(Boolean));
-    if (labels.length) modalButtons = labels.join(' / ');
-  } catch (e) {
-    modalButtons = `<unreadable: ${String(e)}>`;
-  }
-  return { logTail, modalButtons };
+  // Per WINDOW, not just the driven one. Asking only `page` is what produced
+  // `visible modal buttons: <none>` while ConnectModal sat open on Obsidian's
+  // other page with a live Connect button on it.
+  const windows = await describePages(page).catch(
+    (e: unknown) => `<unreadable: ${String(e)}>`,
+  );
+  return { logTail, windows };
 }
 
 /**
@@ -580,7 +684,7 @@ async function dismissTrustDialog(page: Page): Promise<boolean> {
   const trustBtn = page
     .locator('button:has-text("Trust author and enable plugins")')
     .first();
-  if (!await trustBtn.isVisible({ timeout: 8_000 }).catch(() => false)) {
+  if (!await isVisibleWithin(trustBtn, 8_000)) {
     return false;
   }
   await trustBtn.click();
@@ -637,6 +741,57 @@ async function dismissTrustDialog(page: Page): Promise<boolean> {
 export async function dismissBlockingModals(
   page: Page,
   timeoutMs = 10_000,
+): Promise<number> {
+  // Settings is the modal we are actually here for, and Escape on the driven
+  // page never reached it: Obsidian paints it in its own window, so the
+  // keystroke went to the workspace while the dialog sat on the other page —
+  // and every modal opened afterwards (ConnectModal included) landed there
+  // too, out of reach of every locator in this file. Close it through
+  // `app.setting.close()` on each window instead, which needs no focus and no
+  // guess about which window owns it. Then sweep whatever is left with Escape,
+  // per window, as before.
+  let closed = await closeSettingsEverywhere(page);
+  for (const p of contextPages(page)) {
+    closed += await dismissModalsOnPage(p, timeoutMs);
+  }
+  return closed;
+}
+
+/**
+ * Ask every window to close Obsidian's Settings dialog, and report how many
+ * did. `app.setting.close()` is a no-op when Settings is not open, so this is
+ * safe to call unconditionally on a clean workspace.
+ */
+async function closeSettingsEverywhere(page: Page): Promise<number> {
+  let closed = 0;
+  for (const p of contextPages(page)) {
+    const didClose = await p
+      .evaluate(() => {
+        const setting = (window as unknown as {
+          app?: { setting?: { close?: () => void; containerEl?: HTMLElement } };
+        }).app?.setting;
+        if (!setting?.close) return false;
+        const wasOpen = Boolean(document.querySelector('.modal-container .vertical-tab-header'));
+        setting.close();
+        return wasOpen;
+      })
+      .catch(() => false);
+    if (didClose) {
+      console.warn(
+        '[e2e] dismissBlockingModals: closed Obsidian\'s Settings dialog (auto-opened by ' +
+        'the trust-dismiss path). Left up, it owns every later modal — that is how ' +
+        'ConnectModal ended up in a window no locator was looking at.',
+      );
+      closed++;
+    }
+  }
+  return closed;
+}
+
+/** The original per-window Escape sweep. */
+async function dismissModalsOnPage(
+  page: Page,
+  timeoutMs: number,
 ): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   let closed = 0;
@@ -841,10 +996,6 @@ export async function runCommandViaPalette(
   page: Page,
   query: string,
 ): Promise<void> {
-  const paletteInput = page
-    .locator('.prompt input, input.prompt-input, .suggestion-container input')
-    .first();
-
   // Registry first, for the same reason as `driveConnectFlow`: the
   // caller wants the command to RUN, and a headless window that will
   // not take a keystroke should not be able to fail that. Matching is
@@ -869,28 +1020,30 @@ export async function runCommandViaPalette(
   }, query);
   if (firedId !== null) return;
 
-  let opened = false;
-  for (let i = 0; i < 5 && !opened; i++) {
+  // Same window split as `driveConnectFlow`: drive the palette in whichever
+  // window it opened in, not the one we pressed Ctrl+P at.
+  let palettePage: Page | null = null;
+  for (let i = 0; i < 5 && palettePage === null; i++) {
     await page.keyboard.press('Control+P');
-    opened = await paletteInput
-      .waitFor({ state: 'visible', timeout: 4_000 })
-      .then(() => true)
-      .catch(() => false);
-    if (!opened) await page.keyboard.press('Escape').catch(() => { /* ignore */ });
+    palettePage = await findPageWith(page, PALETTE_INPUT, 4_000);
+    if (palettePage === null) {
+      await page.keyboard.press('Escape').catch(() => { /* ignore */ });
+    }
   }
-  if (!opened) {
+  if (palettePage === null) {
     throw new Error(
       `runCommandViaPalette: "${query}" was not in Obsidian's command registry and the ` +
-      'command palette never opened either (Obsidian not interactive)',
+      'command palette never opened in any window either (Obsidian not interactive).\n' +
+      `  windows: ${await describePages(page)}`,
     );
   }
 
-  await paletteInput.fill('');
-  await page.keyboard.type(query, { delay: 20 });
+  await palettePage.locator(PALETTE_INPUT).first().fill('');
+  await palettePage.keyboard.type(query, { delay: 20 });
 
   // Wait for the fuzzy filter to actually surface a suggestion before
   // clicking — the fixed sleep this replaces is exactly what raced.
-  const firstSuggestion = page.locator('.prompt .suggestion-item').first();
+  const firstSuggestion = palettePage.locator('.prompt .suggestion-item').first();
   await firstSuggestion.waitFor({ state: 'visible', timeout: 10_000 });
   await firstSuggestion.click();
 }
