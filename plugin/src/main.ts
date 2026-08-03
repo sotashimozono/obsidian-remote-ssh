@@ -789,6 +789,11 @@ export default class RemoteSshPlugin extends Plugin {
           // content; pushing it back would be an echo.
           isMirroredCopy: (rel, st) =>
             this.adapterMgr.materialized?.isMirroredCopy(rel, st) ?? false,
+          // Provenance for the startup scan only. The ledger above is empty
+          // after a relaunch, so it cannot say whether a file already on
+          // disk is the user's or a stale mirror; the remote can, by not
+          // having it.
+          remoteExists: (rel) => da.exists(rel),
           maxBytes,
           debounceMs: 400,
           setTimer: (cb, ms) => window.setTimeout(cb, ms),

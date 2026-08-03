@@ -26,6 +26,16 @@ function harness(files: Record<string, string> = {}, maxBytes = 1024 * 1024) {
   const onError = vi.fn((_rel: string, _msg: string) => {});
   /** Paths the disk cache currently claims as its own materialised copy. */
   const mirrored = new Set<string>();
+  /**
+   * Paths the remote already has. Only the startup scan consults this, and it
+   * is what tells a pre-existing file's provenance apart: absent there means
+   * an out-of-band write nothing was watching for.
+   *
+   * Empty by default, which is what every test here already means by its
+   * starting `files` — the user's own content, to be pushed. A test about a
+   * file the remote also has adds it explicitly.
+   */
+  const remote = new Set<string>();
 
   const w = new LocalWriteWatcher({
     watch: (cb) => { onChange = cb; return { close: () => { closed = true; } }; },
@@ -37,6 +47,7 @@ function harness(files: Record<string, string> = {}, maxBytes = 1024 * 1024) {
     removeRemote,
     ignore: makeLocalWriteIgnore('.obsidian', ['.git', 'node_modules']),
     isMirroredCopy: (rel) => mirrored.has(rel),
+    remoteExists: (rel) => Promise.resolve(remote.has(rel)),
     maxBytes,
     debounceMs: 400,
     setTimer: (cb) => { pending = cb; return 1; },
@@ -45,7 +56,7 @@ function harness(files: Record<string, string> = {}, maxBytes = 1024 * 1024) {
   });
 
   return {
-    w, push, removeRemote, onError, mirrored,
+    w, push, removeRemote, onError, mirrored, remote,
     trigger: (rel: string | null) => onChange?.(rel),
     /** Fire the pending debounce and let the async flush settle. */
     tick: async () => {
@@ -67,6 +78,46 @@ function harness(files: Record<string, string> = {}, maxBytes = 1024 * 1024) {
 }
 
 describe('LocalWriteWatcher', () => {
+  // `watch` reports CHANGES, so a file already on disk when we arm never
+  // produces an event and was invisible to the write-back for the whole
+  // session. The case that matters most is exactly that: a plugin writing
+  // under `basePath` in its own `onload()`, which runs while the connect is
+  // still in flight. `e2e/fs-visibility` pins it end-to-end; these two pin
+  // the decision the scan has to make.
+  it('pushes a file that was already on disk and is NOT on the remote (#429)', async () => {
+    // The remote does not have it, so nothing we materialised can be its
+    // source: it is the user's, written while nothing was watching.
+    const h = harness({ 'claudian.md': 'written in onload' });
+
+    h.w.start();
+    await h.tick();
+    expect(
+      h.push,
+      'pushed on the first sample — the stability rule does not apply to the startup scan',
+    ).not.toHaveBeenCalled();
+
+    await h.tick();
+    expect(h.push).toHaveBeenCalledTimes(1);
+    expect(h.push.mock.calls[0][0]).toBe('claudian.md');
+    expect(h.push.mock.calls[0][1].toString()).toBe('written in onload');
+  });
+
+  it('leaves a file that was already on disk AND on the remote alone', async () => {
+    // After a relaunch the materialisation ledger is empty, so
+    // `isMirroredCopy` cannot tell a stale mirror from the user's own file.
+    // Pushing on that guess would overwrite a remote that may have moved on.
+    const h = harness({ 'remote_demo1.md': 'the remote wrote this' });
+    h.remote.add('remote_demo1.md');
+
+    h.w.start();
+    await h.tick();
+    await h.tick();
+    expect(
+      h.push,
+      'pushed a file of unknown provenance back over the remote copy it may be a stale mirror of',
+    ).not.toHaveBeenCalled();
+  });
+
   it('pushes a file a plugin wrote under the vault root (#429)', async () => {
     const h = harness();
     h.w.start();
