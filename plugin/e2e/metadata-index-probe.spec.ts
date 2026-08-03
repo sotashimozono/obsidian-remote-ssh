@@ -93,6 +93,33 @@ test.afterAll(async () => {
  * section 2 is comparing two runs, and a comparison is only worth anything if
  * both sides were measured identically.
  */
+/**
+ * Wait for Obsidian to finish indexing, then for its cache to be written.
+ *
+ * The first version waited a flat 15 s and then killed Obsidian, which cannot
+ * tell "the cache was not reused" from "the cache was never saved" —
+ * `saveMetaCache` / `saveFileCache` are async. Run 30799129744 reported
+ * `secondOverFirst: 1` and that reading was not supported by the measurement.
+ *
+ * `isCacheClean()` is Obsidian's own "indexing is done" predicate; the grace
+ * period after it is for the save.
+ */
+async function settle(page: ObsidianHandle['page'], graceMs = 20_000): Promise<boolean> {
+  const clean = await page
+    .waitForFunction(
+      () => {
+        const mc = (globalThis as unknown as { app?: { metadataCache?: any } }).app?.metadataCache;
+        return typeof mc?.isCacheClean === 'function' ? Boolean(mc.isCacheClean()) : false;
+      },
+      undefined,
+      { timeout: 60_000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  await page.waitForTimeout(graceMs);
+  return clean;
+}
+
 async function measure(page: ObsidianHandle['page']): Promise<Record<string, unknown>> {
   return page.evaluate(async () => {
       const out: Record<string, unknown> = {};
@@ -107,22 +134,45 @@ async function measure(page: ObsidianHandle['page']): Promise<Record<string, unk
       // over the total size of the markdown in the model. Sizes come from the
       // tree walk, so the denominator costs no transfer. Near 1 means
       // Obsidian reads the whole vault, and THAT extrapolates to GB.
-      const stats = app.plugins?.plugins?.['remote-ssh']?.adapterMgr?.readCache?.stats?.();
+      const rc = app.plugins?.plugins?.['remote-ssh']?.adapterMgr?.readCache;
+      const stats = rc?.stats?.();
       const files: unknown[] = Object.values(app.vault?.fileMap ?? {});
       const md = files.filter((f: any) => f?.extension === 'md');
       const totalMdBytes = md.reduce((n: number, f: any) => n + (f?.stat?.size ?? 0), 0);
-      const pulled = typeof stats?.bytes === 'number' ? stats.bytes : null;
+
+      // Split the traffic. The previous run reported `pulledOverTotal: 6.468`
+      // — 6009 bytes pulled against 929 bytes of markdown — which looked like
+      // a catastrophe and was mostly `.obsidian` config and plugin code. That
+      // part is a fixed cost per session; it does NOT grow with the vault.
+      // Only the note traffic is the thing that scales, so only it belongs in
+      // the ratio. Classified, never listed: these are vault paths.
+      let noteBytes = 0;
+      let noteEntries = 0;
+      let configBytes = 0;
+      let configEntries = 0;
+      const map: Map<string, { data?: { byteLength?: number; length?: number } }> | undefined =
+        rc?.map;
+      if (map && typeof map.forEach === 'function') {
+        map.forEach((v, k) => {
+          const n = v?.data?.byteLength ?? v?.data?.length ?? 0;
+          if (/(^|\/)\.obsidian(\/|$)/.test(k)) { configBytes += n; configEntries += 1; }
+          else { noteBytes += n; noteEntries += 1; }
+        });
+      }
+
       out.cost = {
         readCache: stats ?? 'unreachable',
         filesInModel: files.length,
         markdownInModel: md.length,
         totalMdBytes,
-        // The number the decision turns on.
-        pulledOverTotal: pulled !== null && totalMdBytes > 0
-          ? Number((pulled / totalMdBytes).toFixed(3))
+        traffic: { noteEntries, noteBytes, configEntries, configBytes },
+        // THE scaling number: note bytes pulled over note bytes that exist.
+        noteBytesOverTotal: totalMdBytes > 0
+          ? Number((noteBytes / totalMdBytes).toFixed(3))
           : null,
         // Non-null metadata means Obsidian parsed the file, which means it
-        // read it. The fraction is how much of the vault it insisted on.
+        // read it. This fraction is the scaling law in its cleanest form and
+        // does not depend on any byte accounting.
         withParsedMetadata: md.filter(
           (f: any) => app.metadataCache?.getFileCache?.(f) != null,
         ).length,
@@ -161,15 +211,58 @@ async function measure(page: ObsidianHandle['page']): Promise<Record<string, unk
         hasGetBacklinksForFile: typeof mc?.getBacklinksForFile === 'function',
       };
 
-      // ── 4. Does Obsidian PERSIST metadata (so a seeded entry skips a read)?
+      // ── 5. Does Obsidian PERSIST metadata (so a seeded entry skips a read)?
+      //
+      // Counting RECORDS, not just database names. The previous version saw
+      // both runs pull the same bytes and called it "re-read on every start",
+      // which the measurement could not support: an empty cache means the save
+      // never happened, a full one that is re-read anyway means reuse is
+      // refused, and those need completely different fixes. `metadataCache.db`
+      // names the database for THIS vault, so there is no hash to guess.
       const dbs = (indexedDB as unknown as { databases?: () => Promise<{ name?: string }[]> })
         .databases;
+      const dbName: string | null = mc?.db?.name ?? null;
+      let records: unknown = 'not counted';
+      if (dbName) {
+        records = await new Promise((resolve) => {
+          let done = false;
+          const finish = (v: unknown): void => { if (!done) { done = true; resolve(v); } };
+          setTimeout(() => finish('timed out'), 10_000);
+          const req = indexedDB.open(dbName);
+          req.onerror = () => finish(`open failed: ${String(req.error)}`);
+          req.onsuccess = () => {
+            const db = req.result;
+            const names = Array.from(db.objectStoreNames);
+            if (names.length === 0) { db.close(); finish({}); return; }
+            const counts: Record<string, number | string> = {};
+            let left = names.length;
+            const tx = db.transaction(names, 'readonly');
+            for (const n of names) {
+              const cr = tx.objectStore(n).count();
+              cr.onsuccess = () => {
+                counts[n] = cr.result;
+                if (--left === 0) { db.close(); finish(counts); }
+              };
+              cr.onerror = () => {
+                counts[n] = `count failed: ${String(cr.error)}`;
+                if (--left === 0) { db.close(); finish(counts); }
+              };
+            }
+          };
+        });
+      }
       out.persistence = {
-        indexedDbNames: typeof dbs === 'function'
+        vaultDbName: dbName,
+        // The decisive number: how many entries this vault's cache holds.
+        recordsPerStore: records,
+        // In-memory stores, for comparison with what made it to disk.
+        inMemory: {
+          fileCacheKeys: mc?.fileCache ? Object.keys(mc.fileCache).length : null,
+          metadataCacheKeys: mc?.metadataCache ? Object.keys(mc.metadataCache).length : null,
+        },
+        allIndexedDbNames: typeof dbs === 'function'
           ? (await dbs.call(indexedDB)).map((x) => x.name ?? '?')
           : 'databases() unavailable',
-        // A store keyed by (path, mtime, size) is the shape that lets a
-        // pre-seeded entry stand in for reading the file.
         cacheLikeKeys: mc ? Object.keys(mc).filter((k) => /cache|db|store|index/i.test(k)) : null,
       };
 
@@ -181,9 +274,9 @@ test.describe('capability probe: can the metadata index come from the remote? (#
   test('PROBE — report what decides server-side indexing', async () => {
     test.setTimeout(300_000);
 
-    // Let Obsidian's own indexing settle, so the numbers are the finished cost
-    // rather than a snapshot taken mid-walk.
-    await obsidian.page.waitForTimeout(15_000);
+    // Indexing done AND its cache written — not a flat 15 s, which is what
+    // made the previous verdict unsupportable.
+    const firstClean = await settle(obsidian.page);
     const firstRun = await measure(obsidian.page);
 
     // ── THE decisive experiment ──────────────────────────────────────────
@@ -195,29 +288,53 @@ test.describe('capability probe: can the metadata index come from the remote? (#
     await obsidian.cleanup();
     obsidian = await launchObsidian(shadowVaultPath);
     await waitForShadowVaultLoaded(obsidian.page, logPathFor(shadowVaultPath), 30_000);
-    await obsidian.page.waitForTimeout(15_000);
+    const secondClean = await settle(obsidian.page);
     const secondRun = await measure(obsidian.page);
 
-    const bytesOf = (r: Record<string, unknown>): number | null => {
-      const c = r.cost as { readCache?: { bytes?: number } } | undefined;
-      return typeof c?.readCache?.bytes === 'number' ? c.readCache.bytes : null;
+    // Note bytes, not total: config and plugin traffic is a fixed per-session
+    // cost and does not grow with the vault, so including it would make a
+    // reused cache look like a re-read one.
+    const notesOf = (r: Record<string, unknown>): number | null => {
+      const c = r.cost as { traffic?: { noteBytes?: number } } | undefined;
+      return typeof c?.traffic?.noteBytes === 'number' ? c.traffic.noteBytes : null;
     };
-    const b1 = bytesOf(firstRun);
-    const b2 = bytesOf(secondRun);
+    const recordsOf = (r: Record<string, unknown>): unknown =>
+      (r.persistence as { recordsPerStore?: unknown } | undefined)?.recordsPerStore ?? null;
+    const totalRecords = (v: unknown): number | null =>
+      v && typeof v === 'object' && !Array.isArray(v)
+        ? Object.values(v as Record<string, unknown>)
+          .filter((n): n is number => typeof n === 'number')
+          .reduce((a, b) => a + b, 0)
+        : null;
+
+    const n1 = notesOf(firstRun);
+    const n2 = notesOf(secondRun);
+    const rec2 = totalRecords(recordsOf(secondRun));
+    const reused = n1 !== null && n2 !== null && n1 > 0 && n2 / n1 < 0.2;
+
     const report = {
       firstRun,
       secondRun,
       verdict: {
-        firstRunBytes: b1,
-        secondRunBytes: b2,
-        secondOverFirst: b1 !== null && b2 !== null && b1 > 0
-          ? Number((b2 / b1).toFixed(3))
+        indexingSettled: { firstRun: firstClean, secondRun: secondClean },
+        firstRunNoteBytes: n1,
+        secondRunNoteBytes: n2,
+        secondOverFirst: n1 !== null && n2 !== null && n1 > 0
+          ? Number((n2 / n1).toFixed(3))
           : null,
-        reading: b1 === null || b2 === null
+        cachedRecordsOnSecondRun: rec2,
+        // Three outcomes, not two. "Re-read every start" and "never saved in
+        // the first place" look identical in a byte count and need entirely
+        // different fixes, which is why the record count is here.
+        reading: n1 === null || n2 === null
           ? 'could not measure both runs'
-          : b1 > 0 && b2 / b1 < 0.2
-            ? 'metadata SURVIVES a restart — seeding a server-computed index is reachable'
-            : 'the vault is re-read on every start — at GB scale this is the blocker',
+          : reused
+            ? 'metadata SURVIVES a restart — a server-computed index can be seeded into it'
+            : rec2 === 0 || rec2 === null
+              ? 'nothing was persisted — cannot yet tell refused-reuse from never-saved; ' +
+                'see indexingSettled before reading anything into this'
+              : 'persisted but re-read anyway — reuse is refused, so seeding alone will ' +
+                'not help and the index must be injected at runtime',
       },
     };
 
