@@ -945,37 +945,62 @@ export async function dismissBlockingModals(
  * a CDP key event is delivered to the target page without needing OS focus.
  */
 async function closeSettingsEverywhere(page: Page): Promise<number> {
-  let closed = 0;
-  for (const p of contextPages(page)) {
-    const wasOpen = await p
-      .evaluate((sel) => {
-        const open = Boolean(document.querySelector(sel));
-        const setting = (window as unknown as {
-          app?: { setting?: { close?: () => void } };
-        }).app?.setting;
-        setting?.close?.();
-        return open;
-      }, SETTINGS_ROOT)
-      .catch(() => false);
-    if (!wasOpen) continue;
+  if (await findPageWith(page, SETTINGS_ROOT, 0) === null) return 0;
+  const gone = await closeSettings(page);
+  console.warn(
+    `[e2e] dismissBlockingModals: Obsidian's Settings dialog was open (auto-opened by the ` +
+    `trust-dismiss path); ${gone ? 'closed it' : 'FAILED to close it'}. Left up, it owns ` +
+    'every later modal — that is how ConnectModal ended up in a window no locator was ' +
+    'looking at.',
+  );
+  return gone ? 1 : 0;
+}
 
-    // Still there? It is the standalone Settings window with no `app` to ask.
-    if (await isVisibleWithin(p.locator(SETTINGS_ROOT).first(), 1_000)) {
-      await p.keyboard.press('Escape').catch(() => { /* best effort */ });
-      await p
-        .locator(SETTINGS_ROOT)
-        .first()
-        .waitFor({ state: 'hidden', timeout: 3_000 })
-        .catch(() => { /* reported by the inventory if it matters */ });
-    }
-    console.warn(
-      '[e2e] dismissBlockingModals: closed Obsidian\'s Settings dialog (auto-opened by ' +
-      'the trust-dismiss path). Left up, it owns every later modal — that is how ' +
-      'ConnectModal ended up in a window no locator was looking at.',
-    );
-    closed++;
+/**
+ * Close Obsidian's Settings, wherever and whatever shape it is in, and report
+ * whether it actually went away.
+ *
+ * Three means, because one is not enough. Escape alone is what smoke 2 used,
+ * and run 30778480180 shows it does not work on the standalone window: the tab
+ * stayed `visible` for the full 5 s, resolving 14 times to
+ * `<div data-setting-id="remote-ssh" class="vertical-tab-nav-item tappable">`.
+ * `app.setting.close()` is the product's own path but needs an `app`, and that
+ * window's inventory line reads `vault:null`. So if the dialog is still up and
+ * it is a window of its own, the window is closed — it is a stray Obsidian
+ * surface the harness opened by clicking "Trust author and enable plugins",
+ * not a product assertion, and leaving it up has already cost this suite days.
+ *
+ * The driven page is never closed, whatever it is showing.
+ *
+ * Returns the truth. An earlier revision logged "closed" after merely trying,
+ * which is how a Settings window nobody could close read as one that had been.
+ */
+export async function closeSettings(page: Page, timeoutMs = 8_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+
+  for (const p of contextPages(page)) {
+    await p
+      .evaluate(() => {
+        (window as unknown as {
+          app?: { setting?: { close?: () => void } };
+        }).app?.setting?.close?.();
+      })
+      .catch(() => { /* a window without `app` cannot be asked */ });
   }
-  return closed;
+
+  for (;;) {
+    const openOn = await findPageWith(page, SETTINGS_ROOT, 0);
+    if (openOn === null) return true;
+    if (Date.now() >= deadline) return false;
+
+    await openOn.keyboard.press('Escape').catch(() => { /* best effort */ });
+    if (await findPageWith(page, SETTINGS_ROOT, 1_000) === null) return true;
+
+    if (openOn !== page && !openOn.isClosed()) {
+      await openOn.close().catch(() => { /* best effort */ });
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
 }
 
 /** The original per-window Escape sweep. */

@@ -52,6 +52,14 @@ let remote: RemoteVerifier;
 let shadowVaultPath: string;
 
 test.beforeAll(async () => {
+  // Two Obsidian launches, a real SSH connect and a full shadow-vault load.
+  // The default 120 s budget never covered that; it only looked like it did
+  // because the hook used to fail in ~1 ms, before connect worked at all. Now
+  // that it runs, run 30778480180 reports "Test timeout of 120000ms exceeded /
+  // Fixture 'trace recording' timeout … during setup". Same budget
+  // `images.spec.ts` gives the same shape of work, for the same reason.
+  test.setTimeout(300_000);
+
   await assertSshdReachable();
   remote = new RemoteVerifier();
   if (!(await remote.connect())) throw new Error('RemoteVerifier could not connect to the test sshd');
