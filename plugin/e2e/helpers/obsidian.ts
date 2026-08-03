@@ -436,26 +436,62 @@ export async function driveConnectFlow(page: Page): Promise<void> {
   }
 
   // Click Connect, in whichever window ConnectModal rendered in.
-  //
-  // The modal is one pane or two depending on the profile count
-  // (`ConnectModal.onOpen`): a single profile renders the auth pane straight
-  // away, several render a picker first whose per-row Connect opens that
-  // profile's pane. Either way `.remote-ssh-connect-button` is the button that
-  // fires the handshake, so prefer it and fall back to any Connect-labelled
-  // button for the picker row. A pane with nothing left to click is not an
-  // error — that is the shape of a profile needing no confirmation.
-  const clickPage = flowPage;
-  if (clickPage !== null) {
-    for (let stage = 0; stage < 2; stage++) {
-      const paneBtn = clickPage.locator('.modal .remote-ssh-connect-button').first();
-      const btn = (await isVisibleWithin(paneBtn, stage === 0 ? 5_000 : 2_000))
-        ? paneBtn
-        : clickPage.locator('.modal button:has-text("Connect")').first();
-      if (!(await isVisibleWithin(btn, 2_000))) break;
-      await btn.click().catch(() => { /* the pane may have closed under us */ });
-      await clickPage.waitForTimeout(400);   // let the next pane render
-    }
+  if (flowPage !== null) {
+    await clickConnect(flowPage);
   }
+}
+
+/**
+ * Click ConnectModal through to the handshake — once per pane, never twice.
+ *
+ * The two-stage loop this replaces spent whole test budgets clicking a button
+ * that could not be clicked. `ConnectModal.renderConnectButton`'s handler sets
+ * `btn.disabled = true` and relabels it "Connecting…" the moment the handshake
+ * starts; the second pass re-found that same `.remote-ssh-connect-button`, saw
+ * it was still visible, and called `click()` on it. Playwright's actionability
+ * check then waits for the button to become enabled — and it never does, so
+ * with no explicit timeout the call ate the rest of the test. That is the
+ * 120 s in smoke 4 and the 240 s in connect-lifecycle on run 30775609866,
+ * both reported at the `waitForTimeout(400)` immediately after the click.
+ *
+ * The pane count is a property of the profile list, not something to probe
+ * twice (`ConnectModal.onOpen`): one profile renders the auth pane directly,
+ * several render a picker whose per-row Connect opens that profile's pane.
+ * `.remote-ssh-connect-button` is the button that fires the handshake in both.
+ * A modal with nothing clickable is not an error — that is the shape of a
+ * profile needing no confirmation.
+ */
+async function clickConnect(page: Page): Promise<void> {
+  const paneBtn = page.locator('.modal .remote-ssh-connect-button').first();
+
+  if (!(await isVisibleWithin(paneBtn, 5_000))) {
+    // Multi-profile: choose a row first, which renders that profile's pane.
+    const rowBtn = page.locator('.modal button:has-text("Connect")').first();
+    if (!(await isVisibleWithin(rowBtn, 2_000))) return;
+    if (!(await clickIfEnabled(rowBtn))) return;
+    if (!(await isVisibleWithin(paneBtn, 5_000))) return;
+  }
+
+  await clickIfEnabled(paneBtn);
+}
+
+/**
+ * Click, but never block on a button that cannot be clicked.
+ *
+ * Both halves matter. A disabled button is checked for up front, because
+ * Playwright would otherwise wait for it to become enabled; and `click` gets
+ * an explicit timeout, because the default is the whole remaining test budget
+ * and a click that cannot land should cost seconds, not the run.
+ */
+async function clickIfEnabled(
+  locator: ReturnType<Page['locator']>,
+  timeoutMs = 5_000,
+): Promise<boolean> {
+  if (await locator.isDisabled().catch(() => true)) return false;
+  return locator
+    .click({ timeout: timeoutMs })
+    .then(() => true)
+    .catch(() => false); // the pane may have closed under us
 }
 
 /**
