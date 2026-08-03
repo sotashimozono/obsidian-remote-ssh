@@ -72,6 +72,12 @@ export default defineConfig({
         '**/links-metadata.spec.ts',
         '**/vault-features.spec.ts',
         '**/images.spec.ts',
+        // Measures what that knowledge layer COSTS: Obsidian fills
+        // `metadataCache` by reading every note through our adapter, so the
+        // whole vault's bytes cross the wire for indexing alone. Grouped here
+        // because it is a question about this layer — and because `core`
+        // already carries the other probe.
+        '**/metadata-index-probe.spec.ts',
       ],
     },
     {
