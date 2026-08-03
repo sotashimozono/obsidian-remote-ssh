@@ -80,6 +80,11 @@ test.afterAll(async () => {
 
 test.describe('capability probe: can Node fs be routed to the remote daemon? (#429)', () => {
   test('PROBE — report the renderer capabilities that decide the design', async () => {
+    // The 300 s in `beforeAll` bounds the HOOK; the body still had the default
+    // 120 s. Sections 5 and 6 spawn five subprocesses and make five remote
+    // reads, which on a cold container is not a 120 s job with much room.
+    test.setTimeout(240_000);
+
     const report = await obsidian.page.evaluate(async () => {
       const out: Record<string, unknown> = {};
       const req = (window as unknown as { require?: (m: string) => unknown }).require;
@@ -197,24 +202,44 @@ test.describe('capability probe: can Node fs be routed to the remote daemon? (#4
         app?: { vault?: { adapter?: { getResourcePath?: (p: string) => string } } };
       }).app?.vault?.adapter?.getResourcePath?.('remote_demo1.md') ?? null;
       out.bridgeUrlScheme = bridgeUrl === null ? null : bridgeUrl.slice(0, bridgeUrl.indexOf(':'));
-      if (bridgeUrl && bridgeUrl.startsWith('http')) {
-        try {
-          const t0 = performance.now();
-          const xhr = new XMLHttpRequest();
-          xhr.open('GET', bridgeUrl, false);          // false = synchronous
-          xhr.overrideMimeType('text/plain; charset=x-user-defined');
-          xhr.send();
-          out.syncXhr = {
-            allowed: true,
-            status: xhr.status,
-            bytes: xhr.responseText.length,
-            ms: Math.round(performance.now() - t0),
-          };
-        } catch (e) {
-          out.syncXhr = { allowed: false, error: String(e) };
-        }
-      } else {
-        out.syncXhr = { allowed: false, error: `no http bridge URL (got ${String(bridgeUrl)})` };
+
+      // The request against the BRIDGE is not made, and must not be.
+      //
+      // This probe used to send it, to collect "the numbers any future 'just
+      // do it synchronously' idea has to answer for". Those numbers can never
+      // arrive. The bridge's HTTP server runs on THIS event loop, so blocking
+      // here blocks the thread that would accept the connection — the reply is
+      // not slow, it is unreachable. `xhr.timeout` cannot bound it either:
+      // setting it on a synchronous XHR throws. So the probe wedged the
+      // renderer, the test hit its budget, and CI reported a bare timeout with
+      // no report attached. That is the whole of this spec's red.
+      //
+      // The structural argument is stronger than the measurement would have
+      // been, and it is already what the product relies on: `materializeSync`
+      // serves only bytes that are already in the read cache.
+      out.syncXhrAgainstBridge = {
+        attempted: false,
+        why: 'self-deadlock by construction: the ResourceBridge serves HTTP on the renderer '
+          + 'event loop, so a blocking request made from it can never be accepted',
+      };
+
+      // What IS worth measuring is the capability itself — does this Chromium
+      // still permit a main-thread synchronous XHR at all? A `data:` URL is
+      // answered without this event loop, so it tests permission without
+      // risking the hang.
+      try {
+        const t0 = performance.now();
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', 'data:text/plain,probe', false);   // false = synchronous
+        xhr.send();
+        out.syncXhrPermitted = {
+          allowed: true,
+          status: xhr.status,
+          bytes: xhr.responseText.length,
+          ms: Math.round(performance.now() - t0),
+        };
+      } catch (e) {
+        out.syncXhrPermitted = { allowed: false, error: String(e) };
       }
 
       return out;
@@ -239,17 +264,20 @@ test.describe('capability probe: can Node fs be routed to the remote daemon? (#4
       'patching the fs module object must be observable through a fresh require()',
     ).toBe(true);
     expect(report.hasChildProcess, 'child_process is the fallback sync bridge').toBe(true);
-    // `syncXhr` is measured but deliberately NOT asserted, and the reason is
-    // the finding this probe exists to record: a synchronous XHR to the
-    // ResourceBridge CANNOT work, because the bridge's HTTP server runs on
-    // this very event loop. Blocking the renderer to wait for it blocks the
-    // thread that would accept the connection — a self-deadlock that stalls
-    // until the request times out. A revision of `getFullPath` shipped
-    // exactly that and hung connect for minutes. Synchronous materialisation
-    // is now limited to bytes already in the read cache; on-demand fetching
-    // lives on the async path.
+    // A synchronous XHR to the ResourceBridge CANNOT work: the bridge's HTTP
+    // server runs on this very event loop, so blocking the renderer to wait
+    // for it blocks the thread that would accept the connection. A revision of
+    // `getFullPath` shipped exactly that and hung connect for minutes.
+    // Synchronous materialisation is now limited to bytes already in the read
+    // cache; on-demand fetching lives on the async path.
     //
-    // The measurement stays because the numbers are the evidence any future
-    // "just do it synchronously" idea has to answer for.
+    // This spec used to SEND that request, "because the numbers are the
+    // evidence any future 'just do it synchronously' idea has to answer for".
+    // The numbers were never going to arrive — an unreachable reply is not a
+    // slow one — so it wedged the renderer every run and CI got a bare
+    // timeout instead of a report. `syncXhrAgainstBridge` now records the
+    // structural reason, which is the stronger argument anyway, and
+    // `syncXhrPermitted` measures the capability against a `data:` URL that
+    // does not need this event loop to answer.
   });
 });
