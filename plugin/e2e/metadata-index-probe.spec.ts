@@ -8,6 +8,8 @@ import {
 import { scaffoldTestVault, type ScaffoldResult } from './helpers/vault-scaffold';
 import { assertSshdReachable } from './helpers/sshd';
 import { logPathFor } from './helpers/log-oracle';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 /**
  * CAPABILITY PROBE — can the link/tag index be served from the remote, instead
@@ -396,5 +398,118 @@ test.describe('capability probe: can the metadata index come from the remote? (#
       'no markdown in the vault model — the probe ran against an empty vault, so every ' +
       'number above is meaningless rather than reassuring',
     ).toBeGreaterThan(0);
+  });
+
+  /**
+   * Can we keep the TREE and refuse the CONTENT?
+   *
+   * That is the whole question, because the two are not equally expensive and
+   * they buy different things. `BackgroundIndexer.ts:55` records the half that
+   * is free: `metadataCache` resolves links against `fileMap` alone, so links,
+   * Quick Switcher and graph NODES need names and nothing else. Backlinks,
+   * search, tags/frontmatter and Dataview are the half that needs bytes.
+   *
+   * Registering a file is currently what triggers Obsidian to read it, so
+   * today those come as a package. Obsidian's own "Excluded files" setting is
+   * the one documented, user-facing lever that might separate them —
+   * `userIgnoreFilters` on disk, `isUserIgnored` / `updateUserIgnoreFilters`
+   * on the running `metadataCache`, both of which the shape probe above found.
+   *
+   * Unlike injecting `fileCache` / `metadataCache`, this is published
+   * behaviour, so a design resting on it is not a bet on internals.
+   *
+   * Set the filter, relaunch, and measure. Two things matter and they are
+   * separate: whether the content reads stop, and whether the files SURVIVE
+   * in the model — an exclusion that empties `fileMap` would take links and
+   * Quick Switcher with it and be no use at all.
+   */
+  test('PROBE — does excluding files stop Obsidian reading them?', async () => {
+    test.setTimeout(300_000);
+
+    const baseline = await measure(obsidian.page);
+
+    // Obsidian stores this in the vault's own `app.json`. `/…/` is its regex
+    // form; this one matches every markdown file. The plugin's
+    // `pullSharedObsidianConfig` logged `skipped [app.json, …]` for this
+    // fixture, so it will not overwrite what we write here — recorded because
+    // if that ever changes, this probe goes quietly meaningless.
+    const appJsonPath = path.join(shadowVaultPath, '.obsidian', 'app.json');
+    let existing: Record<string, unknown> = {};
+    try {
+      existing = JSON.parse(fs.readFileSync(appJsonPath, 'utf8')) as Record<string, unknown>;
+    } catch { /* absent or unparseable — start from empty */ }
+    fs.mkdirSync(path.dirname(appJsonPath), { recursive: true });
+    fs.writeFileSync(
+      appJsonPath,
+      JSON.stringify({ ...existing, userIgnoreFilters: ['/\\.md$/'] }, null, 2),
+      'utf8',
+    );
+
+    await obsidian.cleanup();
+    obsidian = await launchObsidian(shadowVaultPath);
+
+    // NOT `waitForShadowVaultLoaded`: it requires `getMarkdownFiles() >= 1`,
+    // and "the exclusion emptied the model" is one of the answers being
+    // measured, not a reason to abort before reporting it.
+    const modelHasFiles = await obsidian.page
+      .waitForFunction(
+        () => {
+          const v = (globalThis as unknown as { app?: { vault?: any } }).app?.vault;
+          return Object.keys(v?.fileMap ?? {}).length > 1;
+        },
+        undefined,
+        { timeout: 60_000 },
+      )
+      .then(() => true)
+      .catch(() => false);
+    await settle(obsidian.page);
+    const excluded = await measure(obsidian.page);
+
+    const notes = (r: Record<string, unknown>): number | null => {
+      const c = r.cost as { traffic?: { noteBytes?: number } } | undefined;
+      return typeof c?.traffic?.noteBytes === 'number' ? c.traffic.noteBytes : null;
+    };
+    const inModel = (r: Record<string, unknown>): number | null =>
+      (r.cost as { markdownInModel?: number } | undefined)?.markdownInModel ?? null;
+    const parsed = (r: Record<string, unknown>): number | null =>
+      (r.cost as { withParsedMetadata?: number } | undefined)?.withParsedMetadata ?? null;
+
+    const b = notes(baseline);
+    const e = notes(excluded);
+    const stoppedReading = b !== null && e !== null && b > 0 && e / b < 0.2;
+    const keptTheTree = (inModel(excluded) ?? 0) > 0;
+
+    const report = {
+      baseline: baseline.cost,
+      excluded: excluded.cost,
+      verdict: {
+        modelHasFiles,
+        baselineNoteBytes: b,
+        excludedNoteBytes: e,
+        markdownInModel: { baseline: inModel(baseline), excluded: inModel(excluded) },
+        withParsedMetadata: { baseline: parsed(baseline), excluded: parsed(excluded) },
+        stoppedReading,
+        keptTheTree,
+        reading: b === null || e === null
+          ? 'could not measure both runs'
+          : stoppedReading && keptTheTree
+            ? 'EXCLUSION SEPARATES THEM — the tree survives and the content is not read. '
+              + 'Links, Quick Switcher and graph nodes can be kept at zero transfer.'
+            : stoppedReading
+              ? 'reads stopped, but the files left the model too — links and Quick Switcher '
+                + 'would go with them, so this lever costs what it saves'
+              : 'exclusion did not stop the reads — the tree and the content are one '
+                + 'package, and lazy registration is the only dial left',
+      },
+    };
+
+    // eslint-disable-next-line no-console
+    console.log(`[e2e] exclusion probe:\n${JSON.stringify(report, null, 2)}`);
+    await test.info().attach('exclusion-probe.json', {
+      body: JSON.stringify(report, null, 2),
+      contentType: 'application/json',
+    });
+
+    expect(b, 'no baseline note traffic to compare against').not.toBeNull();
   });
 });
