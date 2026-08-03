@@ -27,14 +27,6 @@ export default defineConfig({
   // workflow sets E2E_DEMO=1 to opt it back in.
   testIgnore: process.env.E2E_DEMO ? [] : ['**/demo.spec.ts'],
   timeout: 120_000,
-  // Playwright's DEFAULT actionTimeout is 0 — wait FOREVER. With Obsidian's
-  // virtualised File Explorer under Xvfb a node can be *attached but never
-  // actionable* (hover popovers swallow pointer events, rows paint lazily), so
-  // a bare `.click()` blocked until the whole test timed out: three minutes
-  // burned with NO message, which reads as "the product hung" when in fact the
-  // harness was waiting. Bound it — an unactionable element now fails with
-  // Playwright's own locator diagnostic, well inside the 120 s test budget.
-  actionTimeout: 30_000,
   retries: 1,
   // Obsidian is a single-instance app, so a machine can only ever drive ONE
   // window: `workers: 1` is not tunable. But that constraint is PER MACHINE —
@@ -101,6 +93,20 @@ export default defineConfig({
       : []),
   ],
   use: {
+    // Playwright's DEFAULT actionTimeout is 0 — wait FOREVER. With Obsidian's
+    // virtualised File Explorer under Xvfb a node can be *attached but never
+    // actionable* (hover popovers swallow pointer events, rows paint lazily), so
+    // a bare `.click()` blocks until the whole test times out: minutes burned
+    // with NO message, which reads as "the product hung" when in fact the
+    // harness was waiting. Bound it — an unactionable element fails with
+    // Playwright's own locator diagnostic, well inside the 120 s test budget.
+    //
+    // This lived at the config's TOP LEVEL, where `actionTimeout` is not an
+    // option at all, so the bound it describes had never once applied — `tsc`
+    // says so directly ("'actionTimeout' does not exist in type 'Config<…>'").
+    // Every unbounded click in the suite could still eat a whole budget, and
+    // several did on run 30775609866.
+    actionTimeout: 30_000,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
