@@ -136,17 +136,28 @@ export async function findPageWith(
  * best-effort: a diagnostic that throws would replace the real error.
  */
 export async function describePages(page: Page): Promise<string> {
-  const pages = contextPages(page);
+  return describePageList(contextPages(page), page);
+}
+
+async function describePageList(pages: Page[], driven?: Page): Promise<string> {
   const lines: string[] = [];
   for (let i = 0; i < pages.length; i++) {
     const p = pages[i];
     const info = await p
       .evaluate(() => {
         const w = window as unknown as {
-          app?: { vault?: { getName?: () => string } };
+          app?: {
+            vault?: {
+              getName?: () => string;
+              adapter?: { basePath?: string };
+            };
+            workspace?: unknown;
+          };
         };
         return {
           vault: w.app?.vault?.getName?.() ?? null,
+          basePath: w.app?.vault?.adapter?.basePath ?? null,
+          hasWorkspace: Boolean(w.app?.workspace),
           title: document.title,
           size: `${window.innerWidth}x${window.innerHeight}`,
           modals: document.querySelectorAll('.modal-container').length,
@@ -159,7 +170,7 @@ export async function describePages(page: Page): Promise<string> {
       .catch((e: unknown) => ({
         error: e instanceof Error ? e.message : String(e),
       }));
-    lines.push(`#${i}${p === page ? ' (driven)' : ''} ${JSON.stringify(info)}`);
+    lines.push(`#${i}${p === driven ? ' (driven)' : ''} ${JSON.stringify(info)}`);
   }
   return lines.join(' ;; ');
 }
@@ -182,7 +193,7 @@ export async function launchObsidian(
 
   // Kill any existing Obsidian process so we get a clean instance
   // pointing at the scaffold vault instead of the user's last vault.
-  await killExistingObsidian();
+  await killExistingObsidian(obsidianBin);
 
   // Register the scaffold vault in Obsidian's app config and mark
   // it as the only open vault so Obsidian opens it on launch.
@@ -201,13 +212,8 @@ export async function launchObsidian(
   await waitForCDP(cdpUrl, 30_000);
 
   const browser = await connectOverCDPWithRetry(cdpUrl);
-  const contexts = browser.contexts();
-  const page = contexts[0]?.pages()[0]
-    ?? await contexts[0]?.newPage()
-    ?? (() => { throw new Error('No Obsidian window found'); })();
-
+  const page = await selectVaultPage(browser, vaultPath, 60_000);
   await page.waitForLoadState('domcontentloaded');
-  await waitForObsidianReady(page, 30_000);
 
   // Obsidian opens new vaults in Restricted Mode — community plugins
   // listed in `community-plugins.json` are NOT loaded until the user
@@ -576,24 +582,121 @@ export async function connectAndOpenShadow(
 }
 
 /**
- * Kill any running Obsidian process. Obsidian is single-instance —
- * if one is already running, our spawn just signals the existing
- * process and exits, so we'd connect to the user's real vault
- * instead of the scaffold vault.
+ * Kill any running Obsidian process. Obsidian is single-instance — if one is
+ * already running, our spawn just signals the existing process and exits, so
+ * we would attach to whatever vault THAT one has open.
+ *
+ * On Linux CI this guard had never once fired. `pkill -f Obsidian` matches
+ * case-sensitively, and the binary is `~/obsidian/squashfs-root/obsidian` —
+ * all lowercase (`e2e.yml:170`). So `connectShadow`'s relaunch signalled the
+ * still-running instance instead of replacing it, Obsidian answered with its
+ * VAULT CHOOSER, and `launchObsidian` attached to that: a window with no
+ * `.workspace` and no `app` at all. Run 30775609866's trace is 30 s of
+ * `.workspace` polling against a chooser, and its screenshots show the chooser
+ * and the old scaffold window side by side.
+ *
+ * `-i` is not the fix: the checkout is at `/home/runner/work/obsidian-remote-ssh/`,
+ * so a case-insensitive `-f obsidian` matches the Playwright runner's own
+ * command line and would kill the test run. Anchor on the resolved binary path
+ * instead — Electron's helper processes share that argv[0], so they go too,
+ * and nothing else on the box can match it.
  */
-async function killExistingObsidian(): Promise<void> {
+async function killExistingObsidian(obsidianBin: string): Promise<void> {
   const { execSync } = await import('node:child_process');
+  const stillRunning = (): boolean => {
+    try {
+      execSync(`pgrep -f ${JSON.stringify(`^${obsidianBin}`)}`, { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false; // pgrep exits non-zero when nothing matches
+    }
+  };
+
   try {
     if (process.platform === 'win32') {
       execSync('taskkill /F /IM Obsidian.exe /T', { stdio: 'ignore' });
     } else {
-      execSync('pkill -f Obsidian || true', { stdio: 'ignore' });
+      execSync(`pkill -f ${JSON.stringify(`^${obsidianBin}`)} || true`, { stdio: 'ignore' });
     }
   } catch {
     // No existing process — fine
   }
-  // Brief wait for the process to fully exit
-  await new Promise((r) => setTimeout(r, 2_000));
+
+  // Poll for the process to actually be gone rather than hoping 2 s was
+  // enough. A survivor here is not cosmetic: it silently owns the next
+  // launch, which is the whole failure above.
+  if (process.platform !== 'win32') {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && stillRunning()) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (stillRunning()) {
+      execSync(`pkill -9 -f ${JSON.stringify(`^${obsidianBin}`)} || true`, { stdio: 'ignore' });
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
+  } else {
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+}
+
+/**
+ * The page holding the vault we asked for.
+ *
+ * NOT `pages()[0]`. Obsidian's targets include windows that are not a vault at
+ * all — the vault chooser has no `.workspace`, no `app`, and answers every
+ * locator with "element(s) not found"; a stale window from a previous spec has
+ * an `app`, but for the wrong vault. Both were being driven as if they were
+ * the vault under test, and `waitForObsidianReady` was documented "non-fatal"
+ * so it shrugged and let 30 s of polling pass in silence.
+ *
+ * Prefer the page whose `vault.adapter.basePath` IS `vaultPath`; accept any
+ * page with a live `app.workspace` if none matches (the shadow vault's
+ * on-disk dir is not always the path we asked to open). Throw with the full
+ * window inventory otherwise — never return a page that cannot be the vault.
+ */
+async function selectVaultPage(
+  browser: Browser,
+  vaultPath: string,
+  timeoutMs: number,
+): Promise<Page> {
+  const want = path.resolve(vaultPath).replace(/\\/g, '/').toLowerCase();
+  const deadline = Date.now() + timeoutMs;
+  let pages: Page[] = [];
+
+  for (;;) {
+    pages = browser.contexts().flatMap((c) => c.pages()).filter((p) => !p.isClosed());
+    let fallback: Page | null = null;
+
+    for (const p of pages) {
+      const id = await p
+        .evaluate(() => {
+          const app = (window as unknown as {
+            app?: {
+              vault?: { adapter?: { basePath?: string } };
+              workspace?: unknown;
+            };
+          }).app;
+          if (!app?.workspace) return null;
+          return { basePath: app.vault?.adapter?.basePath ?? null };
+        })
+        .catch(() => null);
+      if (!id) continue;
+      const got = (id.basePath ?? '').replace(/\\/g, '/').toLowerCase();
+      if (got === want) return p;
+      fallback ??= p;
+    }
+
+    if (fallback && Date.now() >= deadline) return fallback;
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  throw new Error(
+    `launchObsidian: no Obsidian window is showing a vault after ${timeoutMs}ms ` +
+    `(wanted ${vaultPath}). A window with no \`app.workspace\` is the vault chooser — ` +
+    'it means the spawn signalled an instance that was still running instead of ' +
+    `replacing it.\n  windows: ${await describePageList(pages)}`,
+  );
 }
 
 /**
@@ -946,22 +1049,12 @@ async function waitForPluginLoaded(
   );
 }
 
-/**
- * Poll for the Obsidian `.workspace` element instead of a fixed sleep.
- */
-async function waitForObsidianReady(page: Page, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const visible = await page.locator('.workspace').isVisible();
-      if (visible) return;
-    } catch {
-      // page may not be ready yet
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  // Non-fatal: tests can still run even if workspace isn't visible
-}
+// `waitForObsidianReady` used to live here: poll `.workspace` for 30 s and
+// then return anyway, "non-fatal: tests can still run even if workspace isn't
+// visible". They cannot. On the vault chooser it burned 30 s and handed back a
+// page with no `app`, and every assertion after it failed for reasons that had
+// nothing to do with the product. `selectVaultPage` is the gate now, and it
+// throws with the window inventory instead of shrugging.
 
 async function waitForCDP(url: string, timeoutMs: number): Promise<void> {
   const start = Date.now();
