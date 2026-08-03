@@ -160,11 +160,26 @@ async function measure(page: ObsidianHandle['page']): Promise<Record<string, unk
         });
       }
 
+      // Obsidian validates a cached metadata entry against the file's identity.
+      // If OUR side reports a different `(mtime, size)` on each launch, every
+      // entry looks stale and the re-read is our own doing — fixable, and it
+      // would make seeding the cache work after all. If the identity is stable
+      // and Obsidian re-reads anyway, reuse is genuinely refused and only
+      // runtime injection is left. Those two cost very different amounts to
+      // build, so the difference is worth one map.
+      const fingerprint: Record<string, string> = {};
+      for (const f of md.slice(0, 200) as any[]) {
+        if (typeof f?.path === 'string') {
+          fingerprint[f.path] = `${f?.stat?.mtime ?? '?'}:${f?.stat?.size ?? '?'}`;
+        }
+      }
+
       out.cost = {
         readCache: stats ?? 'unreachable',
         filesInModel: files.length,
         markdownInModel: md.length,
         totalMdBytes,
+        statFingerprint: fingerprint,
         traffic: { noteEntries, noteBytes, configEntries, configBytes },
         // THE scaling number: note bytes pulled over note bytes that exist.
         noteBytesOverTotal: totalMdBytes > 0
@@ -312,6 +327,18 @@ test.describe('capability probe: can the metadata index come from the remote? (#
     const rec2 = totalRecords(recordsOf(secondRun));
     const reused = n1 !== null && n2 !== null && n1 > 0 && n2 / n1 < 0.2;
 
+    // Did the files keep the same identity across the two launches?
+    const fpOf = (r: Record<string, unknown>): Record<string, string> =>
+      ((r.cost as { statFingerprint?: Record<string, string> } | undefined)
+        ?.statFingerprint) ?? {};
+    const fp1 = fpOf(firstRun);
+    const fp2 = fpOf(secondRun);
+    const changed = Object.keys(fp1)
+      .filter((p) => fp2[p] !== fp1[p])
+      .slice(0, 10)
+      .map((p) => ({ path: p, firstRun: fp1[p], secondRun: fp2[p] ?? '<absent>' }));
+    const statStable = Object.keys(fp1).length > 0 && changed.length === 0;
+
     const report = {
       firstRun,
       secondRun,
@@ -323,9 +350,15 @@ test.describe('capability probe: can the metadata index come from the remote? (#
           ? Number((n2 / n1).toFixed(3))
           : null,
         cachedRecordsOnSecondRun: rec2,
-        // Three outcomes, not two. "Re-read every start" and "never saved in
-        // the first place" look identical in a byte count and need entirely
-        // different fixes, which is why the record count is here.
+        // Whose fault the re-read is. Obsidian validates a cached entry
+        // against the file's identity, so an identity that changes on every
+        // launch would invalidate everything — and that would be ours to fix,
+        // not a property of Obsidian.
+        statStableAcrossLaunches: statStable,
+        statChanged: changed,
+        // Four outcomes. "Re-read every start", "never saved", and "we kept
+        // handing Obsidian a different file" look identical in a byte count
+        // and need entirely different fixes.
         reading: n1 === null || n2 === null
           ? 'could not measure both runs'
           : reused
@@ -333,8 +366,12 @@ test.describe('capability probe: can the metadata index come from the remote? (#
             : rec2 === 0 || rec2 === null
               ? 'nothing was persisted — cannot yet tell refused-reuse from never-saved; ' +
                 'see indexingSettled before reading anything into this'
-              : 'persisted but re-read anyway — reuse is refused, so seeding alone will ' +
-                'not help and the index must be injected at runtime',
+              : !statStable
+                ? 'persisted, but WE changed the files\' (mtime, size) between launches, so ' +
+                  'every cached entry looked stale. Ours to fix — and seeding becomes ' +
+                  'viable once it is'
+                : 'persisted, identity stable, and re-read anyway — reuse is genuinely ' +
+                  'refused, so seeding cannot help and the index must be injected at runtime',
       },
     };
 
