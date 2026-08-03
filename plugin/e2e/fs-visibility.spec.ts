@@ -520,8 +520,15 @@ test.describe('a plugin\'s view of the filesystem must be the REMOTE vault (#429
     // Cold: nobody has asked for this note, so the synchronous surface
     // has nothing to hand over. This is the CONTRACT, not a defect —
     // the async test below is the half that fetches.
+    // `read.error ?? <describe the success>` rather than `read.error`: when the
+    // read SUCCEEDS this is null, and `toContain` on null raises Playwright's
+    // own "Matcher error: received value must not be null nor undefined" — which
+    // DISCARDS the custom message. #506 attached the whole materialisation dump
+    // here and run 30782633453 printed none of it, for exactly that reason. The
+    // assertion is unchanged in strength — a successful read still fails, because
+    // the description does not contain ENOENT — it just survives to be read.
     expect(
-      read.error,
+      read.error ?? `<no error: the read SUCCEEDED, returning ${JSON.stringify(read.body)}>`,
       'a synchronous read of a note nobody has asked for returned bytes. That means either ' +
       'the vault is being mirrored to disk — the design this plugin exists to avoid — or ' +
       'a blocking fetch crept back in, which deadlocks: the bridge that would serve the ' +
@@ -603,8 +610,10 @@ test.describe('a plugin\'s view of the filesystem must be the REMOTE vault (#429
       return { before, after: readSync() };
     }, COLD_NOTE);
 
+    // Same reason as `:494` above — null here discards the message with it.
     expect(
-      probe.before.error,
+      probe.before.error
+        ?? `<no error: the read SUCCEEDED, returning ${JSON.stringify(probe.before.body)}>`,
       'the note was already on disk before anything asked for it — something materialises ' +
       'eagerly, which is the mirror this design refuses\n' +
       `  ${await dumpMaterialisationState(obsidian.page, shadowVaultPath)}`,

@@ -1477,8 +1477,13 @@ export async function dumpMaterialisationState(
       if (e.isDirectory()) {
         walk(path.join(dir, e.name), child);
       } else {
-        const size = fs.statSync(path.join(dir, e.name), { throwIfNoEntry: false })?.size ?? -1;
-        onDisk.push(`${child} (${size}b)`);
+        // mtime, not just size: "what is on disk" does not say WHEN it landed,
+        // and the whole question behind the cold-read reds is whether a file
+        // appeared before or after the thing that supposedly asked for it. The
+        // log lines below carry ISO timestamps, so these line up against them.
+        const st = fs.statSync(path.join(dir, e.name), { throwIfNoEntry: false });
+        const when = st ? new Date(st.mtimeMs).toISOString() : '?';
+        onDisk.push(`${child} (${st?.size ?? -1}b @${when})`);
       }
     }
   };
@@ -1503,26 +1508,36 @@ export async function dumpMaterialisationState(
     .catch((e: unknown) => `unreadable: ${String(e)}`);
 
   let watcher = '<no plugin log>';
+  let tail = '<no plugin log>';
   try {
     const logPath = path.join(
       shadowVaultPath, '.obsidian', 'plugins', 'remote-ssh', 'console.log',
     );
     if (fs.existsSync(logPath)) {
-      const lines = fs.readFileSync(logPath, 'utf8')
+      const all = fs.readFileSync(logPath, 'utf8')
         .replace(/\0/g, '')
         .split('\n')
-        .filter((l) => /LocalWriteWatcher|MaterializedCache|materialis/i.test(l));
-      watcher = lines.length ? lines.slice(-15).join(' | ') : '<no watcher/cache lines>';
+        .filter(Boolean);
+      const hits = all.filter((l) => /LocalWriteWatcher|MaterializedCache|materialis/i.test(l));
+      watcher = hits.length ? hits.slice(-15).join(' | ') : '<no watcher/cache lines>';
+      // The filtered view answers "did the watcher act". It cannot answer
+      // "then what DID put this file here", and for the cold-read reds that is
+      // the question — the writer may be `populateVaultFromRemote`,
+      // `preSpawnPull`, `installMissingShadowPlugins` or something unlooked-for.
+      // An unfiltered tail costs nothing and names it.
+      tail = all.slice(-10).join(' | ') || '<empty>';
     }
   } catch (e) {
     watcher = `<unreadable: ${String(e)}>`;
+    tail = watcher;
   }
 
   return (
     `on the real shadow disk (${onDisk.length}${onDisk.length >= 40 ? '+' : ''} files): ` +
     `${onDisk.length ? onDisk.join(', ') : '(empty)'}\n` +
     `  materialisation ledger: ${JSON.stringify(ledger)}\n` +
-    `  plugin log (watcher/cache): ${watcher}`
+    `  plugin log (watcher/cache): ${watcher}\n` +
+    `  plugin log (last 10): ${tail}`
   );
 }
 
