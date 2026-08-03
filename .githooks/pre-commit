@@ -1,0 +1,32 @@
+#!/bin/sh
+# Cross-compile the server for every supported target before committing.
+#
+# `go build` only compiles the host platform's files (build tags), so a
+# breakage in an OS-specific file (e.g. a missing import in
+# process_windows.go) passes the host-only build and test. This hook fails
+# the commit if any server Go file no longer cross-compiles.
+#
+# Enable with: git config core.hooksPath .githooks
+set -eu
+
+# Only run when server Go files are staged.
+if ! git diff --cached --name-only --diff-filter=ACM | grep -q '^server/.*\.go$'; then
+  exit 0
+fi
+
+# Skip when Go is unavailable so the hook never blocks non-Go work.
+if ! command -v go >/dev/null 2>&1; then
+  echo "pre-commit: go not found; skipping server cross-compile check" >&2
+  exit 0
+fi
+
+cd server
+
+for target in windows/amd64 darwin/amd64 darwin/arm64; do
+  GOOS=${target%/*} GOARCH=${target#*/} go build ./...
+  # `go vet` also type-checks test files (`_test.go`), which `go build`
+  # skips — a broken platform-specific test would otherwise slip through.
+  GOOS=${target%/*} GOARCH=${target#*/} go vet ./...
+done
+
+echo "pre-commit: server cross-compile OK (windows/amd64, darwin/amd64, darwin/arm64)"

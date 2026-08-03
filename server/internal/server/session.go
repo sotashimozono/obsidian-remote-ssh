@@ -29,6 +29,7 @@ type Session struct {
 	authenticated   bool
 	subscriptionIDs map[string]struct{}
 	sender          NotificationSender
+	onClose         []func()
 }
 
 // NewSession returns a fresh, unauthenticated session.
@@ -111,4 +112,31 @@ func (s *Session) SendNotificationWithMeta(method string, params interface{}, me
 		return errors.New("Session: SendNotification called before SetNotifier")
 	}
 	return send(method, params, meta)
+}
+
+// OnClose registers a callback invoked once when the connection closes
+// (see Close). Callbacks are fired in registration order; a session
+// that never gets a connection (e.g. constructed in test code) never
+// fires them. Handlers that need to release per-session state — like
+// the extension runner detaching a dead client's stream target — hook
+// in here.
+func (s *Session) OnClose(cb func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onClose = append(s.onClose, cb)
+}
+
+// Close marks the session's connection as gone and fires every
+// registered close callback exactly once. The session stays usable as
+// a plain object afterwards (accessors still work); only the close
+// hooks are consumed. Safe to call more than once — subsequent calls
+// are no-ops.
+func (s *Session) Close() {
+	s.mu.Lock()
+	cbs := s.onClose
+	s.onClose = nil
+	s.mu.Unlock()
+	for _, cb := range cbs {
+		cb()
+	}
 }

@@ -35,6 +35,7 @@ type doneRecord struct {
 	Type     string `json:"type"`
 	ExitCode int    `json:"exitCode"`
 	Signal   string `json:"signal,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 func NewLogStore(stateDir string) (*LogStore, error) {
@@ -107,7 +108,7 @@ func (s *LogStore) AppendBatch(invocationID string, items []proto.CliOutputBatch
 	return true, nil
 }
 
-func (s *LogStore) AppendDone(invocationID string, exitCode int, signal string) error {
+func (s *LogStore) AppendDone(invocationID string, exitCode int, signal string, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	fp := s.filePath(invocationID)
@@ -122,6 +123,7 @@ func (s *LogStore) AppendDone(invocationID string, exitCode int, signal string) 
 		Type:     "done",
 		ExitCode: exitCode,
 		Signal:   signal,
+		Reason:   reason,
 	})
 	if err != nil {
 		return err
@@ -171,6 +173,7 @@ func (s *LogStore) ReplayFrom(invocationID string, resumeFrom int64) ([]proto.Cl
 				done = &proto.CliDoneParams{
 					ExitCode: rec.ExitCode,
 					Signal:   rec.Signal,
+					Reason:   rec.Reason,
 				}
 			}
 			continue

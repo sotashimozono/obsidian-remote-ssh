@@ -44,7 +44,7 @@ func TestLogStore_AppendDone(t *testing.T) {
 		t.Fatalf("AppendBatch: ok=%v err=%v", ok, err)
 	}
 
-	if err := store.AppendDone(inv, 0, ""); err != nil {
+	if err := store.AppendDone(inv, 0, "", ""); err != nil {
 		t.Fatalf("AppendDone: %v", err)
 	}
 
@@ -71,7 +71,7 @@ func TestLogStore_AppendDone_WithSignal(t *testing.T) {
 	}
 
 	inv := "inv-signal-test"
-	if err := store.AppendDone(inv, 137, "killed"); err != nil {
+	if err := store.AppendDone(inv, 137, "killed", ""); err != nil {
 		t.Fatalf("AppendDone: %v", err)
 	}
 
@@ -84,6 +84,30 @@ func TestLogStore_AppendDone_WithSignal(t *testing.T) {
 	}
 	if done.ExitCode != 137 || done.Signal != "killed" {
 		t.Fatalf("done = %+v, want ExitCode=137 Signal=killed", done)
+	}
+}
+
+func TestLogStore_AppendDone_WithReason(t *testing.T) {
+	tmp := t.TempDir()
+	store, err := NewLogStore(tmp)
+	if err != nil {
+		t.Fatalf("NewLogStore: %v", err)
+	}
+
+	inv := "inv-reason-test"
+	if err := store.AppendDone(inv, 137, "killed", "reaped"); err != nil {
+		t.Fatalf("AppendDone: %v", err)
+	}
+
+	_, done, err := store.ReplayFrom(inv, 0)
+	if err != nil {
+		t.Fatalf("ReplayFrom: %v", err)
+	}
+	if done == nil {
+		t.Fatalf("done should not be nil")
+	}
+	if done.ExitCode != 137 || done.Signal != "killed" || done.Reason != "reaped" {
+		t.Fatalf("done = %+v, want ExitCode=137 Signal=killed Reason=reaped", done)
 	}
 }
 
@@ -150,7 +174,7 @@ func TestLogStore_ReplayFrom_CompletedInvocation(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("AppendBatch: ok=%v err=%v", ok, err)
 	}
-	if err := store.AppendDone(inv, 0, ""); err != nil {
+	if err := store.AppendDone(inv, 0, "", ""); err != nil {
 		t.Fatalf("AppendDone: %v", err)
 	}
 

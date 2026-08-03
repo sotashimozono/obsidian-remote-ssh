@@ -338,10 +338,15 @@ type CliOutputBatchParams struct {
 }
 
 // CliDoneParams signals execution completion.
+// Reason is non-empty only when the daemon terminated the process
+// itself ("reaped" by the lazy invocation reaper, "killed" by an
+// explicit extension.kill), letting clients distinguish those from a
+// natural exit or crash.
 type CliDoneParams struct {
 	InvocationID string `json:"invocationId"`
 	ExitCode     int    `json:"exitCode"`
 	Signal       string `json:"signal,omitempty"`
+	Reason       string `json:"reason,omitempty"`
 }
 
 // ─── JSON-RPC envelopes ─────────────────────────────────────────────────────

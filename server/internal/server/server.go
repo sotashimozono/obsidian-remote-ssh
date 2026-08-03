@@ -129,6 +129,10 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		if s.opts.SubscriptionCleaner != nil {
 			s.opts.SubscriptionCleaner.CleanupSubscriptions(session.SubscriptionIDs())
 		}
+		// Fire per-session close hooks (e.g. extension runner detaching
+		// stream targets bound to this connection) before the socket
+		// goes away, so handlers can act on the disconnect promptly.
+		session.Close()
 		_ = conn.Close()
 		log.Info("connection closed")
 	}()

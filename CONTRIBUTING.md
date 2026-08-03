@@ -39,6 +39,9 @@ make build               # builds bin/obsidian-remote-server (host platform)
 make cross               # builds 4 platforms into dist/
 go test ./...
 
+# One-time: enable commit-time cross-compile check (see .githooks/pre-commit)
+git config core.hooksPath .githooks
+
 # Full integration (Docker required)
 cd plugin
 npm run sshd:start

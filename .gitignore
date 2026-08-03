@@ -9,6 +9,9 @@ plugin/server-bin/
 # Claude Code local agent state — per-developer, not project source.
 .claude/
 
+# oh-my-openagent local agent state — per-developer, not project source.
+.omo/
+
 # Phase C sync-latency microbench (M6) results — NDJSON files
 # produced per integration run. The M10 CI gate publishes the
 # baseline to an orphan branch instead of committing it here.

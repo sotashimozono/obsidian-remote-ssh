@@ -230,6 +230,17 @@ jobs:
         run: make build
       - name: Test
         run: make test
+      - name: Cross-compile check (windows / darwin)
+        # `go build` only compiles the host platform's files (build tags),
+        # so a breakage in an OS-specific file — e.g. a missing import in
+        # process_windows.go — passes the Linux-only build/test above and
+        # only surfaces on another platform. Cross-compile every supported
+        # target here so those regressions fail the PR, not a later
+        # platform run or the review queue.
+        run: |
+          GOOS=windows GOARCH=amd64 go build ./...
+          GOOS=darwin  GOARCH=amd64 go build ./...
+          GOOS=darwin  GOARCH=arm64 go build ./...
 
   # ─── Deploy: docker image build smoke ────────────────────────────────────────
   # Builds the turn-key sshd container so a regression in the
