@@ -40,9 +40,13 @@ export interface BulkWalkerDeps {
    * Directory basenames to prune from the walk (e.g. `node_modules`,
    * `.git`). Passed straight through to `fs.walk`'s `ignore` so the
    * daemon never descends/transfers them. Only the fast path honours
-   * this; the per-folder fallback (SFTP / no daemon) does not yet.
+   * this server-side; the SFTP fallback prunes before descending.
    */
   ignoreDirs?: string[];
+  /** Exact vault-relative dot-folder paths that may appear in the tree. */
+  allowedHiddenDirs?: string[];
+  /** Configuration is never part of the note tree, even when explicitly allowed. */
+  configDir?: string;
 }
 
 /** Outcome telemetry from a single `walk()` call. */
@@ -70,7 +74,7 @@ export interface BulkWalkResult {
   /** When `fallback-list` because of a fast-path error, the error message; else null. */
   fastPathError: string | null;
   /**
-   * Count of entries dropped by the hidden-file (dot-prefix) filter before
+   * Count of encountered entries dropped by the visibility filter before
    * `entries` was returned. Lets the caller tell a genuinely empty remote
    * apart from "everything walked was hidden" (e.g. all content nested under
    * a dot-dir) instead of firing a misleading "0 files — check remotePath".
@@ -180,24 +184,27 @@ export class BulkWalker {
     return this.canUseFastPath();
   }
 
-  /**
-   * Drop dot-prefixed entries so hidden files/dirs never reach the File
-   * Explorer — matching Obsidian's own default of hiding dot-names. An entry
-   * is hidden when ANY of its path segments starts with `.`, so a dot-DIR
-   * (`.julia`, `.git`, …) hides its whole subtree. The vault config dir
-   * (`.obsidian`) is deliberately included: Obsidian loads config directly
-   * off the local shadow disk, NOT from this walked model, so dropping it
-   * costs nothing AND keeps every client's per-device `<configDir>/user/<id>/`
-   * subtree out of the tree (a foreign client's state must never surface as
-   * editable files). Applies to the full walk AND every lazy per-folder
-   * deepen (both route through here).
-   */
+  /** Shared by full indexing and lazy expansion; allowances never override exclusions. */
   private visibleEntries(entries: RemoteEntry[]): RemoteEntry[] {
-    return entries.filter((e) => !BulkWalker.isHiddenPath(e.path));
+    return entries.filter((e) => this.isVisible(e.path, e.isDirectory));
   }
 
-  private static isHiddenPath(vaultPath: string): boolean {
-    return vaultPath.split('/').some((seg) => seg.startsWith('.'));
+  private isVisible(vaultPath: string, isDirectory: boolean): boolean {
+    const configDir = this.deps.configDir ?? '.obsidian';
+    if (vaultPath === configDir || vaultPath.startsWith(configDir + '/')) return false;
+    const parts = vaultPath.split('/');
+    for (let i = 0; i < parts.length; i++) {
+      const segment = parts[i];
+      if (!segment || segment === '.' || segment === '..') return false;
+      const directory = i < parts.length - 1 || isDirectory;
+      if (directory && this.deps.ignoreDirs?.includes(segment)) return false;
+      if (!segment.startsWith('.')) continue;
+      // Only directories can be allowed. A parent allowance does not expose
+      // nested dot-names, and .obsidian stays reserved at every depth.
+      if (segment === '.obsidian' || !directory ||
+          !this.deps.allowedHiddenDirs?.includes(parts.slice(0, i + 1).join('/'))) return false;
+    }
+    return true;
   }
 
   // ─── internals ──────────────────────────────────────────────────────────
@@ -282,7 +289,7 @@ export class BulkWalker {
       for (const sub of listing.folders) {
         if (!sub) continue;
         entries.push({ path: sub, isDirectory: true, ctime: 0, mtime: 0, size: 0 });
-        if (recursive) queue.push(sub);   // one level only when non-recursive
+        if (recursive && this.isVisible(sub, true)) queue.push(sub);
       }
       for (const file of listing.files) {
         if (!file) continue;

@@ -61,3 +61,17 @@ If you sync your `.obsidian` directory across machines, your profile list syncs 
 For the on-disk schema (every field, every default, hand-editing rules), see [[en/reference/data-json|data.json schema reference]].
 
 Next: [[en/configuration/this-device|This device]].
+
+## Allowed hidden directories
+
+Remote SSH hides dot-prefixed folders by default. To browse documents under
+one of these folders, edit the SSH profile and add its exact vault-relative
+path to **Allowed hidden directories**, one per line. For example, with
+`/home/user` as the remote vault path, add `.herdr` to browse
+`/home/user/.herdr/worktrees` without a symlink or a separate vault.
+
+Each hidden ancestor needs an entry: `.herdr` does not also allow
+`.herdr/.private`; add both paths if you want both. Entries are directory
+paths, not patterns or absolute paths. Dotfiles stay hidden. **Ignore
+directories** takes precedence, and vault configuration stays excluded.
+Reopen the remote vault after saving the profile to rebuild its file tree.

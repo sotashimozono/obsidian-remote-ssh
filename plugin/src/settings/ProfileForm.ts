@@ -166,6 +166,26 @@ export class ProfileForm extends Modal {
         t.inputEl.rows = 6;
       });
 
+    new Setting(contentEl)
+      .setName('Allowed hidden directories')
+      .setDesc(
+        'Dot-folders are hidden by default. Enter one exact path relative to the ' +
+        'remote vault per line, e.g. .herdr or projects/.notes. Allow each hidden ' +
+        'ancestor separately. Nested dot-folders need their own entry. ' +
+        'Dotfiles, ignored directories and vault configuration stay excluded. ' +
+        'Reopen the remote vault after changing this setting.',
+      )
+      .addTextArea(t => {
+        t.setPlaceholder('.herdr\nprojects/.notes')
+          .setValue((this.profile.allowedHiddenDirs ?? []).join('\n'))
+          .onChange(v => {
+            this.profile.allowedHiddenDirs = [...new Set(v.split('\n')
+              .map(s => s.trim().replace(/\/+$/, ''))
+              .filter(Boolean))];
+          });
+        t.inputEl.rows = 3;
+      });
+
     contentEl.createEl('h3', { text: 'Transport' });
     contentEl.createEl('p', {
       cls: 'setting-item-description',
@@ -246,6 +266,13 @@ export class ProfileForm extends Modal {
     if (!this.profile.username) { new Notice('Username is required'); return false; }
     if (!this.profile.remotePath) { new Notice('Remote vault path is required'); return false; }
     if (!this.profile.name) { new Notice('Profile name is required'); return false; }
+    for (const dir of this.profile.allowedHiddenDirs ?? []) {
+      const parts = dir.split('/');
+      if (dir.includes('\\') || parts.some(p => !p || p === '.' || p === '..') || !parts[parts.length - 1].startsWith('.')) {
+        new Notice('Allowed hidden directories must be vault-relative dot-folder paths, e.g. .herdr or projects/.notes');
+        return false;
+      }
+    }
     return true;
   }
 

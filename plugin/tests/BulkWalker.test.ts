@@ -44,6 +44,60 @@ function makeRpc(
 }
 
 describe('BulkWalker', () => {
+  it('loads an allowed dot-folder and its notes through successive SFTP expansions', async () => {
+    const adapter = makeAdapter({
+      '': { folders: ['.herdr', '.other', '.herdr-copy'] },
+      '.herdr': { folders: ['.herdr/worktrees', '.herdr/.private'] },
+      '.herdr/worktrees': { files: ['.herdr/worktrees/article.md', '.herdr/worktrees/.env'] },
+    });
+    const walker = new BulkWalker({ adapter, allowedHiddenDirs: ['.herdr'] });
+
+    expect((await walker.walk('', false)).entries.map(e => e.path)).toEqual(['.herdr']);
+    expect((await walker.walk('.herdr', false)).entries.map(e => e.path)).toEqual(['.herdr/worktrees']);
+    expect((await walker.walk('.herdr/worktrees', false)).entries.map(e => e.path))
+      .toEqual(['.herdr/worktrees/article.md']);
+  });
+
+  it('allows exact nested dot-folder paths in RPC results while keeping configuration and ignored trees out', async () => {
+    const paths = [
+      '.herdr', '.herdr/worktrees', '.herdr/worktrees/article.md',
+      '.herdr/worktrees/.private', '.herdr/worktrees/.private/note.md',
+      '.herdr/node_modules', '.herdr/node_modules/dependency.md',
+      'projects', 'projects/.notes', 'projects/.notes/note.md',
+      'other/.notes', 'other/.notes/note.md',
+      '.obsidian', '.obsidian/config.md', 'settings', 'settings/config.md',
+    ];
+    const { rpc } = makeRpc(['fs.walk'], {
+      entries: paths.map(path => ({ path, type: path.endsWith('.md') ? 'file' as const : 'folder' as const, mtime: 1, size: 0 })),
+      truncated: false,
+    });
+    const walker = new BulkWalker({
+      adapter: makeAdapter({}), rpcConnection: rpc,
+      allowedHiddenDirs: ['.herdr', 'projects/.notes', '.obsidian', 'settings'],
+      ignoreDirs: ['node_modules'], configDir: 'settings',
+    });
+
+    expect((await walker.walk()).entries.map(e => e.path)).toEqual([
+      '.herdr', '.herdr/worktrees', '.herdr/worktrees/article.md',
+      'projects', 'projects/.notes', 'projects/.notes/note.md',
+    ]);
+  });
+
+  it('does not descend into hidden or ignored SFTP directories, even when explicitly allowed', async () => {
+    const adapter = makeAdapter({
+      '': { folders: ['.herdr', '.cache', 'vendor'], files: ['README.md'] },
+      '.herdr': { folders: ['.herdr/.git', '.herdr/node_modules'], files: ['.herdr/article.md'] },
+    });
+    const list = vi.spyOn(adapter, 'list');
+    const walker = new BulkWalker({
+      adapter, allowedHiddenDirs: ['.herdr', '.herdr/.git', '.cache'],
+      ignoreDirs: ['.git', '.cache', 'node_modules', 'vendor'],
+    });
+
+    expect((await walker.walk()).entries.map(e => e.path)).toEqual(['.herdr', 'README.md', '.herdr/article.md']);
+    expect(list.mock.calls.map(([path]) => path)).toEqual(['', '.herdr']);
+  });
+
   // ─── fast path (rpc-walk) ───────────────────────────────────────────────
 
   it('uses fs.walk when the daemon advertises the capability', async () => {
@@ -105,10 +159,10 @@ describe('BulkWalker', () => {
     const result = await walker.walk('');
 
     expect(result.source).toBe('fallback-list');
-    // `.git` (+ its file) and the nested `.secret.md` are dropped, exactly
-    // as on the fast path — the filter lives in walk(), shared by both.
+    // `.git` is pruned before descent, so only that directory and the
+    // encountered `.secret.md` contribute to the excluded count.
     expect(result.entries.map(e => e.path).sort()).toEqual(['Notes', 'Notes/keep.md', 'README.md']);
-    expect(result.hiddenCount).toBe(3);
+    expect(result.hiddenCount).toBe(2);
   });
 
   it('passes through the maxEntries override when set', async () => {

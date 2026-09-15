@@ -1131,6 +1131,8 @@ export default class RemoteSshPlugin extends Plugin {
       // defaults so existing users immediately benefit. An explicit empty
       // array (user cleared it) means "ignore nothing" and is respected.
       ignoreDirs: this.conn.activeProfile?.walkIgnoreDirs ?? [...DEFAULT_WALK_IGNORE_DIRS],
+      allowedHiddenDirs: this.conn.activeProfile?.allowedHiddenDirs,
+      configDir: this.app.vault.configDir,
     });
   }
 
@@ -1248,8 +1250,8 @@ export default class RemoteSshPlugin extends Plugin {
       new Notice(
         walk.hiddenCount > 0
           ? `Remote SSH: 0 visible files — all ${walk.hiddenCount} walked ` +
-            'entries are hidden dot-files (e.g. content under a “.”-prefixed ' +
-            'folder). Rename them if they should appear in the vault.'
+            'entries are hidden or excluded. Check the profile’s Allowed hidden ' +
+            'directories and Ignore directories settings.'
           : 'Remote SSH: 0 files found on the remote. Check the profile’s ' +
             'remotePath actually points at the vault (see console.log).',
         10_000,

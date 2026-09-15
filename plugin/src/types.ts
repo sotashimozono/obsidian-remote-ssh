@@ -83,6 +83,8 @@ export interface SshProfile {
    * list via `DEFAULT_PROFILE`.
    */
   walkIgnoreDirs?: string[];
+  /** Exact vault-relative dot-folder paths to show; other dot-names stay hidden. */
+  allowedHiddenDirs?: string[];
 }
 
 export interface PluginSettings {
