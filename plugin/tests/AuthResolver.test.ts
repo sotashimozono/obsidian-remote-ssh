@@ -3,7 +3,7 @@ import { AuthResolver } from '../src/ssh/AuthResolver';
 import type { SecretStore } from '../src/ssh/SecretStore';
 import type { SshProfile } from '../src/types';
 
-vi.mock('fs', () => ({ readFileSync: vi.fn() }));
+vi.mock('fs', () => ({ readFileSync: vi.fn(), existsSync: vi.fn(() => false) }));
 
 import * as fs from 'fs';
 
@@ -100,6 +100,7 @@ describe('AuthResolver.buildAuthConfig — password', () => {
 describe('AuthResolver.buildAuthConfig — privateKey', () => {
   beforeEach(() => {
     vi.mocked(fs.readFileSync).mockReturnValue(Buffer.from('---BEGIN KEY---'));
+    vi.mocked(fs.existsSync).mockReturnValue(false);
   });
 
   it('returns { privateKey } when key file is readable and no passphrase', () => {
@@ -156,6 +157,27 @@ describe('AuthResolver.buildAuthConfig — privateKey', () => {
     r.buildAuthConfig(profile);
     const calledPath = vi.mocked(fs.readFileSync).mock.calls[0][0] as string;
     expect(calledPath).not.toMatch(/^~/);
+  });
+
+  it('falls back to the bare key when a sibling -cert.pub is present but unusable', () => {
+    // A `<key>-cert.pub` next to the key routes auth through the certificate
+    // path (#536). When the cert can't be used (here the stub key won't parse),
+    // it must degrade to plain-key auth — NOT throw — so a connection the bare
+    // key would complete still happens. The happy path (a real cert → { agent,
+    // privateKey }) is covered end-to-end in DiskCertificate.test.
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync)
+      .mockReturnValueOnce(Buffer.from('---BEGIN KEY---'))                             // the private key
+      .mockReturnValueOnce('ssh-ed25519-cert-v01@openssh.com AAAAB3NzaC1 comment\n');  // the -cert.pub (utf8)
+    const r = new AuthResolver(makeStore());
+    const profile: SshProfile = {
+      ...baseProfile,
+      authMethod: 'privateKey',
+      privateKeyPath: '~/.ssh/id_ed25519',
+    };
+    const cfg = r.buildAuthConfig(profile);
+    expect(cfg).toMatchObject({ privateKey: expect.any(Buffer) });
+    expect(cfg.agent).toBeUndefined();
   });
 });
 

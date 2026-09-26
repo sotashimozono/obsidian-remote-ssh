@@ -160,7 +160,7 @@ export function certificateAlgorithm(certType: string): string {
     : certType;
 }
 
-function makeAgentKey(
+export function makeAgentKey(
   type: string, comment: string, blob: Buffer, marker: symbol,
 ): AgentPublicKey {
   return {
