@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -9,7 +9,7 @@ import {
   certificateFilePath,
   loadDiskCertificate,
   sshSignatureBody,
-  type DiskCertificateAgent,
+  DiskCertificateAgent,
 } from '../src/ssh/DiskCertificate';
 import type { AgentPublicKey } from '../src/ssh/CertificateAgent';
 
@@ -68,26 +68,6 @@ describe('loadDiskCertificate without a sibling certificate', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
-
-  it('falls back (returns null) on an ssh-dss certificate — no local DSA framing', () => {
-    // ssh-dss passes isUsableIdentity (the agent path can sign it) but this
-    // local signer does not do DSA's RFC 4253 §6.6 reframing, so it must be
-    // skipped rather than signed wrong. Build a blob whose leading SSH string
-    // is the DSS cert type; the body past it is irrelevant to this check.
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orst-dss-'));
-    try {
-      const keyPath = path.join(dir, 'id_dsa');
-      fs.writeFileSync(keyPath, 'unused');
-      const algo = 'ssh-dss-cert-v01@openssh.com';
-      const len = Buffer.alloc(4);
-      len.writeUInt32BE(algo.length, 0);
-      const blob = Buffer.concat([len, Buffer.from(algo), Buffer.from('trailing-cert-bytes')]);
-      fs.writeFileSync(`${keyPath}-cert.pub`, `${algo} ${blob.toString('base64')} comment\n`);
-      expect(loadDiskCertificate(keyPath, Buffer.from('unused'))).toBeNull();
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
 });
 
 describe('sshSignatureBody', () => {
@@ -110,6 +90,22 @@ describe('sshSignatureBody', () => {
   it('rejects a malformed ECDSA signature rather than emitting garbage', () => {
     expect(() => sshSignatureBody(Buffer.from([0x02, 0x01, 0x01]), 'ecdsa-sha2-nistp256'))
       .toThrow(/SEQUENCE/);
+  });
+
+  it('refuses a length field too wide to be a signature', () => {
+    // 0x85 claims five length bytes. Real ECDSA signatures need one or two, so
+    // anything wider is a corrupt buffer, not a big number — and reading it
+    // would shift every subsequent offset.
+    expect(() => sshSignatureBody(Buffer.from([0x30, 0x85, 1, 2, 3, 4, 5]), 'ecdsa-sha2-nistp521'))
+      .toThrow(/unsupported length form/);
+  });
+
+  it('refuses a long-form length that runs off the end', () => {
+    // 0x82 promises two length bytes and only one follows. Without the bounds
+    // check the missing byte reads as undefined and the length silently
+    // becomes NaN.
+    expect(() => sshSignatureBody(Buffer.from([0x30, 0x82, 0x01]), 'ecdsa-sha2-nistp521'))
+      .toThrow(/truncated long-form length/);
   });
 });
 
@@ -173,6 +169,14 @@ interface CertCase { label: string; keygenType: string[]; base: string; wire: st
 const CASES: CertCase[] = [
   { label: 'Ed25519', keygenType: ['-t', 'ed25519'], base: 'ssh-ed25519', wire: 'ssh-ed25519-cert-v01@openssh.com' },
   { label: 'ECDSA', keygenType: ['-t', 'ecdsa', '-b', '256'], base: 'ecdsa-sha2-nistp256', wire: 'ecdsa-sha2-nistp256-cert-v01@openssh.com' },
+  // P-384 and P-521 are not ceremony. Their digests are the two
+  // `hashAlgorithm` arms nothing reached, and P-521's r and s are 66 bytes
+  // each, so the DER SEQUENCE runs past 127 bytes and the signature can only
+  // be parsed through `readDerLength`'s long-form branch — which nothing
+  // reached either. Getting that wrong breaks P-521 certificates and nothing
+  // else, which is the kind of gap that ships.
+  { label: 'ECDSA384', keygenType: ['-t', 'ecdsa', '-b', '384'], base: 'ecdsa-sha2-nistp384', wire: 'ecdsa-sha2-nistp384-cert-v01@openssh.com' },
+  { label: 'ECDSA521', keygenType: ['-t', 'ecdsa', '-b', '521'], base: 'ecdsa-sha2-nistp521', wire: 'ecdsa-sha2-nistp521-cert-v01@openssh.com' },
   // An agent lists an RSA cert as ssh-rsa-cert...; it must go on the wire as
   // its SHA-2 name, and the signature must actually be SHA-512.
   { label: 'RSA', keygenType: ['-t', 'rsa', '-b', '2048'], base: 'rsa-sha2-512', wire: 'rsa-sha2-512-cert-v01@openssh.com' },
@@ -210,6 +214,29 @@ describe.skipIf(!HAS_KEYGEN)('loadDiskCertificate with a real key + certificate'
     });
   }
 
+  it('refuses an ssh-dss certificate even when the key beside it is perfectly good', () => {
+    // The guard has to be the reason for the null. An earlier version of this
+    // handed over an unparseable key, so the fallback happened anyway and the
+    // test passed with the guard deleted — it pinned nothing.
+    const keyPath = path.join(dir, 'dss-key');
+    fs.copyFileSync(path.join(dir, 'id-Ed25519'), keyPath);
+    writeCertBlobFor(keyPath, 'ssh-dss-cert-v01@openssh.com');
+
+    expect(loadDiskCertificate(keyPath, fs.readFileSync(keyPath))).toBeNull();
+  });
+
+  it('falls back when what sits beside the certificate is the public half', () => {
+    // A `.pub` parses fine; it just cannot sign. Without the isPrivateKey check
+    // the agent would be built and every signature attempt would fail later,
+    // mid-handshake, instead of falling back to the bare key now.
+    const id = path.join(dir, 'id-Ed25519');
+    const pubOnly = path.join(dir, 'pub-only');
+    fs.copyFileSync(`${id}.pub`, pubOnly);
+    fs.copyFileSync(`${id}-cert.pub`, `${pubOnly}-cert.pub`);
+
+    expect(loadDiskCertificate(pubOnly, fs.readFileSync(pubOnly))).toBeNull();
+  });
+
   it('falls back (returns null) when the private key beside a real cert will not parse', () => {
     const id = path.join(dir, 'id-Ed25519');
     // A valid cert, but the key is garbage: degrade to bare-key auth (which
@@ -217,5 +244,109 @@ describe.skipIf(!HAS_KEYGEN)('loadDiskCertificate with a real key + certificate'
     fs.writeFileSync(path.join(dir, 'broken'), 'not a key');
     fs.copyFileSync(`${id}-cert.pub`, path.join(dir, 'broken-cert.pub'));
     expect(loadDiskCertificate(path.join(dir, 'broken'), Buffer.from('not a key'))).toBeNull();
+  });
+});
+
+/** A cert file whose blob announces `algo`; the bytes past it do not matter here. */
+function writeCertBlobFor(keyPath: string, algo: string): void {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(algo.length, 0);
+  const blob = Buffer.concat([len, Buffer.from(algo), Buffer.from('trailing-cert-bytes')]);
+  fs.writeFileSync(`${keyPath}-cert.pub`, `${algo} ${blob.toString('base64')} comment\n`);
+}
+
+describe('loadDiskCertificate — why it falls back', () => {
+  // Each of these is a distinct reason the user's certificate is ignored, and
+  // each ends the same way: a warning, and the bare key offered instead. None
+  // of them was executed.
+  let dir = '';
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orst-fallback-')); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('will not try to sign for a FIDO security key', () => {
+    // sk-* certificates need the token present and a different signing flow.
+    const keyPath = path.join(dir, 'id_sk');
+    fs.writeFileSync(keyPath, 'unused');
+    writeCertBlobFor(keyPath, 'sk-ssh-ed25519-cert-v01@openssh.com');
+
+    expect(loadDiskCertificate(keyPath, Buffer.from('unused'))).toBeNull();
+  });
+
+  it('survives a certificate file that is not "<type> <base64>"', () => {
+    // A hand-edited or truncated file must degrade to the bare key, not throw
+    // out of buildAuthConfig and take the whole connection with it.
+    const keyPath = path.join(dir, 'id_bad');
+    fs.writeFileSync(keyPath, 'unused');
+    fs.writeFileSync(`${keyPath}-cert.pub`, 'only-one-token\n');
+
+    expect(loadDiskCertificate(keyPath, Buffer.from('unused'))).toBeNull();
+  });
+
+  it('survives a base64 body that is not a key blob', () => {
+    // Decodes fine — `Buffer.from(_, 'base64')` never throws — but the leading
+    // SSH string length is nonsense, so the bytes are not a certificate.
+    const keyPath = path.join(dir, 'id_garbage');
+    fs.writeFileSync(keyPath, 'unused');
+    const notABlob = Buffer.from([0xff, 0xff, 0xff, 0xff, 0x01]);
+    fs.writeFileSync(
+      `${keyPath}-cert.pub`,
+      `ssh-ed25519-cert-v01@openssh.com ${notABlob.toString('base64')} comment\n`,
+    );
+
+    expect(loadDiskCertificate(keyPath, Buffer.from('unused'))).toBeNull();
+  });
+
+  it('returns null, quietly, when there is no sibling certificate at all', () => {
+    const keyPath = path.join(dir, 'id_plain');
+    fs.writeFileSync(keyPath, 'unused');
+
+    expect(loadDiskCertificate(keyPath, Buffer.from('unused'))).toBeNull();
+  });
+});
+
+describe('DiskCertificateAgent.sign — when signing cannot be done', () => {
+  // The failure paths all end in the same place: the callback gets an Error, so
+  // ssh2 moves on to the next auth method. Reporting nothing, or reporting a
+  // half-built signature, would fail the handshake with no explanation.
+  const agentSigning = (impl: () => Buffer | Error, certType = 'ecdsa-sha2-nistp256-cert-v01@openssh.com') =>
+    new DiskCertificateAgent(
+      certType,
+      Buffer.from('cert-blob'),
+      { sign: impl } as unknown as ParsedKey,
+      '/tmp/id-cert.pub',
+    );
+  const offered = (type: string) => ({ type } as unknown as AgentPublicKey);
+
+  it('reports an algorithm it has no digest for, rather than signing without one', async () => {
+    const type = 'ssh-unknown-cert-v01@openssh.com';
+    const agent = agentSigning(() => Buffer.alloc(0), type);
+
+    await expect(sign(agent, offered(type), Buffer.from('x')))
+      .rejects.toThrow(/no signing digest defined/);
+  });
+
+  it('hands the signer\'s own error to the caller', async () => {
+    const agent = agentSigning(() => new Error('key is locked'));
+
+    await expect(sign(agent, offered('ecdsa-sha2-nistp256-cert-v01@openssh.com'), Buffer.from('x')))
+      .rejects.toThrow(/key is locked/);
+  });
+
+  it('reports a signature it cannot reframe instead of sending it anyway', async () => {
+    // ECDSA has to be reframed from DER. Bytes that are not DER must fail here,
+    // because the alternative is a signature the server rejects opaquely.
+    const agent = agentSigning(() => Buffer.from([1, 2, 3]));
+
+    await expect(sign(agent, offered('ecdsa-sha2-nistp256-cert-v01@openssh.com'), Buffer.from('x')))
+      .rejects.toThrow(/SEQUENCE/);
+  });
+
+  it('does nothing, and does not throw, if ssh2 ever passes no callback', () => {
+    const agent = agentSigning(() => Buffer.from([1]));
+
+    expect(() => agent.sign(
+      offered('ecdsa-sha2-nistp256-cert-v01@openssh.com') as never,
+      Buffer.from('x'), undefined, undefined,
+    )).not.toThrow();
   });
 });
