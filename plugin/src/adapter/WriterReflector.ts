@@ -24,8 +24,9 @@ export interface WriterReflector {
   /**
    * After `write` / `writeBinary`: insert the `TFile` and fire
    * `create` when the path is new, otherwise fire `modify`.
+   * `stat` is the post-write stat, when available.
    */
-  reflectWrite(path: string): void;
+  reflectWrite(path: string, stat?: WrittenStat): void;
 
   /**
    * After `rename`: move the entry between `fileMap` keys and fire
@@ -44,4 +45,16 @@ export interface WriterReflector {
    * `vault.trigger('create', folder)`.
    */
   reflectMkdir(path: string): void;
+}
+
+/**
+ * The remote's post-write stat (unix ms, bytes). The daemon's echo of a
+ * local write is dropped as self-originated, so this is what refreshes
+ * `TFile.stat`.
+ */
+export interface WrittenStat {
+  /** Undefined when the transport doesn't report a creation time. */
+  ctime?: number;
+  mtime: number;
+  size: number;
 }

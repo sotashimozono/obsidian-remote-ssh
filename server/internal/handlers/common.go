@@ -159,8 +159,10 @@ func atomicWriteFile(abs, relativePath string, data []byte, expectedMtime int64)
 	// check and to return wasModify so the caller can decide whether
 	// to emit a synthetic Modified event after the rename.
 	preExisted := false
+	var created int64
 	if info, err := os.Stat(abs); err == nil {
 		preExisted = true
+		created = createdMillis(abs, info)
 		if expectedMtime != 0 {
 			got := info.ModTime().UnixMilli()
 			if got != expectedMtime {
@@ -199,6 +201,11 @@ func atomicWriteFile(abs, relativePath string, data []byte, expectedMtime int64)
 		// Non-fatal on platforms that don't fully support chmod (e.g.
 		// some Windows filesystems): keep going.
 		_ = err
+	}
+	if preExisted {
+		// The rename swaps in tmp's inode; carry the creation time over.
+		// Best-effort: without xattr support the write still succeeds.
+		_ = writeCreatedXattr(tmpPath, created)
 	}
 	if err := os.Rename(tmpPath, abs); err != nil {
 		cleanup()

@@ -37,7 +37,7 @@ import { writeFileAtomic } from '../util/writeFileAtomic';
  * every vault (see `communityPluginsBasePath` in CommunityPluginsSync).
  */
 
-const VERSION = 1;
+const VERSION = 2;
 
 /**
  * Refuse a snapshot bigger than any real vault this plugin can serve. It is
@@ -46,8 +46,8 @@ const VERSION = 1;
  */
 const MAX_ENTRIES = 500_000;
 
-/** One entry, packed: `[path, isDirectory ? 1 : 0, mtime, size]`. ~50 bytes a note. */
-type PackedEntry = [string, 0 | 1, number, number];
+/** One entry, packed: `[path, isDirectory ? 1 : 0, mtime, size, ctime]`. ~65 bytes a note. */
+type PackedEntry = [string, 0 | 1, number, number, number];
 
 interface SnapshotFile {
   version: number;
@@ -101,11 +101,11 @@ export function readTreeSnapshot(file: string, remotePath: string, configDir: st
         rejected++;
         continue;
       }
-      if (typeof e[2] !== 'number' || typeof e[3] !== 'number') {
+      if (typeof e[2] !== 'number' || typeof e[3] !== 'number' || typeof e[4] !== 'number') {
         rejected++;
         continue;
       }
-      entries.push({ path: e[0], isDirectory: e[1] === 1, ctime: e[2], mtime: e[2], size: e[3] });
+      entries.push({ path: e[0], isDirectory: e[1] === 1, ctime: e[4], mtime: e[2], size: e[3] });
     }
     if (rejected > 0) logger.warn(`TreeSnapshot: dropped ${rejected} unusable entries from ${file}`);
     return entries;
@@ -120,7 +120,7 @@ export function writeTreeSnapshot(file: string, remotePath: string, entries: rea
   const body: SnapshotFile = {
     version: VERSION,
     remotePath,
-    entries: entries.map((e) => [e.path, e.isDirectory ? 1 : 0, e.mtime, e.size]),
+    entries: entries.map((e) => [e.path, e.isDirectory ? 1 : 0, e.mtime, e.size, e.ctime]),
   };
   fs.mkdirSync(path.dirname(file), { recursive: true });
   // This was a fourth hand-written copy of tmp+rename, and the only one that
@@ -135,7 +135,7 @@ export function deleteTreeSnapshot(file: string): void {
 /** The shape of `vault.getAllLoadedFiles()` entries this needs. */
 export interface LoadedFileLike {
   path: string;
-  stat?: { mtime: number; size: number };
+  stat?: { ctime?: number; mtime: number; size: number };
   children?: unknown[];
 }
 
@@ -153,7 +153,7 @@ export function collectModelEntries(files: readonly LoadedFileLike[], configDir:
     out.push({
       path: f.path,
       isDirectory,
-      ctime: isDirectory ? 0 : f.stat?.mtime ?? 0,
+      ctime: isDirectory ? 0 : f.stat?.ctime ?? f.stat?.mtime ?? 0,
       mtime: isDirectory ? 0 : f.stat?.mtime ?? 0,
       size: isDirectory ? 0 : f.stat?.size ?? 0,
     });

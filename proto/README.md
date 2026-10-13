@@ -102,6 +102,11 @@ interface ServerInfo {
 interface Stat {
   type: 'file' | 'folder';
   mtime: number;  // unix milliseconds
+  // Creation time, unix ms (Obsidian FileStats.ctime, not POSIX st_ctime).
+  // From the `user.obsidian-remote.created` xattr ("<ms>:<inode>", kept
+  // across tmp+rename writes), else OS birth time clamped to mtime, else
+  // mtime.
+  created?: number;
   size: number;   // bytes (0 for folders)
   mode: number;   // POSIX mode bits (informational)
 }
@@ -110,6 +115,7 @@ interface Entry {
   name: string;   // basename only, no slashes
   type: 'file' | 'folder' | 'symlink';
   mtime: number;
+  created?: number; // see Stat.created
   size: number;
 }
 

@@ -234,7 +234,7 @@ export class BulkWalker {
         all.push({
           path:        e.path,
           isDirectory: e.type === 'folder',
-          ctime:       e.mtime, // daemon has no separate ctime; mtime is the closest signal
+          ctime:       e.created ?? e.mtime,
           mtime:       e.mtime,
           size:        e.size,
         });

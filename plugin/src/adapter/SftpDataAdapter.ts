@@ -18,7 +18,7 @@ import * as fs from 'fs';
 import * as nodePath from 'path';
 import type { RemoteBinding } from '../ConnectionManager';
 import type { RemoteFsClient } from './RemoteFsClient';
-import type { WriterReflector } from './WriterReflector';
+import type { WriterReflector, WrittenStat } from './WriterReflector';
 import type { LocalOpRegistry } from './LocalOpRegistry';
 import type { ReadCache } from '../cache/ReadCache';
 import { ReconnectWait } from '../util/ReconnectWait';
@@ -262,9 +262,8 @@ export class SftpDataAdapter {
       const s = await this.client.stat(this.toRemote(normalizedPath));
       return {
         type: s.isDirectory ? 'folder' : 'file',
-        // SFTP only exposes mtime; reuse it as ctime so callers get a
-        // monotonically reasonable value rather than 0.
-        ctime: s.mtime,
+        // SFTP has no creation time; fall back to mtime.
+        ctime: s.created ?? s.mtime,
         mtime: s.mtime,
         size: s.size,
       };
@@ -397,14 +396,13 @@ export class SftpDataAdapter {
         await this.queueOrThrowText(normalizedPath, data);
         return;
       }
-      await this.writeBuffer(normalizedPath, Buffer.from(data, 'utf8'), true);
+      const written = await this.writeBuffer(normalizedPath, Buffer.from(data, 'utf8'), true);
       // After a successful text write, the file we just wrote IS the
       // new ancestor for any later edit cycle.
       if (this.ancestorTracker) {
-        const cached = this.readCache.peek(this.toRemote(normalizedPath));
-        this.ancestorTracker.remember(normalizedPath, data, cached?.mtime ?? 0);
+        this.ancestorTracker.remember(normalizedPath, data, written?.mtime ?? 0);
       }
-      this.applied([normalizedPath], r => r.reflectWrite(normalizedPath));
+      this.applied([normalizedPath], r => r.reflectWrite(normalizedPath, written));
     } finally {
       perfTracer.end(__t1, { op: 'write', path: normalizedPath, bytes: data.length });
     }
@@ -417,8 +415,8 @@ export class SftpDataAdapter {
         await this.queueOrThrowBinary(normalizedPath, Buffer.from(data));
         return;
       }
-      await this.writeBuffer(normalizedPath, Buffer.from(data), false);
-      this.applied([normalizedPath], r => r.reflectWrite(normalizedPath));
+      const written = await this.writeBuffer(normalizedPath, Buffer.from(data), false);
+      this.applied([normalizedPath], r => r.reflectWrite(normalizedPath, written));
     } finally {
       perfTracer.end(__t1, { op: 'writeBinary', path: normalizedPath, bytes: data.byteLength });
     }
@@ -463,11 +461,11 @@ export class SftpDataAdapter {
       try { existing = await this.readBuffer(normalizedPath); }
       catch { existing = Buffer.alloc(0); }
       const merged = Buffer.concat([existing, Buffer.from(data)]);
-      await this.writeBuffer(normalizedPath, merged, false);
+      const written = await this.writeBuffer(normalizedPath, merged, false);
       // appendBinary writes through writeBuffer directly (not via
       // this.write/writeBinary), so it must reflect itself or the
       // writer's model misses binary appends (#341).
-      this.applied([normalizedPath], r => r.reflectWrite(normalizedPath));
+      this.applied([normalizedPath], r => r.reflectWrite(normalizedPath, written));
       void options;
     } finally {
       perfTracer.end(__t1, { op: 'appendBinary', path: normalizedPath, bytes: data.byteLength });
@@ -906,7 +904,8 @@ export class SftpDataAdapter {
 
   /**
    * Atomic-on-the-server write (tmp+rename): ensure the parent exists, write,
-   * then refresh the read cache with the freshly-read mtime.
+   * then refresh the read cache with the freshly-read mtime. Returns that
+   * stat, or undefined if it failed.
    *
    * A recent ReadCache entry supplies `expectedMtime`, so the server rejects
    * the write if another client got there first. On rejection:
@@ -932,7 +931,7 @@ export class SftpDataAdapter {
     data: Buffer,
     isText: boolean,
     expectedMtimeOverride?: number,
-  ): Promise<void> {
+  ): Promise<WrittenStat | undefined> {
     const remote = this.toRemote(normalizedPath);
     const parent = parentDirRemote(remote);
     if (parent && parent !== remote) {
@@ -962,15 +961,16 @@ export class SftpDataAdapter {
     // disk too, so the next Obsidian start reads the real settings (#342/#429).
     this.writeThroughConfig(normalizedPath, writtenData);
 
-    let mtime = 0;
+    let written: WrittenStat | undefined;
     try {
       const s = await this.client.stat(remote);
-      mtime = s.mtime;
+      written = { ctime: s.created, mtime: s.mtime, size: s.size };
     } catch (e) {
       logger.warn(`stat-after-write failed for "${remote}": ${errorMessage(e)}`);
     }
-    this.readCache.put(remote, writtenData, mtime);
+    this.readCache.put(remote, writtenData, written?.mtime ?? 0);
     this.dirCache.invalidate(parent);
+    return written;
   }
 
 

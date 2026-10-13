@@ -335,7 +335,8 @@ export class BackgroundIndexer {
         if (e.isDirectory) continue;
         const was = before.get(e.path);
         if (!was || was.isDirectory) continue;
-        if (was.mtime === e.mtime && was.size === e.size) continue;
+        // Compare ctime too: a restored snapshot can hold a stale one.
+        if (was.mtime === e.mtime && was.size === e.size && was.ctime === e.ctime) continue;
         const now = this.deps.currentStat?.(e.path);
         if (now && (now.mtime !== was.mtime || now.size !== was.size)) continue;
         if (builder.modifyOne(e.path, { ctime: e.ctime, mtime: e.mtime, size: e.size })) modified++;

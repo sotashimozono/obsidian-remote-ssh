@@ -1,5 +1,5 @@
 import type { TAbstractFile, TFile, TFolder, Vault } from 'obsidian';
-import type { WriterReflector } from '../adapter/WriterReflector';
+import type { WriterReflector, WrittenStat } from '../adapter/WriterReflector';
 import { logger } from '../util/logger';
 import { perfTracer } from '../util/PerfTracer';
 import { errorMessage } from "../util/errorMessage";
@@ -425,8 +425,12 @@ export class VaultModelBuilder {
    * file (firing `create`) when the path is new, otherwise bumps it
    * (firing `modify`). Missing parent folders are synthesised so a
    * write into a not-yet-modelled subtree still lands.
+   *
+   * `stat` is applied before the event fires, so `modify` listeners see
+   * the new values. An existing file keeps its ctime unless the remote
+   * reports one.
    */
-  reflectWrite(path: string): void {
+  reflectWrite(path: string, stat?: WrittenStat): void {
     const existing = this.vault.getAbstractFileByPath(path);
     if (existing) {
       if (isFolder(existing)) {
@@ -441,7 +445,14 @@ export class VaultModelBuilder {
         );
         return;
       }
-      if (!this.modifyOne(path)) {
+      // `||`, not `??`: a ctime of 0 is the "unknown" placeholder.
+      const modelled = existing instanceof this.deps.TFile ? existing.stat?.ctime : undefined;
+      const fileStat = stat && {
+        ctime: stat.ctime || modelled || stat.mtime,
+        mtime: stat.mtime,
+        size: stat.size,
+      };
+      if (!this.modifyOne(path, fileStat)) {
         logger.warn(
           `VaultModelBuilder.reflectWrite: modifyOne("${path}") no-op; ` +
           'writer model may be stale for this path',
@@ -450,7 +461,9 @@ export class VaultModelBuilder {
       return;
     }
     if (!this.insertOne(
-      { path, isDirectory: false, ctime: 0, mtime: Date.now(), size: 0 },
+      stat
+        ? { path, isDirectory: false, ctime: stat.ctime ?? stat.mtime, mtime: stat.mtime, size: stat.size }
+        : { path, isDirectory: false, ctime: 0, mtime: Date.now(), size: 0 },
       { ensureParents: true },
     )) {
       // insertOne returns null when even ensureParents couldn't
