@@ -21,6 +21,7 @@ import { ConnectionManager as CM } from '../ConnectionManager';
 import type { FsChangeListener } from '../vault/FsChangeListener';
 import type { TransferTracker } from '../util/TransferTracker';
 import { PathMapper } from '../path/PathMapper';
+import type { StartupReadGate } from './StartupReadGate';
 import { logger } from '../util/logger';
 import { errorMessage } from '../util/errorMessage';
 import * as path from 'path';
@@ -63,6 +64,8 @@ export class AdapterManager {
   private dirCache: DirCache | null = null;
   private ancestorTracker: AncestorTracker | null = null;
   private offlineQueue: OfflineQueue | null = null;
+  /** Holds startup note calls until the patch; see `StartupReadGate`. */
+  private startupGate: StartupReadGate | null = null;
   /** The replay in flight, if any; see `replayOfflineQueue`. */
   private replaying: Promise<void> | null = null;
   /** Bumped by `restore()`, so replays queued in a torn-down session stand down. */
@@ -78,6 +81,11 @@ export class AdapterManager {
     private readonly getSettings: () => PluginSettings,
     private readonly transferTracker: TransferTracker | null = null,
   ) {}
+
+  /** The startup read gate; `patch()` hands its held calls to the remote adapter. */
+  setStartupGate(gate: StartupReadGate | null): void {
+    this.startupGate = gate;
+  }
 
   get dataAdapter(): SftpDataAdapter | null {
     return this._dataAdapter;
@@ -161,12 +169,16 @@ export class AdapterManager {
       shadowBasePath,
       this.transferTracker,
     );
+    // Synchronously before the patch, so the patcher captures (and restore()
+    // later puts back) the native members, not the gate's wrappers.
+    this.startupGate?.uninstall();
     this.patcher = new AdapterPatcher(targetAdapter, this._dataAdapter);
     try {
       this.patcher.patch(PATCHED_METHODS);
       logger.info(`Adapter patched via ${transportLabel}: [${PATCHED_METHODS.join(', ')}]`);
     } catch (e) {
       logger.error(`Adapter patch failed: ${errorMessage(e)}`);
+      this.openStartupGate();
       this.patcher = null;
       this._dataAdapter = null;
       this.readCache = null;
@@ -178,8 +190,16 @@ export class AdapterManager {
     }
 
     this.wireLiveUpdates(this._dataAdapter, mapper);
+    // Held calls re-dispatch through the members just patched in.
+    this.openStartupGate();
 
     return true;
+  }
+
+  /** Release held startup calls (to the remote adapter, if patched). Idempotent. */
+  openStartupGate(): void {
+    this.startupGate?.open();
+    this.startupGate = null;
   }
 
   /**
