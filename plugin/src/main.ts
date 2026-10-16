@@ -27,6 +27,7 @@ import { FsChangeListener } from './vault/FsChangeListener';
 import { BulkWalker } from './vault/BulkWalker';
 import { LazyFolderLoader } from './vault/LazyFolderLoader';
 import { BackgroundIndexer, type IndexComplete, type IndexProgress } from './vault/BackgroundIndexer';
+import { StartupReadGate } from './adapter/StartupReadGate';
 import {
   collectModelEntries,
   deleteTreeSnapshot,
@@ -265,6 +266,9 @@ export default class RemoteSshPlugin extends Plugin {
         this.showOnboarding();
       }
     });
+    // Last, once the callback that releases it is registered: a throw earlier
+    // in onload must not leave note calls held.
+    this.installStartupGate();
   }
 
   /**
@@ -388,19 +392,47 @@ export default class RemoteSshPlugin extends Plugin {
   }
 
   /**
-   * Offer the plugin suggestions captured at bootstrap, stage any binaries
-   * the list names but disk lacks, then connect. Separate from
+   * A shadow vault's notes exist only on the remote: hold note calls from
+   * layout-ready (when plugins like Dataview start indexing) until the remote
+   * adapter is in, instead of failing them against the empty shadow folder.
+   * `runShadowStartup` always opens it.
+   */
+  private installStartupGate(): void {
+    if (!this.settings.autoConnectProfileId) return;
+    const gate = new StartupReadGate(this.app.vault.adapter as unknown as Record<string, unknown>, {
+      configDir: this.app.vault.configDir,
+      layoutReady: () => this.app.workspace.layoutReady,
+    });
+    gate.install();
+    this.adapterMgr.setStartupGate(gate);
+  }
+
+  /**
+   * Connect, then offer the plugin suggestions captured at bootstrap and
+   * stage any binaries the list names but disk lacks. Separate from
    * `runAutoConnect` so Reconnect re-runs only the connect half.
    */
   private async runShadowStartup(): Promise<void> {
     const coordinator = new ShadowStartupCoordinator(
       this.app, this.settings, () => this.saveSettings(),
     );
-    await coordinator.prepareForAutoConnect();
-    await this.runAutoConnect('layout-ready');
+    try {
+      await this.runAutoConnect('layout-ready');
+    } finally {
+      // Patched or not, nothing may stay held: without a remote adapter, held
+      // calls fall back to the native one, as they did before the gate.
+      this.adapterMgr.openStartupGate();
+      // After the connect, never before: installing can await a plugin's
+      // onload, and one that reads a note there would wait on the gate.
+      // Logged, not thrown: a failed connect's error is the one to surface.
+      await coordinator.prepareForAutoConnect().catch((e: unknown) => {
+        logger.warn(`runShadowStartup: plugin install failed: ${errorMessage(e)}`);
+      });
+    }
   }
 
   onunload() {
+    this.adapterMgr.openStartupGate();
     // Restore adapter first so any in-flight Obsidian read calls see the
     // original FileSystemAdapter again before we tear down the SSH session.
     this.adapterMgr.restore();

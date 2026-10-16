@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Importing main.ts pulls in RemoteTerminalView (extends the obsidian ItemView,
 // which the unit-test obsidian mock doesn't model). Stub the leaf so the import
@@ -27,6 +27,8 @@ vi.mock('../src/vault/BackgroundIndexer', () => ({
 
 import { App, recordedNotices, clearNotices } from 'obsidian';
 import RemoteSshPlugin from '../src/main';
+import { ShadowStartupCoordinator } from '../src/shadow/ShadowStartupCoordinator';
+import { StartupReadGate } from '../src/adapter/StartupReadGate';
 import type { SshProfile } from '../src/types';
 import type { RemoteBinding } from '../src/ConnectionManager';
 
@@ -358,6 +360,76 @@ describe('RemoteSshPlugin.startReconnect — catching up on the gap', () => {
       expect(cancel).toHaveBeenCalledOnce();
       expect(made.p.backgroundIndexer).toBeNull();
     });
+});
+
+describe('RemoteSshPlugin shadow startup and the read gate', () => {
+  it.each([['p1', 1], [null, 0]] as const)(
+    'with autoConnectProfileId=%s installs %i startup gate(s)', (profileId, installs) => {
+      const { plugin, p } = makePlugin({ autoConnectProfileId: profileId });
+      const setStartupGate = vi.fn();
+      (p.adapterMgr as Record<string, unknown>).setStartupGate = setStartupGate;
+
+      (plugin as unknown as { installStartupGate(): void }).installStartupGate();
+
+      expect(setStartupGate).toHaveBeenCalledTimes(installs);
+      if (installs) expect(setStartupGate.mock.calls[0][0]).toBeInstanceOf(StartupReadGate);
+    });
+
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  function shadowStartup() {
+    const made = makePlugin();
+    (made.p.adapterMgr as Record<string, unknown>).openStartupGate = vi.fn();
+    const runAutoConnect = vi.fn(() => Promise.resolve());
+    made.p.runAutoConnect = runAutoConnect;
+    const prepare = vi.spyOn(ShadowStartupCoordinator.prototype, 'prepareForAutoConnect').mockResolvedValue(undefined);
+    const run = () => (made.plugin as unknown as { runShadowStartup(): Promise<void> }).runShadowStartup();
+    return { ...made, runAutoConnect, prepare, run };
+  }
+
+  it('connects before the plugin-install step, then runs it', async () => {
+    // Installing can await a plugin's onload; one that reads a note there
+    // would wait on the gate, which only the connect opens.
+    const { runAutoConnect, prepare, run, p } = shadowStartup();
+    const order: string[] = [];
+    runAutoConnect.mockImplementation(async () => { order.push('connect'); });
+    (p.adapterMgr as { openStartupGate: ReturnType<typeof vi.fn> }).openStartupGate
+      .mockImplementation(() => { order.push('gate opened'); });
+    prepare.mockImplementation(async () => { order.push('install plugins'); });
+
+    await run();
+
+    expect(order).toEqual(['connect', 'gate opened', 'install plugins']);
+  });
+
+  it('still installs plugins when the connect throws', async () => {
+    const { runAutoConnect, prepare, run } = shadowStartup();
+    runAutoConnect.mockRejectedValue(new Error('no route'));
+
+    await expect(run()).rejects.toThrow('no route');
+
+    expect(prepare).toHaveBeenCalledOnce();
+  });
+
+  it('a failed plugin install does not hide the connect error', async () => {
+    const { runAutoConnect, prepare, run } = shadowStartup();
+    runAutoConnect.mockRejectedValue(new Error('no route'));
+    prepare.mockRejectedValue(new Error('marketplace down'));
+
+    await expect(run()).rejects.toThrow('no route');
+  });
+
+  it('opens the startup read gate even when the connect throws', async () => {
+    const { plugin, p } = makePlugin();
+    const open = vi.fn();
+    (p.adapterMgr as Record<string, unknown>).openStartupGate = open;
+    p.runAutoConnect = vi.fn(() => Promise.reject(new Error('no route')));
+    vi.spyOn(ShadowStartupCoordinator.prototype, 'prepareForAutoConnect').mockResolvedValue(undefined);
+
+    await expect((plugin as unknown as { runShadowStartup(): Promise<void> }).runShadowStartup()).rejects.toThrow('no route');
+
+    expect(open).toHaveBeenCalledOnce();
+  });
 });
 
 describe('RemoteSshPlugin background index plumbing', () => {
