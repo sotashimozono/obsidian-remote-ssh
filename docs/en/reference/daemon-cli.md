@@ -42,8 +42,10 @@ Relative paths are accepted but resolved to absolute via `filepath.Abs` at start
 Unix socket the daemon listens on. **Default: `<state-dir>/server.sock`** (state-dir is normally `~/.obsidian-remote/`).
 
 The daemon:
-1. Removes any existing file at this path (cleanup of dangling sockets from a crashed prior run)
-2. Creates the parent directory with mode `0700` if missing
+1. Creates the parent directory with mode `0700` if missing
+2. Takes an exclusive lock on `<socket>.lock` and `<token-file>.lock`, waiting up to 2 s for a daemon that is shutting down. If another daemon on this host still holds either, exits with code `1` and leaves that daemon's socket and token file alone. Otherwise removes any existing file at the socket path (cleanup of a dangling socket from a crashed prior run)
+
+   The lock is skipped, with a warning in the log, when it cannot protect the path: on a filesystem without working `flock`, or when the holder is a daemon on another host (a home directory shared over NFS, where the lock reaches every host but a Unix socket does not). The daemon then behaves as it did before the lock existed.
 3. Binds the Unix socket
 4. Chmods the socket to `0600` so only the daemon's user can connect
 
@@ -85,8 +87,10 @@ So a typical invocation with all defaults plants:
 
 ```
 ~/.obsidian-remote/
-    server.sock     # the Unix socket the daemon listens on (mode 0600)
-    token           # 32-byte hex token (mode 0600); auto-removed on clean exit
+    server.sock      # the Unix socket the daemon listens on (mode 0600)
+    server.sock.lock # held by the running daemon; decides which daemon owns the socket. Left in place on exit
+    token            # 32-byte hex token (mode 0600); auto-removed on clean exit
+    token.lock       # the same, for the token
 ```
 
 You can override either path independently — useful for multi-vault setups (one socket per vault on the same OS user; see [[en/server/multi-user|Multi-user hosting]]).
@@ -161,14 +165,18 @@ In the plugin profile for each, set the matching socket + token paths. See [[en/
 | Code | Meaning |
 |---|---|
 | `0` | Clean shutdown (SIGINT / SIGTERM received and listener drained, or `--version` printed) |
-| `1` | Runtime error after startup (cannot bind socket, token write failed, vault root vanished, etc.) — message goes to stderr |
+| `1` | Runtime error after startup (another daemon already serves the socket, cannot bind socket, token write failed, vault root vanished, etc.) — message goes to stderr |
 | `2` | Argument parse error (missing required flag, invalid value) — flag.ContinueOnError surfaces this |
 
 ## Signal handling
 
-The daemon installs a SIGINT + SIGTERM handler that closes the listener (which unwinds `Serve`), removes the socket file + token file, then exits `0`. This is graceful shutdown.
+The daemon installs a SIGINT + SIGTERM handler that closes the listener, removes the socket file + token file, releases the locks, and then waits for open connections to finish before it exits `0`. This is graceful shutdown.
 
-`kill -9` (SIGKILL) skips the cleanup. The next daemon start will find the stale socket file at `<socket>` and the existing handler removes it before binding fresh — so a hard kill doesn't permanently jam the path.
+The files go and the locks are released *before* the drain, while the daemon still owns the paths. A redeploy starts the new daemon right after sending SIGTERM, so the new daemon can take the locks at once. The old daemon never touches the paths again after that, even if it takes a while to drain.
+
+The handler only catches the first signal. A second SIGINT or SIGTERM kills a daemon that is still draining, so a connection that never closes cannot keep it alive past the next `pkill`.
+
+`kill -9` (SIGKILL) skips the cleanup. The kernel still drops the lock when the process dies, so the next daemon takes it, finds the stale socket file at `<socket>` and removes it before binding fresh. A hard kill doesn't permanently jam the path.
 
 ## Environment variables
 

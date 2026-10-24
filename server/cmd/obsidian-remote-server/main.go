@@ -82,6 +82,16 @@ func run(args []string) (int, error) {
 		logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	}
 
+	// Take ownership of the socket and token paths before touching
+	// either. A daemon that cannot get the lock exits here and leaves the
+	// running daemon's files alone (#614). This also clears a dangling
+	// socket from a prior crashed run.
+	state, err := claimStateFiles(*socketPath, *tokenPath, logger)
+	if err != nil {
+		return 1, err
+	}
+	defer state.release()
+
 	token, err := auth.Generate()
 	if err != nil {
 		return 1, err
@@ -89,18 +99,17 @@ func run(args []string) (int, error) {
 	if err := auth.WriteFile(*tokenPath, token); err != nil {
 		return 1, err
 	}
-	defer func() { _ = os.Remove(*tokenPath) }()
 
-	// Clean up any dangling socket from a prior crashed run.
-	_ = os.Remove(*socketPath)
-	if err := os.MkdirAll(filepath.Dir(*socketPath), 0o700); err != nil {
-		return 1, fmt.Errorf("mkdir socket dir: %w", err)
-	}
 	listener, err := net.Listen("unix", *socketPath)
 	if err != nil {
 		return 1, fmt.Errorf("listen %q: %w", *socketPath, err)
 	}
-	defer func() { _ = os.Remove(*socketPath) }()
+	// state.release removes the socket while it still holds the lock.
+	// The listener must not unlink the path again on a later Close, when
+	// the path may already be another daemon's.
+	if ul, ok := listener.(*net.UnixListener); ok {
+		ul.SetUnlinkOnClose(false)
+	}
 	// Restrict socket to the current user.
 	if err := os.Chmod(*socketPath, 0o600); err != nil {
 		logger.Warn("chmod socket", "err", err.Error())
@@ -182,8 +191,15 @@ func run(args []string) (int, error) {
 	defer cancel()
 	go func() {
 		<-ctx.Done()
+		// Stop catching signals: the drain below has no deadline, so a
+		// second SIGTERM must still be able to kill a daemon stuck on a
+		// connection that never closes.
+		cancel()
 		logger.Info("shutdown signal received")
 		_ = listener.Close()
+		// Hand the paths over now rather than after Serve has drained its
+		// connections: a redeploy's new daemon is waiting for the lock.
+		state.release()
 	}()
 
 	fmt.Fprintf(os.Stderr, "obsidian-remote-server %s\n", Version)
