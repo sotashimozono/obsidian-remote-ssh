@@ -427,8 +427,8 @@ export class VaultModelBuilder {
    * write into a not-yet-modelled subtree still lands.
    *
    * `stat` is applied before the event fires, so `modify` listeners see
-   * the new values. An existing file keeps its ctime: the remote reports
-   * none.
+   * the new values. An existing file keeps its ctime unless the remote
+   * reports one.
    */
   reflectWrite(path: string, stat?: WrittenStat): void {
     const existing = this.vault.getAbstractFileByPath(path);
@@ -448,7 +448,7 @@ export class VaultModelBuilder {
       // `||`, not `??`: a ctime of 0 is the "unknown" placeholder.
       const modelled = existing instanceof this.deps.TFile ? existing.stat?.ctime : undefined;
       const fileStat = stat && {
-        ctime: modelled || stat.mtime,
+        ctime: stat.ctime || modelled || stat.mtime,
         mtime: stat.mtime,
         size: stat.size,
       };
@@ -462,7 +462,7 @@ export class VaultModelBuilder {
     }
     if (!this.insertOne(
       stat
-        ? { path, isDirectory: false, ctime: stat.mtime, mtime: stat.mtime, size: stat.size }
+        ? { path, isDirectory: false, ctime: stat.ctime ?? stat.mtime, mtime: stat.mtime, size: stat.size }
         : { path, isDirectory: false, ctime: 0, mtime: Date.now(), size: 0 },
       { ensureParents: true },
     )) {

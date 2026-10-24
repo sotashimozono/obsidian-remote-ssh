@@ -42,6 +42,9 @@ type Stat struct {
 	Type EntryType `json:"type"`
 	// Mtime is the modification time in unix milliseconds.
 	Mtime int64 `json:"mtime"`
+	// Created is the creation time in unix milliseconds (Obsidian
+	// FileStats.ctime, not POSIX st_ctime).
+	Created int64 `json:"created"`
 	// Size in bytes; 0 for directories.
 	Size int64 `json:"size"`
 	// Mode is POSIX mode bits (informational).
@@ -51,10 +54,11 @@ type Stat struct {
 // Entry is a directory listing row.
 type Entry struct {
 	// Name is the basename only (no slashes).
-	Name  string    `json:"name"`
-	Type  EntryType `json:"type"`
-	Mtime int64     `json:"mtime"`
-	Size  int64     `json:"size"`
+	Name    string    `json:"name"`
+	Type    EntryType `json:"type"`
+	Mtime   int64     `json:"mtime"`
+	Created int64     `json:"created"` // see Stat.Created
+	Size    int64     `json:"size"`
 }
 
 // ─── method param / result shapes ───────────────────────────────────────────
@@ -199,10 +203,11 @@ type WalkParams struct {
 // Entry, the path is vault-relative (not just a basename) so callers
 // don't have to reconstruct it from the request path + entry name.
 type WalkEntry struct {
-	Path  string    `json:"path"`
-	Type  EntryType `json:"type"`
-	Mtime int64     `json:"mtime"`
-	Size  int64     `json:"size"`
+	Path    string    `json:"path"`
+	Type    EntryType `json:"type"`
+	Mtime   int64     `json:"mtime"`
+	Created int64     `json:"created"` // see Stat.Created
+	Size    int64     `json:"size"`
 }
 
 // WalkResult is fs.walk's response. `Truncated` is set when the daemon

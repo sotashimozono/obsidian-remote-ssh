@@ -152,6 +152,15 @@ const writeFilePerm = 0o644
 //     daemon's own writes need a workaround for live-update fanout).
 //   - rpc.Error on failure.
 //
+// Creation time: the rename swaps in tmp's inode, so the file's birth
+// time would reset on every save, and Linux can't set a birth time. Before
+// the rename, tmp is therefore stamped with the original's creation time
+// in the `user.obsidian-remote.created` xattr, as "<unix ms>:<inode>"
+// (see createdXattr; the inode tells a stamp copied along with the file
+// from ours). Best-effort, by design: a failure reading or writing it
+// never fails the write, and without it a file reports its last save as
+// its creation time, as it did before the xattr existed.
+//
 // relativePath is used solely to tag error messages with a path the
 // client recognises.
 func atomicWriteFile(abs, relativePath string, data []byte, expectedMtime int64) (int64, bool, *rpc.Error) {
@@ -159,8 +168,10 @@ func atomicWriteFile(abs, relativePath string, data []byte, expectedMtime int64)
 	// check and to return wasModify so the caller can decide whether
 	// to emit a synthetic Modified event after the rename.
 	preExisted := false
+	var created int64
 	if info, err := os.Stat(abs); err == nil {
 		preExisted = true
+		created = createdMillis(abs, info)
 		if expectedMtime != 0 {
 			got := info.ModTime().UnixMilli()
 			if got != expectedMtime {
@@ -199,6 +210,11 @@ func atomicWriteFile(abs, relativePath string, data []byte, expectedMtime int64)
 		// Non-fatal on platforms that don't fully support chmod (e.g.
 		// some Windows filesystems): keep going.
 		_ = err
+	}
+	if preExisted {
+		// The rename swaps in tmp's inode; carry the creation time over.
+		// Best-effort: without xattr support the write still succeeds.
+		_ = writeCreatedXattr(tmpPath, created)
 	}
 	if err := os.Rename(tmpPath, abs); err != nil {
 		cleanup()

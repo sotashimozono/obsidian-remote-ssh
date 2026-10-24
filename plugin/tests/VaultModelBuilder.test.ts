@@ -625,6 +625,18 @@ describe('VaultModelBuilder.reflect* (#341 writer self-reflect)', () => {
     expect(statAtModify).toEqual({ ctime: 100, mtime: 500, size: 9 });
   });
 
+  it('reflectWrite prefers the remote ctime over the modelled one', () => {
+    const { vault, fileMap } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    builder.insertOne({ path: 'Notes.md', isDirectory: false, ctime: 100, mtime: 200, size: 3 });
+    builder.reflectWrite('Fresh.md', { ctime: 40, mtime: 600, size: 1 });
+
+    builder.reflectWrite('Notes.md', { ctime: 50, mtime: 500, size: 9 });
+
+    expect((fileMap['Notes.md'] as FakeTFile).stat).toEqual({ ctime: 50, mtime: 500, size: 9 });
+    expect((fileMap['Fresh.md'] as FakeTFile).stat).toEqual({ ctime: 40, mtime: 600, size: 1 });
+  });
+
   it('reflectWrite does not keep a placeholder ctime of 0', () => {
     const { vault, fileMap } = makeFakeVault();
     const builder = new VaultModelBuilder(vault as never, deps);

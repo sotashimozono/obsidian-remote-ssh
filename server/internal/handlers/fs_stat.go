@@ -33,10 +33,11 @@ func FsStat(vaultRoot string) rpc.Handler {
 			return nil, mapFsError(err, p.Path)
 		}
 		return proto.Stat{
-			Type:  entryTypeFrom(info.Mode()),
-			Mtime: mtimeMillis(info),
-			Size:  info.Size(),
-			Mode:  uint32(info.Mode()),
+			Type:    entryTypeFrom(info.Mode()),
+			Mtime:   mtimeMillis(info),
+			Created: createdMillis(abs, info),
+			Size:    info.Size(),
+			Mode:    uint32(info.Mode()),
 		}, nil
 	}
 }
