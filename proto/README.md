@@ -102,6 +102,11 @@ interface ServerInfo {
 interface Stat {
   type: 'file' | 'folder';
   mtime: number;  // unix milliseconds
+  // Creation time, unix ms (Obsidian FileStats.ctime, not POSIX st_ctime).
+  // From the `user.obsidian-remote.created` xattr ("<ms>:<inode>", kept
+  // across tmp+rename writes), else OS birth time clamped to mtime, else
+  // mtime.
+  created?: number;
   size: number;   // bytes (0 for folders)
   mode: number;   // POSIX mode bits (informational)
 }
@@ -110,6 +115,7 @@ interface Entry {
   name: string;   // basename only, no slashes
   type: 'file' | 'folder' | 'symlink';
   mtime: number;
+  created?: number; // see Stat.created
   size: number;
 }
 
@@ -125,6 +131,12 @@ Atomicity notes:
 - `fs.copy` goes through the file contents (no server-side reflink).
 - `fs.trashLocal` moves the path under `<vaultRoot>/.trash/…`,
   creating intermediate dirs as needed.
+- Writes keep a file's creation time in a `user.obsidian-remote.created`
+  extended attribute ("<unix ms>:<inode>") on the file, since tmp +
+  rename replaces the inode. If you find it on your files, that is what
+  it is: safe to remove, after which the daemon reports the file's
+  birth time or mtime as `created`. Best-effort; a filesystem without
+  user xattrs just doesn't get it.
 
 ## Notifications (server → client)
 

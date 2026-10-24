@@ -139,6 +139,7 @@ function toRemoteStat(s: Stat): RemoteStat {
     isFile:          s.type === 'file',
     isSymbolicLink:  false, // fs.stat follows the link; symlink detection lives in list()
     mtime:           s.mtime,
+    created:         s.created,
     size:            s.size,
     mode:            s.mode,
   };
@@ -151,6 +152,7 @@ function toRemoteEntry(e: Entry): RemoteEntry {
     isFile:          e.type === 'file',
     isSymbolicLink:  e.type === 'symlink',
     mtime:           e.mtime,
+    created:         e.created,
     size:            e.size,
   };
 }

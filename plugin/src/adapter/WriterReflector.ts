@@ -53,6 +53,8 @@ export interface WriterReflector {
  * `TFile.stat`.
  */
 export interface WrittenStat {
+  /** Undefined when the transport doesn't report a creation time. */
+  ctime?: number;
   mtime: number;
   size: number;
 }

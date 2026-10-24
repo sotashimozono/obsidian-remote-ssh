@@ -262,9 +262,8 @@ export class SftpDataAdapter {
       const s = await this.client.stat(this.toRemote(normalizedPath));
       return {
         type: s.isDirectory ? 'folder' : 'file',
-        // SFTP only exposes mtime; reuse it as ctime so callers get a
-        // monotonically reasonable value rather than 0.
-        ctime: s.mtime,
+        // SFTP has no creation time; fall back to mtime.
+        ctime: s.created ?? s.mtime,
         mtime: s.mtime,
         size: s.size,
       };
@@ -965,7 +964,7 @@ export class SftpDataAdapter {
     let written: WrittenStat | undefined;
     try {
       const s = await this.client.stat(remote);
-      written = { mtime: s.mtime, size: s.size };
+      written = { ctime: s.created, mtime: s.mtime, size: s.size };
     } catch (e) {
       logger.warn(`stat-after-write failed for "${remote}": ${errorMessage(e)}`);
     }

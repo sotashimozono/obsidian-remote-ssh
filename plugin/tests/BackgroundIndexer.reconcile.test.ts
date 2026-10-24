@@ -112,6 +112,17 @@ describe('BackgroundIndexer reconcile', () => {
     expect(completions).toEqual([{ viaFastPath: true, modified: 1, removed: 0 }]);
   });
 
+  it('fast path: updates a note whose only change is its ctime', async () => {
+    const m = makeModel([{ ...file('a.md', 5, 10), ctime: 5 }]);
+    const { indexer, completions } = makeIndexer({
+      fastPath: true, model: m, remote: [{ ...file('a.md', 5, 10), ctime: 3 }],
+    });
+    await indexer.start();
+
+    expect(m.modifyOne).toHaveBeenCalledExactlyOnceWith('a.md', { ctime: 3, mtime: 5, size: 10 });
+    expect(completions).toEqual([{ viaFastPath: true, modified: 1, removed: 0 }]);
+  });
+
   it('fast path: drops notes and folders the remote no longer has', async () => {
     const m = makeModel([file('keep.md'), dir('old'), file('old/x.md'), file('gone.md')]);
     const { indexer, completions } = makeIndexer({ fastPath: true, model: m, remote: [file('keep.md')] });

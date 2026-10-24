@@ -123,6 +123,22 @@ describe('BulkWalker', () => {
     expect(result.entries[2]).toMatchObject({ path: 'README.md',    isDirectory: false, mtime: 3000, size: 42 });
   });
 
+  it('takes ctime from the daemon\'s created, falling back to mtime', async () => {
+    const adapter = makeAdapter({});
+    const { rpc } = makeRpc(['fs.walk'], {
+      entries: [
+        { path: 'new.md', type: 'file', mtime: 2000, created: 500, size: 1 },
+        { path: 'old.md', type: 'file', mtime: 3000, size: 1 }, // no `created`
+      ],
+      truncated: false,
+    });
+    const walker = new BulkWalker({ adapter, rpcConnection: rpc });
+
+    const result = await walker.walk('');
+
+    expect(result.entries.map(e => [e.path, e.ctime])).toEqual([['new.md', 500], ['old.md', 3000]]);
+  });
+
   it('hides ALL dot-prefixed entries (incl the config dir) and reports hiddenCount', async () => {
     const adapter = makeAdapter({});
     const { rpc } = makeRpc(['fs.walk'], {
