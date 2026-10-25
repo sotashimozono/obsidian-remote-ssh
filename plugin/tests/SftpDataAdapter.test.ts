@@ -994,7 +994,7 @@ describe('SftpDataAdapter (read-side)', () => {
       // Now flip the file under the adapter's nose to simulate
       // another client having written "theirsContent" at mtime 200.
       fake.files['/v/note.md'] = { data: Buffer.from(opts.theirsContent), mtime: 200 };
-      return { adapter, onText, onLegacy, writeCalls, fake };
+      return { adapter, onText, onLegacy, writeCalls, fake, tracker };
     }
 
     it('routes a text PreconditionFailed through onTextConflict with the right panes', async () => {
@@ -1037,6 +1037,66 @@ describe('SftpDataAdapter (read-side)', () => {
       await adapter.write('note.md', 'mine');
       expect(writeCalls[1].data).toBe('mine + theirs handled');
       expect(fake.files['/v/note.md'].data.toString('utf8')).toBe('mine + theirs handled');
+    });
+
+    // `immediate` would cache "mine", so the editor reloading on `modify`
+    // would take it and its next save would undo the merge.
+    it('merged drops the cached text instead of calling immediate', async () => {
+      const { adapter } = await primeAndConflict({
+        ancestorContent: 'v0',
+        mineContent:     'mine',
+        theirsContent:   'theirs',
+        decision:        { decision: 'merged', content: 'merged text' },
+      });
+      const order: string[] = [];
+      adapter.setWriterReflector({
+        reflectWrite:  () => { order.push('reflect'); },
+        forgetText:    (p: string) => { order.push(`forget ${p}`); },
+        reflectRename: vi.fn(),
+        reflectRemove: vi.fn(),
+        reflectMkdir:  vi.fn(),
+      });
+      const immediate = vi.fn();
+
+      await adapter.write('note.md', 'mine', { immediate } as never);
+
+      expect(immediate).not.toHaveBeenCalled();
+      expect(order).toEqual(['forget note.md', 'reflect']);
+      expect(await adapter.read('note.md')).toBe('merged text');
+    });
+
+    it('merged records the merged text as the next ancestor', async () => {
+      const { adapter, tracker } = await primeAndConflict({
+        ancestorContent: 'v0',
+        mineContent:     'mine',
+        theirsContent:   'theirs',
+        decision:        { decision: 'merged', content: 'merged text' },
+      });
+      await adapter.write('note.md', 'mine');
+      expect(tracker.get('note.md')?.content).toBe('merged text');
+    });
+
+    // Vault.process caches what process returns.
+    it('merged inside process returns the merged text', async () => {
+      const { adapter } = await primeAndConflict({
+        ancestorContent: 'v0',
+        mineContent:     'mine',
+        theirsContent:   'theirs',
+        decision:        { decision: 'merged', content: 'merged text' },
+      });
+      expect(await adapter.process('note.md', () => 'mine')).toBe('merged text');
+    });
+
+    it('keep-mine still calls immediate', async () => {
+      const { adapter } = await primeAndConflict({
+        ancestorContent: 'v0',
+        mineContent:     'mine',
+        theirsContent:   'theirs',
+        decision:        { decision: 'keep-mine' },
+      });
+      const immediate = vi.fn();
+      await adapter.write('note.md', 'mine', { immediate } as never);
+      expect(immediate).toHaveBeenCalledTimes(1);
     });
 
     it('keep-theirs rethrows + leaves the remote alone, refreshes cache to theirs', async () => {
@@ -1151,6 +1211,28 @@ describe('SftpDataAdapter (offline queue while reconnecting)', () => {
       path: 'a.md',
       contentBase64: Buffer.from('hello', 'utf8').toString('base64'),
     });
+  });
+
+  it('calls options.immediate once a write is queued', async () => {
+    const fake = makeFakeClient({});
+    const adapter = makeAdapterWithQueue({ client: fake.client });
+    adapter.setReconnecting(true);
+    const immediate = vi.fn();
+
+    await adapter.write('a.md', 'hello', { immediate } as never);
+    await adapter.writeBinary('b.bin', new ArrayBuffer(1), { immediate } as never);
+
+    expect(immediate).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not call options.immediate when there is no queue to take the write', async () => {
+    const fake = makeFakeClient({});
+    const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+    adapter.setReconnecting(true);
+    const immediate = vi.fn();
+
+    await expect(adapter.write('a.md', 'hello', { immediate } as never)).rejects.toThrow();
+    expect(immediate).not.toHaveBeenCalled();
   });
 
   it('post-queue read returns the just-written content from local cache', async () => {
@@ -1419,6 +1501,7 @@ describe('SftpDataAdapter — writer reflect (#341)', () => {
   function makeReflector() {
     return {
       reflectWrite:  vi.fn(),
+      forgetText:    vi.fn(),
       reflectRename: vi.fn(),
       reflectRemove: vi.fn(),
       reflectMkdir:  vi.fn(),
@@ -1437,6 +1520,85 @@ describe('SftpDataAdapter — writer reflect (#341)', () => {
 
     expect(r.reflectWrite.mock.calls.map(c => c[0]))
       .toEqual(['note.md', 'blob.bin', 'log.bin']);
+  });
+
+  // Why the order matters: see `settleTextCache`.
+  it('calls options.immediate on every write path, before reflecting', async () => {
+    const fake = makeFakeClient({ dirs: { '/v': [] } });
+    const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+    const order: string[] = [];
+    const r = makeReflector();
+    r.reflectWrite.mockImplementation((p: string) => { order.push(`reflect ${p}`); });
+    adapter.setWriterReflector(r);
+    const opts = (p: string) => ({ immediate: () => { order.push(`immediate ${p}`); } });
+
+    await adapter.write('a.md', 'x', opts('a.md'));
+    await adapter.writeBinary('b.bin', new ArrayBuffer(1), opts('b.bin'));
+    await adapter.append('c.md', 'y', opts('c.md'));
+    await adapter.appendBinary('d.bin', new ArrayBuffer(1), opts('d.bin'));
+    await adapter.process('a.md', s => s + 'z', opts('a.md'));
+
+    expect(order).toEqual([
+      'immediate a.md', 'reflect a.md',
+      'immediate b.bin', 'reflect b.bin',
+      'immediate c.md', 'reflect c.md',
+      'immediate d.bin', 'reflect d.bin',
+      'immediate a.md', 'reflect a.md',
+    ]);
+  });
+
+  it('does not call options.immediate when the write fails', async () => {
+    const fake = makeFakeClient({ dirs: { '/v': [] } });
+    fake.spies.writeBinary.mockRejectedValueOnce(new Error('boom'));
+    const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+    const immediate = vi.fn();
+
+    await expect(adapter.write('a.md', 'x', { immediate } as never)).rejects.toThrow('boom');
+    expect(immediate).not.toHaveBeenCalled();
+  });
+
+  it('reflectWrite carries the post-write remote mtime and size', async () => {
+    const fake = makeFakeClient({ dirs: { '/v': [] } });
+    const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+    const r = makeReflector();
+    adapter.setWriterReflector(r);
+
+    await adapter.write('note.md', 'hello');
+    await adapter.writeBinary('blob.bin', new ArrayBuffer(2));
+    await adapter.appendBinary('blob.bin', new ArrayBuffer(1));
+
+    const remoteMtime = async (p: string) => (await fake.client.stat(p)).mtime;
+    expect(r.reflectWrite.mock.calls).toEqual([
+      ['note.md',  { mtime: expect.any(Number), size: 5 }],
+      ['blob.bin', { mtime: expect.any(Number), size: 2 }],
+      ['blob.bin', { mtime: await remoteMtime('/v/blob.bin'), size: 3 }],
+    ]);
+    expect(r.reflectWrite.mock.calls[0][1].mtime).toBe(await remoteMtime('/v/note.md'));
+  });
+
+  it('remembers the ancestor with mtime 0 when stat-after-write fails', async () => {
+    const fake = makeFakeClient({ dirs: { '/v': [] } });
+    const tracker = new AncestorTracker();
+    const adapter = new SftpDataAdapter(
+      fake.client, '/v', readCache, dirCache, 'v', null, null, null, tracker,
+    );
+    fake.client.stat.mockRejectedValueOnce(new Error('stat blew up'));
+
+    await adapter.write('note.md', 'hello');
+
+    expect(tracker.get('note.md')).toMatchObject({ content: 'hello', mtime: 0 });
+  });
+
+  it('reflectWrite gets no stat when stat-after-write fails', async () => {
+    const fake = makeFakeClient({ dirs: { '/v': [] } });
+    const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+    const r = makeReflector();
+    adapter.setWriterReflector(r);
+    fake.client.stat.mockRejectedValueOnce(new Error('stat blew up'));
+
+    await adapter.write('note.md', 'hello');
+
+    expect(r.reflectWrite).toHaveBeenCalledWith('note.md', undefined);
   });
 
   it('mkdir → reflectMkdir, remove → reflectRemove, rmdir → reflectRemove', async () => {
@@ -1475,6 +1637,7 @@ describe('SftpDataAdapter — writer reflect (#341)', () => {
     const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
     adapter.setWriterReflector({
       reflectWrite:  () => { throw new Error('listener blew up'); },
+      forgetText:    vi.fn(),
       reflectRename: vi.fn(),
       reflectRemove: vi.fn(),
       reflectMkdir:  vi.fn(),
@@ -1538,6 +1701,7 @@ describe('SftpDataAdapter — writer reflect (#341)', () => {
     await adapter.write('a.md', 'x');
     adapter.setWriterReflector({
       reflectWrite:  vi.fn(),
+      forgetText:    vi.fn(),
       reflectRename: () => { throw new Error('listener blew up'); },
       reflectRemove: vi.fn(),
       reflectMkdir:  vi.fn(),

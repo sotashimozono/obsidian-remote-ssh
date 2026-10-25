@@ -1,5 +1,5 @@
 import type { TAbstractFile, TFile, TFolder, Vault } from 'obsidian';
-import type { WriterReflector } from '../adapter/WriterReflector';
+import type { WriterReflector, WrittenStat } from '../adapter/WriterReflector';
 import { logger } from '../util/logger';
 import { perfTracer } from '../util/PerfTracer';
 import { errorMessage } from "../util/errorMessage";
@@ -402,8 +402,9 @@ export class VaultModelBuilder {
 
   // ─── writer self-reflect (#341) ─────────────────────────────────────────
   //
-  // These four methods structurally satisfy `adapter/WriterReflector`.
-  // `SftpDataAdapter` calls them after a local-originated mutation so
+  // These methods structurally satisfy `adapter/WriterReflector`.
+  // `SftpDataAdapter` calls them after a local-originated mutation
+  // (`forgetText` just before the `reflectWrite` it precedes) so
   // the writer's own vault model stays in sync without waiting for a
   // remote `FsChangeListener` echo (which never arrives on the SFTP
   // transport — no daemon). There is no `implements WriterReflector`
@@ -411,7 +412,7 @@ export class VaultModelBuilder {
   // value the class never references. Conformance is instead pinned
   // at build time by the type-only `satisfies`-style anchor at the
   // bottom of this file (tsconfig compiles only `src/**`, so the test
-  // wiring is *not* a typecheck — without the anchor a `reflect*`
+  // wiring is *not* a typecheck — without the anchor a member's
   // signature drift would ship green).
   //
   // The underlying `*One` mutators return `false` when the model
@@ -420,13 +421,23 @@ export class VaultModelBuilder {
   // own vault model just diverged from the remote — the exact #341
   // symptom — so it is logged rather than silently dropped.
 
+  /** `TFile.cache` is internal; null drops the cached text. */
+  forgetText(path: string): void {
+    const file = this.vault.getAbstractFileByPath(path) as { cache?: (data: null) => void } | null;
+    file?.cache?.(null);
+  }
+
   /**
    * Reflect a writer-side `adapter.write` / `writeBinary`. Inserts the
    * file (firing `create`) when the path is new, otherwise bumps it
    * (firing `modify`). Missing parent folders are synthesised so a
    * write into a not-yet-modelled subtree still lands.
+   *
+   * `stat` is applied before the event fires, so `modify` listeners see
+   * the new values. An existing file keeps its ctime: the remote reports
+   * none.
    */
-  reflectWrite(path: string): void {
+  reflectWrite(path: string, stat?: WrittenStat): void {
     const existing = this.vault.getAbstractFileByPath(path);
     if (existing) {
       if (isFolder(existing)) {
@@ -441,7 +452,14 @@ export class VaultModelBuilder {
         );
         return;
       }
-      if (!this.modifyOne(path)) {
+      // `||`, not `??`: a ctime of 0 is the "unknown" placeholder.
+      const modelled = existing instanceof this.deps.TFile ? existing.stat?.ctime : undefined;
+      const fileStat = stat && {
+        ctime: modelled || stat.mtime,
+        mtime: stat.mtime,
+        size: stat.size,
+      };
+      if (!this.modifyOne(path, fileStat)) {
         logger.warn(
           `VaultModelBuilder.reflectWrite: modifyOne("${path}") no-op; ` +
           'writer model may be stale for this path',
@@ -450,7 +468,9 @@ export class VaultModelBuilder {
       return;
     }
     if (!this.insertOne(
-      { path, isDirectory: false, ctime: 0, mtime: Date.now(), size: 0 },
+      stat
+        ? { path, isDirectory: false, ctime: stat.mtime, mtime: stat.mtime, size: stat.size }
+        : { path, isDirectory: false, ctime: 0, mtime: Date.now(), size: 0 },
       { ensureParents: true },
     )) {
       // insertOne returns null when even ensureParents couldn't
