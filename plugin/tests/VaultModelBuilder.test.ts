@@ -586,6 +586,20 @@ describe('VaultModelBuilder.reflect* (#341 writer self-reflect)', () => {
     expect(triggers.map(t => t.event)).toEqual(['create']);
   });
 
+  it('forgetText drops the file\'s cached text and fires nothing', () => {
+    const { vault, fileMap, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    builder.reflectWrite('Notes.md');
+    const cache = vi.fn();
+    (fileMap['Notes.md'] as unknown as { cache: typeof cache }).cache = cache;
+
+    builder.forgetText('Notes.md');
+    builder.forgetText('Missing.md');           // unmodelled: no throw
+
+    expect(cache).toHaveBeenCalledWith(null);
+    expect(triggers.map(t => t.event)).toEqual(['create']);
+  });
+
   it('reflectWrite on an existing file fires modify, does not re-insert', () => {
     const { vault, fileMap, triggers } = makeFakeVault();
     const builder = new VaultModelBuilder(vault as never, deps);
@@ -596,6 +610,67 @@ describe('VaultModelBuilder.reflect* (#341 writer self-reflect)', () => {
 
     expect(fileMap['Notes.md']).toBe(inserted); // same object, not replaced
     expect(triggers.map(t => t.event)).toEqual(['create', 'modify']);
+  });
+
+  it('reflectWrite on a new path seeds stat from the post-write stat', () => {
+    const { vault, fileMap } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+
+    builder.reflectWrite('Notes.md', { mtime: 1_700_000_000_000, size: 42 });
+
+    expect((fileMap['Notes.md'] as FakeTFile).stat)
+      .toEqual({ ctime: 1_700_000_000_000, mtime: 1_700_000_000_000, size: 42 });
+  });
+
+  it('reflectWrite on an existing file refreshes mtime/size before modify, keeping ctime', () => {
+    const { vault, fileMap, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    builder.insertOne({ path: 'Notes.md', isDirectory: false, ctime: 100, mtime: 200, size: 3 });
+    const file = fileMap['Notes.md'] as FakeTFile;
+    let statAtModify: unknown = null;
+    vault.trigger = (event: string, ...args: unknown[]) => {
+      triggers.push({ event, args });
+      if (event === 'modify') statAtModify = { ...file.stat };
+    };
+
+    builder.reflectWrite('Notes.md', { mtime: 500, size: 9 });
+
+    expect(file.stat).toEqual({ ctime: 100, mtime: 500, size: 9 });
+    expect(statAtModify).toEqual({ ctime: 100, mtime: 500, size: 9 });
+  });
+
+  it('reflectWrite does not keep a placeholder ctime of 0', () => {
+    const { vault, fileMap } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    builder.insertOne({ path: 'Notes.md', isDirectory: false, ctime: 0, mtime: 0, size: 0 });
+
+    builder.reflectWrite('Notes.md', { mtime: 500, size: 9 }); // no remote ctime
+
+    expect((fileMap['Notes.md'] as FakeTFile).stat).toEqual({ ctime: 500, mtime: 500, size: 9 });
+  });
+
+  it('reflectWrite warns and fires nothing when the path holds neither a file nor a folder', () => {
+    const { vault, fileMap, triggers } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    (fileMap as Record<string, unknown>)['Notes.md'] = { path: 'Notes.md' };
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    builder.reflectWrite('Notes.md', { mtime: 500, size: 9 });
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
+    expect(triggers).toEqual([]);
+    expect(warnings.some((w) => w.includes('modifyOne("Notes.md") no-op'))).toBe(true);
+  });
+
+  it('reflectWrite without a stat leaves an existing file\'s stat untouched', () => {
+    const { vault, fileMap } = makeFakeVault();
+    const builder = new VaultModelBuilder(vault as never, deps);
+    builder.insertOne({ path: 'Notes.md', isDirectory: false, ctime: 100, mtime: 200, size: 3 });
+
+    builder.reflectWrite('Notes.md');
+
+    expect((fileMap['Notes.md'] as FakeTFile).stat).toEqual({ ctime: 100, mtime: 200, size: 3 });
   });
 
   it('reflectWrite is a no-op (no trigger) when a folder occupies the path', () => {
