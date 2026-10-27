@@ -8,4 +8,4 @@ and post a Markdown comment on the PR.
 `baseline.ndjson` is rewritten by every push to `main` (or by a
 nightly cron) — do not commit changes here directly.
 
-Last updated from `8aec18cf976be794945cb4af0dcd553336364f6c`.
+Last updated from `823df4f79fa88d8722c7518747c28fbfc70e9a1e`.
