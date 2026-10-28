@@ -104,6 +104,146 @@ describe('AdapterManager.replayOfflineQueue()', () => {
   });
 });
 
+describe('AdapterManager.pendingOfflineFilter()', () => {
+  function withQueue(ops: unknown[]) {
+    const { mgr } = makeManager();
+    (mgr as unknown as { offlineQueue: unknown }).offlineQueue = {
+      pending: () => ops.map((op, id) => ({ id, ts: 0, op })),
+    };
+    return mgr;
+  }
+
+  it('is null with nothing queued', () => {
+    const { mgr } = makeManager();
+    expect(mgr.pendingOfflineFilter()).toBeNull();
+    expect(withQueue([]).pendingOfflineFilter()).toBeNull();
+  });
+
+  it('keeps what queued ops add (and around it); skips what they remove (and under it)', () => {
+    // An op that adds puts the model ahead of the remote: never remove or
+    // downgrade it, but do add it if the model lacks it (written in an
+    // earlier launch). An op that removes puts the remote ahead: never re-add.
+    const { skip, keep } = withQueue([
+      { kind: 'write', path: 'a/b/new.md', contentBase64: '' },
+      { kind: 'rename', oldPath: 'old', newPath: 'x/new' },
+      { kind: 'copy', srcPath: 'src.md', dstPath: 'dst.md' },
+      { kind: 'remove', path: 'gone.md' },
+      { kind: 'rmdir', path: 'dead', recursive: true },
+      { kind: 'trashLocal', path: 'trashed.md' },
+      { kind: 'mkdir', path: 'made' },
+    ]).pendingOfflineFilter()!;
+
+    for (const p of ['a/b/new.md', 'a/b', 'a', 'x/new', 'x/new/c.md', 'x', 'dst.md', 'made', 'made/n.md']) {
+      expect(keep(p), `keep ${p}`).toBe(true);
+      expect(skip(p), `skip ${p}`).toBe(false);
+    }
+    for (const p of ['old', 'old/child.md', 'gone.md', 'dead', 'dead/d.md', 'trashed.md']) {
+      expect(skip(p), `skip ${p}`).toBe(true);
+    }
+    for (const p of ['a/b/other.md', 'a/c', 'older', 'x/other', 'b', 'src.md']) {
+      expect(skip(p) || keep(p), p).toBe(false);
+    }
+  });
+});
+
+describe('AdapterManager.replayOfflineQueue() concurrency', () => {
+  it('a call while a replay runs waits for it, then drains what is queued by then', async () => {
+    // The first drain can sit on a conflict modal across a drop: edits queued
+    // during that outage must still be replayed, and nothing twice.
+    const { mgr } = makeManager();
+    const finish: Array<() => void> = [];
+    const replayed: string[] = [];
+    let inFlight = 0;
+    let overlapped = false;
+    const replayQueuedOp = vi.fn((op: { path: string }) => {
+      if (++inFlight > 1) overlapped = true;
+      return new Promise<{ result: 'ok' }>((r) => finish.push(() => {
+        inFlight--; replayed.push(op.path); r({ result: 'ok' });
+      }));
+    });
+    let entries = [{ id: 1, ts: 0, op: { kind: 'mkdir', path: 'a' } }];
+    Object.assign(mgr as unknown as Record<string, unknown>, {
+      offlineQueue: {
+        pending: () => [...entries],
+        markCompleted: vi.fn(async (id: number) => { entries = entries.filter((e) => e.id !== id); }),
+      },
+      _dataAdapter: { replayQueuedOp },
+    });
+
+    const first = mgr.replayOfflineQueue('after-connect');
+    await vi.waitFor(() => expect(finish).toHaveLength(1));
+    entries.push({ id: 2, ts: 0, op: { kind: 'mkdir', path: 'b' } });
+    const second = mgr.replayOfflineQueue('after-reconnect');
+    finish[0]();
+    await vi.waitFor(() => expect(finish).toHaveLength(2));
+    finish[1]();
+    await Promise.all([first, second]);
+
+    expect(replayed).toEqual(['a', 'b']);
+    expect(overlapped, 'two drains ran at once').toBe(false);
+  });
+
+  it('after restore, a torn-down replay stops at its current op and the next session waits for it', async () => {
+    // Detaching it instead would let both drains replay the same entries.
+    const { mgr } = makeManager();
+    let entries = [1, 2].map((id) => ({ id, ts: 0, op: { kind: 'mkdir', path: `p${id}` } }));
+    const queue = {
+      pending: () => [...entries],
+      markCompleted: vi.fn(async (id: number) => { entries = entries.filter((e) => e.id !== id); }),
+    };
+    let unstick!: () => void;
+    const old = {
+      replayQueuedOp: vi.fn(() => new Promise<{ result: 'ok' }>((r) => { unstick = () => r({ result: 'ok' }); })),
+      dispose: vi.fn(),
+    };
+    Object.assign(mgr as unknown as Record<string, unknown>, { offlineQueue: queue, _dataAdapter: old });
+    const a = mgr.replayOfflineQueue('after-connect');           // p1 sits on a modal
+    await vi.waitFor(() => expect(old.replayQueuedOp).toHaveBeenCalledOnce());
+
+    mgr.restore();
+    const next = { replayQueuedOp: vi.fn(async () => ({ result: 'ok' as const })) };
+    Object.assign(mgr as unknown as Record<string, unknown>, { offlineQueue: queue, _dataAdapter: next });
+    const c = mgr.replayOfflineQueue('after-connect');           // the new session's own
+    await new Promise((r) => setTimeout(r, 0));
+    expect(next.replayQueuedOp, 'waits for the torn-down drain').not.toHaveBeenCalled();
+
+    unstick();
+    await Promise.all([a, c]);
+    expect(old.replayQueuedOp, 'the torn-down drain stops after p1').toHaveBeenCalledOnce();
+    expect(next.replayQueuedOp.mock.calls.map((c) => (c[0] as { path: string }).path)).toEqual(['p2']);
+  });
+
+  it('a replay queued behind a torn-down one never runs on the next session', async () => {
+    const { mgr } = makeManager();
+    let entries = [{ id: 1, ts: 0, op: { kind: 'mkdir', path: 'a' } }];
+    const queue = {
+      pending: () => [...entries],
+      markCompleted: vi.fn(async (id: number) => { entries = entries.filter((e) => e.id !== id); }),
+    };
+    let unstick!: () => void;
+    const old = {
+      replayQueuedOp: vi.fn(() => new Promise<{ result: 'ok' }>((r) => { unstick = () => r({ result: 'ok' }); })),
+      dispose: vi.fn(),
+    };
+    Object.assign(mgr as unknown as Record<string, unknown>, { offlineQueue: queue, _dataAdapter: old });
+    const a = mgr.replayOfflineQueue('after-connect');           // sits on a modal
+    await vi.waitFor(() => expect(old.replayQueuedOp).toHaveBeenCalled());
+    const b = mgr.replayOfflineQueue('after-reconnect');         // queued behind it
+
+    mgr.restore();
+    entries = [{ id: 2, ts: 0, op: { kind: 'mkdir', path: 'b' } }];
+    const next = { replayQueuedOp: vi.fn(async () => ({ result: 'ok' as const })) };
+    Object.assign(mgr as unknown as Record<string, unknown>, { offlineQueue: queue, _dataAdapter: next });
+    const c = mgr.replayOfflineQueue('after-connect');           // the new session's own
+    unstick();
+    await Promise.all([a, b, c]);
+
+    // Only the new session's drain replays path `b`; the stale drain queued
+    // behind the torn-down one stands down instead of replaying it again.
+    expect(next.replayQueuedOp, 'the stale queued drain must not replay on the new adapter').toHaveBeenCalledOnce();
+  });
+});
+
 // ─── showPendingEditsModal ─────────────────────────────────────────────────
 
 describe('AdapterManager.showPendingEditsModal()', () => {

@@ -84,6 +84,13 @@ const shadowStateRoot = (): string => path.join(os.homedir(), '.obsidian-remote'
 /** Where shadow vaults live: `~/.obsidian-remote/vaults/`. */
 const shadowVaultsDir = (): string => path.join(shadowStateRoot(), 'vaults');
 
+/**
+ * Whether a background index reports itself: `if-added` (connect) only when
+ * it filled a gap, `always` when it completes an interrupted index, `never`
+ * for a reconnect's catch-up.
+ */
+type Announce = 'if-added' | 'always' | 'never';
+
 export default class RemoteSshPlugin extends Plugin {
   settings: PluginSettings = DEFAULT_SETTINGS;
 
@@ -94,6 +101,8 @@ export default class RemoteSshPlugin extends Plugin {
   private adapterMgr!: AdapterManager;
   private statusBar!: StatusBar;
   private state: SyncState = SyncState.IDLE;
+  /** A dropped session had a live fs.watch: events missed until a pass completes. */
+  private missedEvents = false;
   /**
    * Re-entrancy guard for `openShadowVaultFor`. A spawned shadow
    * window can take several seconds to surface, during which Obsidian
@@ -660,6 +669,10 @@ export default class RemoteSshPlugin extends Plugin {
   }
 
   private async startReconnect(cause?: Error): Promise<void> {
+    // Its walker rides the transport that just died, and its skip filter
+    // predates edits queued during the outage.
+    this.backgroundIndexer?.cancel();
+    this.backgroundIndexer = null;
     if (!this.conn.activeProfile) {
       logger.warn('startReconnect: no active profile to reconnect with');
       this.setState(SyncState.ERROR);
@@ -673,6 +686,9 @@ export default class RemoteSshPlugin extends Plugin {
       logger.info(`startReconnect: already reconnecting${cause ? ` (${cause.message})` : ''}`);
       return;
     }
+    // Read before the reconnect resubscribes: did the dropped session watch?
+    // Accumulated: a catch-up this drop cancelled still owes its walk.
+    this.missedEvents ||= this.fsChangeListener.isSubscribed();
     const maxRetries = this.settings.reconnectMaxRetries ?? DEFAULT_SETTINGS.reconnectMaxRetries;
     if (maxRetries <= 0) {
       logger.info('startReconnect: auto-reconnect disabled (reconnectMaxRetries <= 0)');
@@ -722,6 +738,7 @@ export default class RemoteSshPlugin extends Plugin {
       // replay outcome, and individual op failures stay in the queue
       // for the next reconnect.
       void this.adapterMgr.replayOfflineQueue('after-reconnect');
+      this.catchUpAfterReconnect();
     } else if (s.kind === 'failed') {
       // Give up: tear the patched adapter down so Obsidian falls
       // back to local file:// reads instead of blocking forever on a
@@ -820,6 +837,8 @@ export default class RemoteSshPlugin extends Plugin {
 
   /** Background full-tree index; null until a lazy connect, dropped on disconnect. */
   private backgroundIndexer: BackgroundIndexer | null = null;
+  /** A background index has completed in this session. */
+  private vaultIndexed = false;
 
   /**
    * Files put into the model from the tree snapshot at startup, before any
@@ -953,10 +972,19 @@ export default class RemoteSshPlugin extends Plugin {
    */
   private onIndexComplete(indexer: BackgroundIndexer, r: IndexComplete): void {
     if (this.backgroundIndexer !== indexer) return;
+    const firstPass = !this.vaultIndexed;
+    this.vaultIndexed = true;
+    // Only a pass that reconciled the whole remote settles what was missed.
+    if (r.complete) this.missedEvents = false;
+    // Eager mode never reads a snapshot (see snapshotProfile).
+    if (this.settings.lazyFolderLoad === false) return;
     const profile = this.conn.activeProfile;
     if (!profile) return;
     const file = this.treeSnapshotFile(profile.id);
     if (r.viaFastPath) {
+      // Restored stats are reconciled now; a later fallback pass (a reconnect
+      // that came back on SFTP) must not zero them.
+      this.snapshotFiles = null;
       try {
         const entries = this.modelEntries();
         writeTreeSnapshot(file, profile.remotePath, entries);
@@ -966,6 +994,9 @@ export default class RemoteSshPlugin extends Plugin {
       }
       return;
     }
+    // A later fallback pass (a reconnect that came back on SFTP) leaves the
+    // snapshot an earlier pass of this session saved alone.
+    if (!firstPass) return;
     if (this.snapshotFiles) {
       const builder = new VaultModelBuilder(this.app.vault, { TFile, TFolder });
       for (const p of this.snapshotFiles) builder.modifyOne(p, { ctime: 0, mtime: 0, size: 0 });
@@ -975,13 +1006,31 @@ export default class RemoteSshPlugin extends Plugin {
   }
 
   /**
+   * Reconcile the model with a fresh walk: fs.watch only reaches live
+   * subscribers, so remote changes made while disconnected never arrived.
+   * Not after the replay, which can sit on a conflict modal: the walk's skip
+   * filter already leaves queued edits alone.
+   */
+  private catchUpAfterReconnect(): void {
+    // The drop cancelled any index still running; restart it if this
+    // session's lazy index never finished, and announce it when it does.
+    const unfinished = this.settings.lazyFolderLoad !== false && !this.vaultIndexed;
+    // Otherwise only a session with a live watch missed anything.
+    if (!unfinished && !this.missedEvents) return;
+    this.startBackgroundIndex({ announce: unfinished ? 'always' : 'never' });
+  }
+
+  /**
    * Complete the vault model behind the lazy root-level populate.
    *
    * Fire-and-forget: connect returns at once and the indexer trickles the rest
    * of the tree in, yielding to the renderer between units. Any previous pass
    * is cancelled first, so a stale one cannot write progress over the new one.
    */
-  private startBackgroundIndex(): void {
+  private startBackgroundIndex({ announce = 'if-added' }: { announce?: Announce } = {}): void {
+    // A drop can land while populate is still running: the reconnect's
+    // catch-up starts the pass instead, with a filter that sees the outage.
+    if (this.state !== SyncState.CONNECTED) return;
     this.backgroundIndexer?.cancel();
     const indexer: BackgroundIndexer = new BackgroundIndexer({
       makeWalker: () => this.makeWalker(),
@@ -989,7 +1038,7 @@ export default class RemoteSshPlugin extends Plugin {
       // Folders the indexer has fully materialised don't need re-walking when the
       // user later expands them in File Explorer.
       markLoaded: (path) => this.lazyLoader?.markLoaded(path),
-      onProgress: (p) => this.onIndexProgress(indexer, p),
+      onProgress: (p) => this.onIndexProgress(indexer, p, announce),
       // Reconcile, not just fill in: the model may hold snapshot entries the
       // remote has changed or dropped since last session.
       modelAtStart: () => this.modelEntries(),
@@ -997,6 +1046,8 @@ export default class RemoteSshPlugin extends Plugin {
         const f = this.app.vault.getAbstractFileByPath(path);
         return f instanceof TFile ? f.stat : null;
       },
+      // Queued offline edits: the model is ahead of the remote there.
+      ...this.adapterMgr.pendingOfflineFilter(),
       onComplete: (r) => this.onIndexComplete(indexer, r),
     });
     this.backgroundIndexer = indexer;
@@ -1011,26 +1062,28 @@ export default class RemoteSshPlugin extends Plugin {
    * Status-bar text while running, one Notice at the end, nothing at all when
    * cancelled — the user disconnected and needs no report.
    */
-  private onIndexProgress(indexer: BackgroundIndexer, p: IndexProgress): void {
+  private onIndexProgress(indexer: BackgroundIndexer, p: IndexProgress, announce: Announce): void {
     // A pass superseded by a reconnect, or one still unwinding after disconnect,
     // must not paint over the live session's status bar.
     if (this.backgroundIndexer !== indexer) return;
     if (this.state !== SyncState.CONNECTED) return;
     if (!p.done) {
-      this.statusBar?.update(
-        SyncState.CONNECTED,
-        `Remote SSH: Indexing… ${p.files} files`,
-      );
+      if (announce !== 'never') {
+        this.statusBar?.update(SyncState.CONNECTED, `Remote SSH: Indexing… ${p.files} files`);
+      }
       return;
     }
     this.statusBar?.update(SyncState.CONNECTED);
-    if (p.cancelled) return;
+    if (p.cancelled || p.failed || announce === 'never') return;
     // Nothing added means the connect populate had already registered the whole
     // vault (a flat, root-only tree) — there was no gap, so there's nothing to
     // announce. Announcing "0 files indexed" would be noise on every connect.
-    if (p.files + p.folders === 0) return;
+    if (announce === 'if-added' && p.files + p.folders === 0) return;
+    // The vault's totals: a restarted pass adds only what the dropped one missed.
+    const entries = this.modelEntries();
+    const files = entries.filter((e) => !e.isDirectory).length;
     new Notice(
-      `Remote SSH: vault index complete — ${p.files} files, ${p.folders} folders. ` +
+      `Remote SSH: vault index complete — ${files} files, ${entries.length - files} folders. ` +
       'Search, graph and links now cover the whole vault.',
     );
   }
@@ -1082,6 +1135,9 @@ export default class RemoteSshPlugin extends Plugin {
    */
   async populateVaultFromRemote(label: string = 'remote'): Promise<string> {
     const start = Date.now();
+    // A new session: what an earlier one indexed or missed is moot.
+    this.vaultIndexed = false;
+    this.missedEvents = false;
     this.reindexSnapshotFilesWithoutMetadata();
 
     // Phase E1-α.2: prefer the daemon's `fs.walk` (one RPC, real
@@ -1123,7 +1179,8 @@ export default class RemoteSshPlugin extends Plugin {
       // and Obsidian resolves links/embeds/search only against `fileMap` — so a
       // link into an unexpanded subfolder silently fails to resolve. Deliberately
       // NOT awaited: connect must stay fast, and the indexer yields between units.
-      this.startBackgroundIndex();
+      // A reconnect that recovered mid-populate may already have started one.
+      if (!this.backgroundIndexer?.isRunning) this.startBackgroundIndex();
     }
     // `lazyFolderLoad: false` needs no background pass — the walk above was
     // already the full recursive tree, so `fileMap` is complete on return.

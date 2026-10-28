@@ -63,6 +63,11 @@ export class FsChangeListener {
     return this.lastPathMapper !== null;
   }
 
+  /** True while an `fs.watch` subscription is live (cleared by a reconnect). */
+  isSubscribed(): boolean {
+    return this.subscriptionId !== null;
+  }
+
   /**
    * Idempotent subscribe. Captures `dataAdapter` + `pathMapper` for the
    * notification handler closure. The first call registers the handler

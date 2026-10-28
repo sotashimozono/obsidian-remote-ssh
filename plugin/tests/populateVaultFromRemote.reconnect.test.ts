@@ -30,7 +30,7 @@ const children = (entries: RemoteEntry[], path: string) =>
 
 // Invoke the actual reconnect populate method, real walker, visibility filter,
 // background indexer and model builder. Only remote I/O and Obsidian UI are fake.
-async function scenario(transport: 'rpc' | 'sftp', rootOnly: boolean) {
+async function scenario(transport: 'rpc' | 'sftp', rootOnly: boolean, opts: { indexRunning?: boolean } = {}) {
   const app = new App();
   const fileMap: Record<string, TFile | TFolder> = {};
   const root = new TFolder(app.vault, '');
@@ -55,13 +55,19 @@ async function scenario(transport: 'rpc' | 'sftp', rootOnly: boolean) {
   const internal = plugin as unknown as {
     settings: unknown; conn: unknown; installLazyExpandHook: () => void;
     startBackgroundIndex: () => void; backgroundIndexer: BackgroundIndexer | null;
-    lazyLoader: LazyFolderLoader | null;
+    lazyLoader: LazyFolderLoader | null; adapterMgr: unknown;
   };
   internal.settings = { lazyFolderLoad: true };
+  internal.adapterMgr = { pendingOfflineFilter: () => null };
+  // A previous session's completed index says nothing about this one.
+  // connectProfile sets CONNECTED before it populates.
+  Object.assign(internal, { vaultIndexed: true, missedEvents: true, state: 'connected' });
   internal.conn = { activeProfile: { allowedHiddenDirs: ['.herdr'], walkIgnoreDirs: ['.git'] },
     rpcConnection: transport === 'rpc' ? { rpc: { call: rpcCall }, info: { capabilities: ['fs.walk'] } } : null };
   internal.installLazyExpandHook = vi.fn();
   if (rootOnly) internal.startBackgroundIndex = vi.fn();
+  // A reconnect that recovered mid-populate has already started its own pass.
+  if (opts.indexRunning) internal.backgroundIndexer = { isRunning: true } as unknown as BackgroundIndexer;
 
   // The folder is already expanded in the retained model. Then a new file is
   // created remotely before reconnect/watch subscription, so no event is sent.
@@ -72,6 +78,7 @@ async function scenario(transport: 'rpc' | 'sftp', rootOnly: boolean) {
   remote = [...remote, entry(newPath)];
   trigger.mockClear();
   await plugin.populateVaultFromRemote('shadow-reconnect');
+  expect(internal).toMatchObject({ vaultIndexed: false, missedEvents: false });
   if (!rootOnly) {
     // Observe the automatically started pass; invoking start() here could hide
     // a regression where reconnect constructs an indexer but never runs it.
@@ -82,6 +89,14 @@ async function scenario(transport: 'rpc' | 'sftp', rootOnly: boolean) {
   }
   return { fileMap, trigger, internal };
 }
+
+describe('populate and a pass already running', () => {
+  it.each([[false, 1], [true, 0]] as const)(
+    'with a pass already running=%s, populate starts %i index pass(es)', async (indexRunning, starts) => {
+      const { internal } = await scenario('rpc', true, { indexRunning });
+      expect(internal.startBackgroundIndex).toHaveBeenCalledTimes(starts);
+    });
+});
 
 describe('reconnect with a preexisting file under an already-expanded allowed dot-folder', () => {
   it('control: root-only reconnect reproduces the missing diagram', async () => {

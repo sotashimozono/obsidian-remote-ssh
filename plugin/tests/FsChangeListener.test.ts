@@ -54,9 +54,12 @@ describe('FsChangeListener lifecycle', () => {
       dataAdapter: dataAdapter as never,
       pathMapper: pathMapper as never,
     });
+    expect(listener.isSubscribed()).toBe(true);
     listener.prepareForReconnect();
     expect(first.off).toHaveBeenCalledTimes(1);
     expect(listener.hasContext()).toBe(true);
+    // Context survives for a resume; the subscription itself is gone.
+    expect(listener.isSubscribed()).toBe(false);
 
     const second = makeRpcConnection();
     second.call.mockResolvedValue({ subscriptionId: 'sub-2' });

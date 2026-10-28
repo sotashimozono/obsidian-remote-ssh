@@ -296,7 +296,7 @@ describe('BackgroundIndexer', () => {
       const indexer = makeIndexer(walker, builder, { onProgress: (p) => seen.push(p) });
 
       await expect(indexer.start()).resolves.toBeUndefined();
-      expect(seen[seen.length - 1]).toMatchObject({ done: true, files: 0, folders: 0 });
+      expect(seen[seen.length - 1]).toMatchObject({ done: true, files: 0, folders: 0, failed: true });
     });
 
     it('start() is idempotent — a second call joins the in-flight run', async () => {
@@ -363,7 +363,7 @@ describe('BackgroundIndexer', () => {
       expect(seen.filter((p) => p.done)).toHaveLength(1);
       expect(seen.some((p) => !p.done)).toBe(true);
       expect(seen[seen.length - 1]).toEqual({
-        files: 3, folders: 1, done: true, cancelled: false,
+        files: 3, folders: 1, done: true, cancelled: false, failed: false,
       });
     });
   });

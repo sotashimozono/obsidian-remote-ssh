@@ -12,7 +12,7 @@ import { WriteConflictModal } from '../ui/WriteConflictModal';
 import { ThreeWayMergeModal } from '../ui/ThreeWayMergeModal';
 import { AncestorTracker } from '../conflict/AncestorTracker';
 import { ConflictResolver } from '../conflict/ConflictResolver';
-import { OfflineQueue } from '../offline/OfflineQueue';
+import { OfflineQueue, type QueuedOp } from '../offline/OfflineQueue';
 import { QueueReplayer } from '../offline/QueueReplayer';
 import { PendingEditsBar } from '../ui/PendingEditsBar';
 import { PendingEditsModal } from '../ui/PendingEditsModal';
@@ -63,6 +63,10 @@ export class AdapterManager {
   private dirCache: DirCache | null = null;
   private ancestorTracker: AncestorTracker | null = null;
   private offlineQueue: OfflineQueue | null = null;
+  /** The replay in flight, if any; see `replayOfflineQueue`. */
+  private replaying: Promise<void> | null = null;
+  /** Bumped by `restore()`, so replays queued in a torn-down session stand down. */
+  private replayGeneration = 0;
   private resourceBridge: ResourceBridge | null = null;
 
   constructor(
@@ -297,6 +301,10 @@ export class AdapterManager {
     // abandoning — the reconnect-failed path does not close it.
     this._dataAdapter?.dispose();
     this._dataAdapter = null;
+    // End this session's replays: the one running stops after its current op
+    // (it may sit on a modal), and those queued behind it never start. The
+    // next session's replay still waits its turn, so nothing runs twice.
+    this.replayGeneration++;
     this.readCache = null;
     this.dirCache = null;
     this.ancestorTracker?.clear();
@@ -312,18 +320,70 @@ export class AdapterManager {
   }
 
   /**
+   * Where the model and the remote legitimately disagree until the offline
+   * queue replays, for a walk to leave alone. Null when nothing is queued.
+   *
+   * `keep`: what queued ops add (writes, mkdirs, copy and rename targets),
+   * everything under it and the folders above it. The model is ahead there:
+   * never remove it or downgrade its stat, but add it if the model lacks it
+   * (a write queued in an earlier launch never reached this model).
+   *
+   * `skip`: what queued ops remove (remove, rmdir, trash, rename sources) and
+   * everything under it. The remote is ahead: never add it back.
+   */
+  pendingOfflineFilter(): { skip: (path: string) => boolean; keep: (path: string) => boolean } | null {
+    const added = new Set<string>();
+    const removed = new Set<string>();
+    for (const { op } of this.offlineQueue?.pending() ?? []) {
+      const { adds, removes } = opEffects(op);
+      for (const p of adds) added.add(p);
+      for (const p of removes) removed.add(p);
+    }
+    if (added.size + removed.size === 0) return null;
+    const above = new Set<string>();
+    for (const q of added) for (const a of ancestors(q)) above.add(a);
+    // Sets, not a scan per path: this runs over every walked entry, and an
+    // hour of offline autosaves queues hundreds of ops.
+    return {
+      skip: (p) => atOrUnder(p, removed),
+      keep: (p) => above.has(p) || atOrUnder(p, added),
+    };
+  }
+
+  /**
    * Drive the offline write queue against the live adapter. Called
    * on every connect (initial and post-reconnect). Idempotent: if
    * the queue is empty the run is a no-op; if entries error mid-
-   * drain the rest stay queued for the next reconnect.
+   * drain the rest stay queued for the next reconnect. A call while
+   * a replay runs (one can wait on a conflict modal across a drop)
+   * waits for it, then drains what is queued by then: nothing runs
+   * twice at once, and edits queued meanwhile are not left behind.
+   * A replay outlives neither its session nor `restore()`.
    */
-  async replayOfflineQueue(label: 'after-connect' | 'after-reconnect'): Promise<void> {
+  replayOfflineQueue(label: 'after-connect' | 'after-reconnect'): Promise<void> {
+    const generation = this.replayGeneration;
+    const run = (this.replaying ?? Promise.resolve()).then(() =>
+      generation === this.replayGeneration ? this.drainOfflineQueue(label) : undefined);
+    this.replaying = run;
+    void run.finally(() => { if (this.replaying === run) this.replaying = null; });
+    return run;
+  }
+
+  private async drainOfflineQueue(label: 'after-connect' | 'after-reconnect'): Promise<void> {
     if (!this.offlineQueue || !this._dataAdapter) return;
     const pendingBefore = this.offlineQueue.pending().length;
     if (pendingBefore === 0) return;
     logger.info(`replayOfflineQueue(${label}): ${pendingBefore} pending entries`);
     try {
-      const replayer = new QueueReplayer(this.offlineQueue, this._dataAdapter);
+      // Bound to this session: once `restore()` ends it, the next op errors,
+      // which stops the drain and leaves the rest for the next session's.
+      const generation = this.replayGeneration;
+      const adapter = this._dataAdapter;
+      const replayer = new QueueReplayer(this.offlineQueue, {
+        replayQueuedOp: (op) => generation === this.replayGeneration
+          ? adapter.replayQueuedOp(op)
+          : Promise.resolve({ result: 'error', message: 'the session that started this replay ended' }),
+      });
       const report = await replayer.run();
       const stillPending = this.offlineQueue.pending().length;
       const summary =
@@ -470,4 +530,26 @@ export class AdapterManager {
       logger.warn(`ResourceBridge: stop failed: ${errorMessage(e)}`);
     }
   }
+}
+
+function opEffects(op: QueuedOp): { adds: string[]; removes: string[] } {
+  switch (op.kind) {
+    case 'rename':     return { adds: [op.newPath], removes: [op.oldPath] };
+    case 'copy':       return { adds: [op.dstPath], removes: [] };
+    case 'remove':
+    case 'rmdir':
+    case 'trashLocal': return { adds: [], removes: [op.path] };
+    default:           return { adds: [op.path], removes: [] };
+  }
+}
+
+function atOrUnder(path: string, set: ReadonlySet<string>): boolean {
+  if (set.has(path)) return true;
+  for (const a of ancestors(path)) if (set.has(a)) return true;
+  return false;
+}
+
+/** `a/b/c` → `a/b`, `a`. */
+function* ancestors(path: string): Generator<string> {
+  for (let i = path.lastIndexOf('/'); i > 0; i = path.lastIndexOf('/', i - 1)) yield path.slice(0, i);
 }
