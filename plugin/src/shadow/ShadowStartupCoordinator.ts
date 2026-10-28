@@ -45,9 +45,9 @@ export class ShadowStartupCoordinator {
   ) {}
 
   /**
-   * Run the two install passes in order. Designed to be called from
-   * `onLayoutReady` *before* auto-connect, so the user has all their
-   * marketplace plugins on disk by the time the SSH session opens.
+   * Run the two install passes in order. Called right after the shadow
+   * vault's auto-connect: installing can await a plugin's onload, and before
+   * the connect a note read there would wait on the startup read gate.
    */
   async prepareForAutoConnect(): Promise<void> {
     await this.handlePendingPluginSuggestions();
@@ -128,11 +128,11 @@ export class ShadowStartupCoordinator {
    * binaries aren't yet installed, and download them from Obsidian's
    * community marketplace.
    *
-   * Called twice: once in `prepareForAutoConnect` (before connect, from
-   * the local list — re-installs a binary that went missing) and again
-   * by the connect flow right after the remote community-plugins pull,
-   * so a plugin enabled on another machine gets its binary and loads on
-   * the first reconnect rather than only after a restart (#429b).
+   * Called twice: by the connect flow right after the remote
+   * community-plugins pull, so a plugin enabled on another machine gets its
+   * binary and loads on the first reconnect rather than only after a restart
+   * (#429b); and in `prepareForAutoConnect` once the startup connect is done
+   * — the one pass that also runs when that connect failed.
    * Idempotent — `installMissing` skips ids already on disk.
    * (Non-marketplace / BRAT plugins still need their binary on the
    * remote — out of scope here.)

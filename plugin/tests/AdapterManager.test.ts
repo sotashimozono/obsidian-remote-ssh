@@ -10,6 +10,8 @@ import type { ConnectionManager } from '../src/ConnectionManager';
 import type { FsChangeListener } from '../src/vault/FsChangeListener';
 import type { PendingEditsBar } from '../src/ui/PendingEditsBar';
 import type { PluginSettings } from '../src/types';
+import { StartupReadGate } from '../src/adapter/StartupReadGate';
+import { AdapterPatcher } from '../src/adapter/AdapterPatcher';
 
 /**
  * Build a minimal AdapterManager with all constructor deps mocked at
@@ -650,6 +652,53 @@ describe('AdapterManager.patch()', () => {
     await mgr.patch();
 
     expect(subscribe).not.toHaveBeenCalled();
+  });
+
+  describe('with a startup read gate', () => {
+    function gated() {
+      const made = patchableManager();
+      const gate = new StartupReadGate(made.hostAdapter, { configDir: '.obsidian', layoutReady: () => true });
+      gate.install();
+      made.mgr.setStartupGate(gate);
+      return { ...made, gate };
+    }
+
+    it('serves a read held at startup from the remote adapter once patched', async () => {
+      const { mgr, hostAdapter } = gated();
+      const held = (hostAdapter.read as (p: string) => Promise<unknown>)('note.md')
+        .then((v) => `resolved: ${String(v)}`, () => 'rejected by the remote adapter');
+
+      await mgr.patch();
+
+      // The native stand-in answers 'original'; the remote adapter has no live
+      // client here, so it rejects: either way, not the shadow disk.
+      await expect(held).resolves.toBe('rejected by the remote adapter');
+    });
+
+    // Otherwise a read held at startup would wait for the rest of the session.
+    it('releases held reads to the native adapter when the patch fails', async () => {
+      const { mgr, hostAdapter } = gated();
+      const held = (hostAdapter.read as (p: string) => Promise<unknown>)('note.md');
+      const patch = vi.spyOn(AdapterPatcher.prototype, 'patch').mockImplementation(() => {
+        throw new Error('patch blew up');
+      });
+      try {
+        await expect(mgr.patch()).resolves.toBe(false);
+      } finally {
+        patch.mockRestore();
+      }
+
+      await expect(held).resolves.toBe('original');
+    });
+
+    it('restore hands back the native members, not the gate\'s wrappers', async () => {
+      const { mgr, hostAdapter } = gated();
+      await mgr.patch();
+
+      mgr.restore();
+
+      expect((hostAdapter.read as () => string)()).toBe('original');
+    });
   });
 });
 

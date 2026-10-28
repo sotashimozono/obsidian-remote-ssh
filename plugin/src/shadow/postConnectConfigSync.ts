@@ -201,10 +201,10 @@ export async function syncConfigAfterConnect(
         );
       }
 
-      // #429b: the startup installer (prepareForAutoConnect) ran BEFORE
-      // the pull above — and not at all on a reconnect — so a plugin the
-      // pull just added to community-plugins.json has no binary staged yet
-      // and won't load. Re-run the marketplace installer now the list is
+      // #429b: a plugin the pull above just added to community-plugins.json
+      // has no binary staged yet and won't load (the startup installer,
+      // prepareForAutoConnect, runs only after the whole connect, and not at
+      // all on a reconnect). Re-run the marketplace installer now the list is
       // current; `enablePluginAndSave` loads a marketplace plugin live, no
       // restart. Idempotent (already-installed ids are skipped). BRAT /
       // non-marketplace plugins still need their binary on the remote.
