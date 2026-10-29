@@ -2,6 +2,13 @@ import { describe, it, expect, vi } from 'vitest';
 import { BackgroundIndexer, type IndexComplete } from '../src/vault/BackgroundIndexer';
 import type { BulkWalker } from '../src/vault/BulkWalker';
 import type { RemoteEntry, VaultModelBuilder } from '../src/vault/VaultModelBuilder';
+import { AdapterManager } from '../src/adapter/AdapterManager';
+import type { QueuedOp } from '../src/offline/OfflineQueue';
+import type { App, PluginManifest } from 'obsidian';
+import type { ConnectionManager } from '../src/ConnectionManager';
+import type { FsChangeListener } from '../src/vault/FsChangeListener';
+import type { PendingEditsBar } from '../src/ui/PendingEditsBar';
+import type { PluginSettings } from '../src/types';
 
 // The reconcile half of the background index (#513): once the vault model can
 // start from a tree snapshot, a complete walk must also update what changed and
@@ -397,5 +404,74 @@ describe('BackgroundIndexer reconcile', () => {
       expect(m.removeOne).not.toHaveBeenCalled();
       expect(m.model.has('d/x.md')).toBe(true);
     });
+  });
+});
+
+// The real filter AdapterManager builds from the offline queue, through the
+// real indexer: the cases above use hand-written predicates.
+describe('with the offline queue\'s filter', () => {
+  function filterFor(ops: QueuedOp[]) {
+    const mgr = new AdapterManager(
+      {} as App,
+      { id: 'remote-ssh' } as unknown as PluginManifest,
+      { rpcConnection: null, activeRemoteBasePath: null } as unknown as ConnectionManager,
+      { subscribe: vi.fn(), unsubscribe: vi.fn() } as unknown as FsChangeListener,
+      { startPolling: vi.fn() } as unknown as PendingEditsBar,
+      () => ({}) as unknown as PluginSettings,
+    );
+    (mgr as unknown as { offlineQueue: unknown }).offlineQueue = {
+      pending: () => ops.map((op, id) => ({ id, ts: 0, op })),
+    };
+    return mgr.pendingOfflineFilter()!;
+  }
+
+  it('a folder renamed offline stays renamed: the new path kept, the old one not re-added', async () => {
+    // The model has the rename; the remote doesn't yet.
+    const m = makeModel([dir('archive'), file('archive/a.md')]);
+    const { indexer } = makeIndexer({
+      fastPath: true, model: m, remote: [dir('notes'), file('notes/a.md')],
+      ...filterFor([{ kind: 'rename', oldPath: 'notes', newPath: 'archive' }]),
+    });
+
+    await indexer.start();
+
+    expect([...m.model.keys()].sort()).toEqual(['archive', 'archive/a.md']);
+  });
+
+  it('rename A to B, then a new A: B is kept, and the new A is not downgraded to the remote\'s old one', async () => {
+    // A is both a rename source (skip) and a write (keep): skip wins, so the
+    // walk leaves it alone either way.
+    const m = makeModel([file('B.md', 1), file('A.md', 5, 9)]);
+    const { indexer } = makeIndexer({
+      fastPath: true, model: m, remote: [file('A.md', 1)],
+      ...filterFor([
+        { kind: 'rename', oldPath: 'A.md', newPath: 'B.md' },
+        { kind: 'write', path: 'A.md', contentBase64: '' },
+      ]),
+    });
+
+    await indexer.start();
+
+    expect([...m.model.keys()].sort()).toEqual(['A.md', 'B.md']);
+    expect(m.model.get('A.md')).toMatchObject({ mtime: 5, size: 9 });
+    expect(m.modifyOne).not.toHaveBeenCalled();
+    expect(m.removeOne).not.toHaveBeenCalled();
+  });
+
+  it('…and where the model lacks the new A, the remote\'s old A is not added either', async () => {
+    // Queued in an earlier launch, so this model never saw the write. Adding
+    // the remote's A would show the renamed-away content until the replay.
+    const m = makeModel([file('B.md', 1)]);
+    const { indexer } = makeIndexer({
+      fastPath: true, model: m, remote: [file('A.md', 1)],
+      ...filterFor([
+        { kind: 'rename', oldPath: 'A.md', newPath: 'B.md' },
+        { kind: 'write', path: 'A.md', contentBase64: '' },
+      ]),
+    });
+
+    await indexer.start();
+
+    expect([...m.model.keys()]).toEqual(['B.md']);
   });
 });

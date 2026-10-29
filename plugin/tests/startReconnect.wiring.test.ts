@@ -246,6 +246,29 @@ describe('RemoteSshPlugin.startReconnect — catching up on the gap', () => {
     expect(startBackgroundIndex).toHaveBeenCalledExactlyOnceWith({ announce: 'never' });
   });
 
+  // Through the real startBackgroundIndex: the other cases stub it, so they'd
+  // miss a catch-up started before CONNECTED (the guard skips it silently), or
+  // `announce` dropped from the progress callback (the catch-up would announce).
+  it('a catch-up runs once connected, through the real indexer wiring, and stays silent', async () => {
+    const { p, onState } = await recover();
+    delete p.startBackgroundIndex;
+    (p.adapterMgr as Record<string, unknown>).pendingOfflineFilter = () => null;
+    p.modelEntries = () => [];
+    indexerDeps.length = 0;
+    clearNotices();
+
+    onState({ kind: 'recovered' });
+
+    expect(indexerDeps, 'an indexer was started').toHaveLength(1);
+    const update = (p.statusBar as { update: ReturnType<typeof vi.fn> }).update;
+    update.mockClear();
+    const onProgress = indexerDeps[0].onProgress as (pr: Record<string, unknown>) => void;
+    onProgress({ done: false, cancelled: false, failed: false, files: 10, folders: 2 });
+    onProgress({ done: true, cancelled: false, failed: false, files: 10, folders: 2 });
+    expect(update.mock.calls.filter((c) => /Indexing/.test(String(c[1])))).toEqual([]);
+    expect(recordedNotices().filter((n) => /index complete/.test(n))).toEqual([]);
+  });
+
   it('does not wait for the offline replay, which can sit on a modal', async () => {
     // Queued edits are protected by the walk's skip filter instead.
     const { onState, replayOfflineQueue, startBackgroundIndex } = await recover();

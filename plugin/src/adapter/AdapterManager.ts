@@ -398,7 +398,12 @@ export class AdapterManager {
           (stillPending > 0 ? ` (${stillPending} pending)` : ''),
         );
       }
-      if (report.errors.length > 0) {
+      // Ended by `restore()`: the op that stopped the drain got a synthetic
+      // error, and what is left goes to the next session's replay. Nothing
+      // failed, so say nothing.
+      if (generation !== this.replayGeneration) {
+        logger.info(`replayOfflineQueue(${label}): session ended, ${stillPending} left for the next one`);
+      } else if (report.errors.length > 0) {
         new Notice(
           `Remote SSH: ${report.errors.length} offline edit` +
           `${report.errors.length === 1 ? '' : 's'} failed to replay; will retry on next connect`,
@@ -539,7 +544,17 @@ function opEffects(op: QueuedOp): { adds: string[]; removes: string[] } {
     case 'remove':
     case 'rmdir':
     case 'trashLocal': return { adds: [], removes: [op.path] };
-    default:           return { adds: [op.path], removes: [] };
+    case 'write':
+    case 'writeBinary':
+    case 'append':
+    case 'appendBinary':
+    case 'mkdir':      return { adds: [op.path], removes: [] };
+    default: {
+      // A new kind must be classified: as an add, the walk would protect a
+      // path it should leave removed, or the other way round.
+      const unclassified: never = op;
+      return unclassified;
+    }
   }
 }
 

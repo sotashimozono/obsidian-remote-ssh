@@ -30,7 +30,10 @@ const children = (entries: RemoteEntry[], path: string) =>
 
 // Invoke the actual reconnect populate method, real walker, visibility filter,
 // background indexer and model builder. Only remote I/O and Obsidian UI are fake.
-async function scenario(transport: 'rpc' | 'sftp', rootOnly: boolean, opts: { indexRunning?: boolean } = {}) {
+async function scenario(
+  transport: 'rpc' | 'sftp', rootOnly: boolean,
+  opts: { indexRunning?: boolean; indexFinished?: boolean } = {},
+) {
   const app = new App();
   const fileMap: Record<string, TFile | TFolder> = {};
   const root = new TFolder(app.vault, '');
@@ -47,6 +50,9 @@ async function scenario(transport: 'rpc' | 'sftp', rootOnly: boolean, opts: { in
     adapter: { list } });
   const rpcCall = vi.fn(async (method: string, params: WalkParams): Promise<WalkResult> => {
     expect(method).toBe('fs.walk');
+    // A reconnect that recovered mid-populate, whose catch-up pass completed
+    // while this walk was in flight.
+    if (opts.indexFinished) Object.assign(internal, { vaultIndexed: true });
     const entries = params.recursive ? remote : children(remote, params.path ?? '');
     return { entries: entries.map(e => ({ path: e.path, type: e.isDirectory ? 'folder' : 'file',
       mtime: e.mtime, size: e.size })), truncated: false };
@@ -78,7 +84,7 @@ async function scenario(transport: 'rpc' | 'sftp', rootOnly: boolean, opts: { in
   remote = [...remote, entry(newPath)];
   trigger.mockClear();
   await plugin.populateVaultFromRemote('shadow-reconnect');
-  expect(internal).toMatchObject({ vaultIndexed: false, missedEvents: false });
+  if (!opts.indexFinished) expect(internal).toMatchObject({ vaultIndexed: false, missedEvents: false });
   if (!rootOnly) {
     // Observe the automatically started pass; invoking start() here could hide
     // a regression where reconnect constructs an indexer but never runs it.
@@ -96,6 +102,13 @@ describe('populate and a pass already running', () => {
       const { internal } = await scenario('rpc', true, { indexRunning });
       expect(internal.startBackgroundIndex).toHaveBeenCalledTimes(starts);
     });
+
+  // A second full pass would repeat the work, and announce "index complete"
+  // a second time.
+  it('populate starts no pass when one already completed during it', async () => {
+    const { internal } = await scenario('rpc', true, { indexFinished: true });
+    expect(internal.startBackgroundIndex).not.toHaveBeenCalled();
+  });
 });
 
 describe('reconnect with a preexisting file under an already-expanded allowed dot-folder', () => {

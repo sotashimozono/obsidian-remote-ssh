@@ -1059,8 +1059,11 @@ export default class RemoteSshPlugin extends Plugin {
    * backlinks really ARE incomplete, and a vault holding 12 of 30,000 files
    * should not look ready.
    *
-   * Status-bar text while running, one Notice at the end, nothing at all when
-   * cancelled — the user disconnected and needs no report.
+   * Status-bar text while running, and one Notice when the pass completes,
+   * unless `announce` says otherwise: a reconnect's catch-up (`never`) shows
+   * neither, and a connect's pass (`if-added`) skips the Notice when it added
+   * nothing. Nothing at all for a cancelled or failed pass: the user
+   * disconnected, or the warning is in the log.
    */
   private onIndexProgress(indexer: BackgroundIndexer, p: IndexProgress, announce: Announce): void {
     // A pass superseded by a reconnect, or one still unwinding after disconnect,
@@ -1179,8 +1182,9 @@ export default class RemoteSshPlugin extends Plugin {
       // and Obsidian resolves links/embeds/search only against `fileMap` — so a
       // link into an unexpanded subfolder silently fails to resolve. Deliberately
       // NOT awaited: connect must stay fast, and the indexer yields between units.
-      // A reconnect that recovered mid-populate may already have started one.
-      if (!this.backgroundIndexer?.isRunning) this.startBackgroundIndex();
+      // A reconnect that recovered mid-populate may already have started one,
+      // or even finished it.
+      if (!this.backgroundIndexer?.isRunning && !this.vaultIndexed) this.startBackgroundIndex();
     }
     // `lazyFolderLoad: false` needs no background pass — the walk above was
     // already the full recursive tree, so `fileMap` is complete on return.

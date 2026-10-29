@@ -4,6 +4,7 @@ import type { PathMapper } from '../src/path/PathMapper';
 import { AdapterManager, PATCHED_METHODS } from '../src/adapter/AdapterManager';
 import * as path from 'node:path';
 import { FileSystemAdapter } from 'obsidian';
+import { clearNotices, recordedNotices } from './__mocks__/obsidian';
 import type { App, PluginManifest } from 'obsidian';
 import { OfflineQueue } from '../src/offline/OfflineQueue';
 import type { ConnectionManager } from '../src/ConnectionManager';
@@ -211,6 +212,47 @@ describe('AdapterManager.replayOfflineQueue() concurrency', () => {
     await Promise.all([a, c]);
     expect(old.replayQueuedOp, 'the torn-down drain stops after p1').toHaveBeenCalledOnce();
     expect(next.replayQueuedOp.mock.calls.map((c) => (c[0] as { path: string }).path)).toEqual(['p2']);
+  });
+
+  // The op that stops it gets a synthetic error, but nothing failed: the rest
+  // is handed to the next session's replay.
+  it('a replay that restore() hands over does not report a failure', async () => {
+    const { mgr } = makeManager();
+    let entries = [1, 2].map((id) => ({ id, ts: 0, op: { kind: 'mkdir', path: `p${id}` } }));
+    const queue = {
+      pending: () => [...entries],
+      markCompleted: vi.fn(async (id: number) => { entries = entries.filter((e) => e.id !== id); }),
+    };
+    let unstick!: () => void;
+    const old = {
+      replayQueuedOp: vi.fn(() => new Promise<{ result: 'ok' }>((r) => { unstick = () => r({ result: 'ok' }); })),
+      dispose: vi.fn(),
+    };
+    Object.assign(mgr as unknown as Record<string, unknown>, { offlineQueue: queue, _dataAdapter: old });
+    const a = mgr.replayOfflineQueue('after-connect');           // p1 sits on a modal
+    await vi.waitFor(() => expect(old.replayQueuedOp).toHaveBeenCalledOnce());
+    clearNotices();
+
+    mgr.restore();
+    unstick();
+    await a;
+
+    expect(recordedNotices().filter((n) => n.includes('failed to replay'))).toEqual([]);
+    expect(entries.map((e) => e.op.path), 'p2 is left for the next session').toEqual(['p2']);
+  });
+
+  it('a replay that fails in a live session says so', async () => {
+    const { mgr } = makeManager();
+    const entries = [{ id: 1, ts: 0, op: { kind: 'mkdir', path: 'p1' } }];
+    Object.assign(mgr as unknown as Record<string, unknown>, {
+      offlineQueue: { pending: () => [...entries], markCompleted: vi.fn() },
+      _dataAdapter: { replayQueuedOp: vi.fn(async () => ({ result: 'error' as const, message: 'EACCES' })) },
+    });
+    clearNotices();
+
+    await mgr.replayOfflineQueue('after-reconnect');
+
+    expect(recordedNotices().filter((n) => n.includes('failed to replay'))).toHaveLength(1);
   });
 
   it('a replay queued behind a torn-down one never runs on the next session', async () => {
