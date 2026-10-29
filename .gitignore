@@ -7,7 +7,12 @@ cdp-console.log
 plugin/server-bin/
 
 # Claude Code local agent state — per-developer, not project source.
-.claude/
+# Shared commands and agents (ECC's /review-pr) are committed so cloud
+# sessions, which start from a fresh clone, can load them.
+.claude/*
+!.claude/commands/
+!.claude/agents/
+!.claude/ECC-LICENSE.md
 
 # Phase C sync-latency microbench (M6) results — NDJSON files
 # produced per integration run. The M10 CI gate publishes the
