@@ -158,10 +158,11 @@ func FsWalk(vaultRoot string) rpc.Handler {
 			}
 
 			entries = append(entries, proto.WalkEntry{
-				Path:  rel,
-				Type:  entryTypeFrom(d.Type()),
-				Mtime: mtimeMillis(einfo),
-				Size:  einfo.Size(),
+				Path:    rel,
+				Type:    entryTypeFrom(d.Type()),
+				Mtime:   mtimeMillis(einfo),
+				Created: createdMillis(path, einfo),
+				Size:    einfo.Size(),
 			})
 
 			// Non-recursive: record the directory entry but don't

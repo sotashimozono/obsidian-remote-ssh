@@ -36,6 +36,21 @@ describe('RpcRemoteFsClient', () => {
     expect(s.size).toBe(4);
   });
 
+  // 0 isn't a creation time: it would read as 1970. Undefined means unknown.
+  it('stat and list pass a positive created through and drop a 0', async () => {
+    const client = new RpcRemoteFsClient(mockRpc({
+      'fs.stat': (p) => ({ type: 'file', mtime: 123, created: (p as { path: string }).path === 'a.md' ? 50 : 0, size: 4, mode: 0o100644 }),
+      'fs.list': () => ({ entries: [
+        { name: 'a.md', type: 'file', mtime: 123, created: 50, size: 4 },
+        { name: 'b.md', type: 'file', mtime: 123, created: 0, size: 4 },
+      ] }),
+    }));
+
+    expect((await client.stat('a.md')).created).toBe(50);
+    expect((await client.stat('b.md')).created).toBeUndefined();
+    expect((await client.list('')).map(e => e.created)).toEqual([50, undefined]);
+  });
+
   it('stat throws FileNotFound when the server returns null', async () => {
     const client = new RpcRemoteFsClient(mockRpc({
       'fs.stat': () => null,

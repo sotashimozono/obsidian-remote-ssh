@@ -1,5 +1,5 @@
 import type { TAbstractFile, TFile, TFolder, Vault } from 'obsidian';
-import type { WriterReflector } from '../adapter/WriterReflector';
+import type { WriterReflector, WrittenStat } from '../adapter/WriterReflector';
 import { logger } from '../util/logger';
 import { perfTracer } from '../util/PerfTracer';
 import { errorMessage } from "../util/errorMessage";
@@ -16,7 +16,9 @@ export interface RemoteEntry {
   isDirectory: boolean;
   /**
    * stat fields the file editor / Obsidian's own internals expect.
-   * For folders these are ignored; pass zeroes if unknown.
+   * For folders these are ignored; pass zeroes if unknown. A file's ctime
+   * of 0 means unknown too: the model keeps the one it has, else uses
+   * mtime (`insertFile`, `modifyOne`).
    */
   ctime: number;
   mtime: number;
@@ -326,7 +328,8 @@ export class VaultModelBuilder {
     if (!(target instanceof this.deps.TFile)) return false;
     const file: TFile = target;
     if (stat) {
-      file.stat = stat;
+      // `||`: a ctime of 0 is unknown, and so is a modelled one of 0.
+      file.stat = { ...stat, ctime: stat.ctime || file.stat?.ctime || stat.mtime };
     }
     perfTracer.point('T5a', perfTracer.newCid(), { op: 'modify', path });
     this.vault.trigger('modify', file);
@@ -402,8 +405,9 @@ export class VaultModelBuilder {
 
   // ─── writer self-reflect (#341) ─────────────────────────────────────────
   //
-  // These four methods structurally satisfy `adapter/WriterReflector`.
-  // `SftpDataAdapter` calls them after a local-originated mutation so
+  // These methods structurally satisfy `adapter/WriterReflector`.
+  // `SftpDataAdapter` calls them after a local-originated mutation
+  // (`forgetText` just before the `reflectWrite` it precedes) so
   // the writer's own vault model stays in sync without waiting for a
   // remote `FsChangeListener` echo (which never arrives on the SFTP
   // transport — no daemon). There is no `implements WriterReflector`
@@ -411,7 +415,7 @@ export class VaultModelBuilder {
   // value the class never references. Conformance is instead pinned
   // at build time by the type-only `satisfies`-style anchor at the
   // bottom of this file (tsconfig compiles only `src/**`, so the test
-  // wiring is *not* a typecheck — without the anchor a `reflect*`
+  // wiring is *not* a typecheck — without the anchor a member's
   // signature drift would ship green).
   //
   // The underlying `*One` mutators return `false` when the model
@@ -420,13 +424,23 @@ export class VaultModelBuilder {
   // own vault model just diverged from the remote — the exact #341
   // symptom — so it is logged rather than silently dropped.
 
+  /** `TFile.cache` is internal; null drops the cached text. */
+  forgetText(path: string): void {
+    const file = this.vault.getAbstractFileByPath(path) as { cache?: (data: null) => void } | null;
+    file?.cache?.(null);
+  }
+
   /**
    * Reflect a writer-side `adapter.write` / `writeBinary`. Inserts the
    * file (firing `create`) when the path is new, otherwise bumps it
    * (firing `modify`). Missing parent folders are synthesised so a
    * write into a not-yet-modelled subtree still lands.
+   *
+   * `stat` is applied before the event fires, so `modify` listeners see
+   * the new values. An existing file keeps its ctime unless the remote
+   * reports one.
    */
-  reflectWrite(path: string): void {
+  reflectWrite(path: string, stat?: WrittenStat): void {
     const existing = this.vault.getAbstractFileByPath(path);
     if (existing) {
       if (isFolder(existing)) {
@@ -441,7 +455,9 @@ export class VaultModelBuilder {
         );
         return;
       }
-      if (!this.modifyOne(path)) {
+      // An unknown ctime (undefined → 0) keeps the modelled one: see modifyOne.
+      const fileStat = stat && { ctime: stat.ctime ?? 0, mtime: stat.mtime, size: stat.size };
+      if (!this.modifyOne(path, fileStat)) {
         logger.warn(
           `VaultModelBuilder.reflectWrite: modifyOne("${path}") no-op; ` +
           'writer model may be stale for this path',
@@ -450,7 +466,9 @@ export class VaultModelBuilder {
       return;
     }
     if (!this.insertOne(
-      { path, isDirectory: false, ctime: 0, mtime: Date.now(), size: 0 },
+      stat
+        ? { path, isDirectory: false, ctime: stat.ctime ?? 0, mtime: stat.mtime, size: stat.size }
+        : { path, isDirectory: false, ctime: 0, mtime: Date.now(), size: 0 },
       { ensureParents: true },
     )) {
       // insertOne returns null when even ensureParents couldn't
@@ -528,7 +546,8 @@ export class VaultModelBuilder {
     file.basename  = dot > 0 ? name.slice(0, dot) : name;
     file.extension = dot > 0 ? name.slice(dot + 1) : '';
     file.parent    = parent;
-    file.stat      = { ctime: entry.ctime, mtime: entry.mtime, size: entry.size };
+    // `||`: a ctime of 0 is unknown.
+    file.stat      = { ctime: entry.ctime || entry.mtime, mtime: entry.mtime, size: entry.size };
 
     insertIntoFileMap(this.vault, entry.path, file);
     parent.children.push(file);

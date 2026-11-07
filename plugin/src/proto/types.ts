@@ -34,10 +34,22 @@ export interface Stat {
   type: 'file' | 'folder';
   /** Modification time in unix milliseconds. */
   mtime: number;
+  /** Creation time, unix ms (Obsidian `FileStats.ctime`, not POSIX st_ctime). Absent when unknown. */
+  created?: number;
   /** Size in bytes. 0 for directories. */
   size: number;
   /** POSIX mode bits (informational). */
   mode: number;
+}
+
+/**
+ * `created` as the daemon reported it, or undefined when it didn't: older
+ * daemons send none, a newer one leaves it out when unknown, and 0 isn't a
+ * creation time. Applied where daemon values enter the plugin
+ * (`RpcRemoteFsClient`, `BulkWalker`), so the rest only handles undefined.
+ */
+export function knownCreated(created: number | undefined): number | undefined {
+  return created !== undefined && created > 0 ? created : undefined;
 }
 
 export interface Entry {
@@ -45,6 +57,8 @@ export interface Entry {
   name: string;
   type: 'file' | 'folder' | 'symlink';
   mtime: number;
+  /** See `Stat.created`. */
+  created?: number;
   size: number;
 }
 
@@ -147,6 +161,8 @@ export interface WalkEntry {
   path: string;
   type: 'file' | 'folder' | 'symlink';
   mtime: number;
+  /** See `Stat.created`. */
+  created?: number;
   size: number;
 }
 export interface WalkResult {

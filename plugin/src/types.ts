@@ -238,6 +238,8 @@ export interface RemoteStat {
   isSymbolicLink: boolean;
   /** Modification time in unix milliseconds. */
   mtime: number;
+  /** Creation time in unix ms. Undefined when the transport doesn't report it. */
+  created?: number;
   size: number;
   mode: number;
 }
@@ -250,5 +252,7 @@ export interface RemoteEntry {
   isSymbolicLink: boolean;
   /** Modification time in unix milliseconds. */
   mtime: number;
+  /** See `RemoteStat.created`. */
+  created?: number;
   size: number;
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/proto"
 	"github.com/sotashimozono/obsidian-remote-ssh/server/internal/rpc"
@@ -59,10 +60,11 @@ func FsList(vaultRoot string) rpc.Handler {
 				continue
 			}
 			out = append(out, proto.Entry{
-				Name:  e.Name(),
-				Type:  entryTypeFrom(e.Type()),
-				Mtime: mtimeMillis(einfo),
-				Size:  einfo.Size(),
+				Name:    e.Name(),
+				Type:    entryTypeFrom(e.Type()),
+				Mtime:   mtimeMillis(einfo),
+				Created: createdMillis(filepath.Join(abs, e.Name()), einfo),
+				Size:    einfo.Size(),
 			})
 		}
 		return proto.ListResult{Entries: out}, nil

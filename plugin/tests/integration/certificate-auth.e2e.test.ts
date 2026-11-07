@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { Client } from 'ssh2';
 import { CertificateAgent } from '../../src/ssh/CertificateAgent';
 import { enableCertificateAuth } from '../../src/ssh/certificateAuth';
+import { loadDiskCertificate } from '../../src/ssh/DiskCertificate';
 import { TEST_HOST, TEST_PORT, TEST_USER, TEST_PRIVATE_KEY } from './helpers/makeAdapter';
 import { SSHD_CONTAINER, TEST_PROXY_COMMAND } from '../../test-env/target';
 
@@ -245,5 +246,62 @@ describe.skipIf(!RUN_HERE)('integration: an OpenSSH certificate held by an agent
     // key, which this server does not know. If this ever starts passing,
     // ssh2 gained certificate support and the override can be retired.
     await expect(connect(false)).rejects.toThrow(/All configured authentication methods failed/);
+  }, 60_000);
+});
+
+/**
+ * The other shape the same credential takes: no agent at all, just the private
+ * key and its `<key>-cert.pub` sitting on disk (what `mwinit` and most CA
+ * tooling drop next to `id_ecdsa`). `ssh` loads the sibling automatically;
+ * `DiskCertificateAgent` reproduces that, signing locally instead of via a
+ * socket. The keys the agent block already generated carry a matching
+ * `*-cert.pub`, so we reuse them — no agent process involved.
+ */
+function connectDisk(keyBase: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const agent = loadDiskCertificate(keyBase, fs.readFileSync(keyBase));
+    if (!agent) return reject(new Error(`no -cert.pub beside ${keyBase}`));
+
+    const client = new Client();
+    enableCertificateAuth(client);
+    const timer = setTimeout(() => { client.destroy(); reject(new Error('timed out')); }, 20_000);
+
+    client.on('ready', () => {
+      client.exec('id -un', (err, stream) => {
+        if (err) { clearTimeout(timer); client.end(); return reject(err); }
+        let out = '';
+        stream.on('data', (d: Buffer) => { out += d.toString('utf8'); })
+          .on('close', () => { clearTimeout(timer); client.end(); resolve(out.trim()); });
+      });
+    });
+    client.on('error', (e) => { clearTimeout(timer); reject(e); });
+
+    client.connect({
+      host: TEST_HOST,
+      port: TEST_PORT,
+      username: TEST_USER,
+      agent,
+      hostVerifier: () => true,
+      readyTimeout: 15_000,
+    });
+  });
+}
+
+describe.skipIf(!RUN_HERE)('integration: an on-disk OpenSSH certificate, no agent (#536)', () => {
+  it('authenticates with an Ed25519 certificate read from disk', async () => {
+    await expect(connectDisk(path.join(dir, 'id'))).resolves.toBe(TEST_USER);
+  }, 60_000);
+
+  it('authenticates with an RSA certificate read from disk', async () => {
+    // Same RSA subtlety as the agent path: signed with SHA-512, advertised as
+    // rsa-sha2-512, or `sshkey_check_sigtype` rejects it.
+    await expect(connectDisk(path.join(dir, 'id-rsa'))).resolves.toBe(TEST_USER);
+  }, 60_000);
+
+  it('authenticates with an ECDSA certificate read from disk', async () => {
+    // The signature the local key produces is DER; it must reach the wire as
+    // SSH string(r) string(s). This is the exact case that first prompted the
+    // fix on Windows, where no agent was running.
+    await expect(connectDisk(path.join(dir, 'id-ecdsa'))).resolves.toBe(TEST_USER);
   }, 60_000);
 });

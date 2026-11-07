@@ -8,6 +8,8 @@ import type { HostKeyMismatchHandler, HostKeyStore } from './HostKeyStore';
 import { expandHome } from '../util/pathUtils';
 import { logger } from '../util/logger';
 import { errorMessage } from "../util/errorMessage";
+import { certificateFilePath, loadDiskCertificate } from './DiskCertificate';
+import { enableCertificateAuth } from './certificateAuth';
 
 /**
  * Optional knobs for `createJumpTunnel`. Most callers leave them at
@@ -59,6 +61,10 @@ export async function createJumpTunnel(
 ): Promise<Duplex> {
   const factory = options.clientFactory ?? (() => new Client());
   const jumpClient = factory();
+
+  // Certificate support for a CA-issued bastion key + `<key>-cert.pub` (#536),
+  // mirroring the target client. Inert unless an identity is a certificate.
+  enableCertificateAuth(jumpClient as unknown as Client);
 
   const authConfig = buildJumpAuthConfig(jump, authResolver);
   const config: ConnectConfig = {
@@ -220,6 +226,21 @@ function buildJumpAuthConfig(
         throw new Error(
           `Cannot read jump host private key at "${keyPath}": ${errorMessage(e)}`,
         );
+      }
+      // As with the target host: a sibling `<key>-cert.pub` is presented via
+      // the local signer, and the bare key is offered alongside it. ssh2 tries
+      // the bare key first (`publickey`) and the certificate second (`agent`).
+      //
+      // Caveat, since `JumpHostConfig` carries no passphrase: with an ENCRYPTED
+      // bastion key `loadDiskCertificate` can't parse it, so the certificate is
+      // skipped with a warning — and the bare-key fallback can't decrypt it
+      // either, so neither succeeds. Not a regression (this path never had a
+      // passphrase), but a user with an encrypted jump key + cert will see the
+      // jump fail without an obvious reason; a passphrase field is future work.
+      const certAgent = loadDiskCertificate(keyPath, privateKey);
+      if (certAgent) {
+        logger.info(`Jump host auth: using certificate ${certificateFilePath(keyPath)} (bare key ${keyPath} offered as fallback)`);
+        return { agent: certAgent, privateKey };
       }
       logger.info(`Jump host auth: using private key ${keyPath}`);
       return { privateKey };

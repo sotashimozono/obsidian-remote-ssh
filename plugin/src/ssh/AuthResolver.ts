@@ -5,6 +5,7 @@ import type { SecretStore } from './SecretStore';
 import { logger } from '../util/logger';
 import { expandHome } from '../util/pathUtils';
 import { errorMessage } from "../util/errorMessage";
+import { certificateFilePath, loadDiskCertificate } from './DiskCertificate';
 
 /**
  * Which agent socket a profile authenticates through: its own override, else
@@ -72,6 +73,24 @@ export class AuthResolver {
         const passphrase = profile.passphraseRef
           ? this.getSecret(profile.passphraseRef)
           : undefined;
+        // OpenSSH loads a sibling `<key>-cert.pub` automatically; ssh2 does
+        // not. When one exists, present the certificate through the same path
+        // an agent-held certificate uses (#536), signing locally with this
+        // key. The bare key is offered ALONGSIDE it: ssh2 orders `authsAllowed`
+        // as [...,'publickey','agent'], so it tries the bare key FIRST and the
+        // certificate second. On a CA-only server the bare key is rejected and
+        // the certificate then authenticates — the case this exists for. (On a
+        // server that also trusts the bare key, the key succeeds first and the
+        // certificate is never exercised.) Either way a present certificate
+        // never costs a login the bare key would have won, mirroring OpenSSH
+        // offering both. No sibling → ordinary key auth, unchanged.
+        const certAgent = loadDiskCertificate(keyPath, privateKey, passphrase);
+        if (certAgent) {
+          logger.info(`Auth: using certificate ${certificateFilePath(keyPath)} (bare key ${keyPath} offered as fallback)`);
+          return passphrase
+            ? { agent: certAgent, privateKey, passphrase }
+            : { agent: certAgent, privateKey };
+        }
         logger.info(`Auth: using private key ${keyPath}`);
         return passphrase ? { privateKey, passphrase } : { privateKey };
       }

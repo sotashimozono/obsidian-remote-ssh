@@ -1,7 +1,7 @@
 import type { RemoteEntry, RemoteStat } from '../types';
 import type { RpcClient } from '../transport/RpcClient';
 import type { CloseListener, RemoteFsClient } from './RemoteFsClient';
-import type { Entry, Stat } from '../proto/types';
+import { knownCreated, type Entry, type Stat } from '../proto/types';
 import { RpcError } from '../transport/RpcError';
 import { withPerfTrace } from '../util/PerfTracer';
 import type { RpcCallSurface } from '../ConnectionManager';
@@ -139,6 +139,7 @@ function toRemoteStat(s: Stat): RemoteStat {
     isFile:          s.type === 'file',
     isSymbolicLink:  false, // fs.stat follows the link; symlink detection lives in list()
     mtime:           s.mtime,
+    created:         knownCreated(s.created),
     size:            s.size,
     mode:            s.mode,
   };
@@ -151,6 +152,7 @@ function toRemoteEntry(e: Entry): RemoteEntry {
     isFile:          e.type === 'file',
     isSymbolicLink:  e.type === 'symlink',
     mtime:           e.mtime,
+    created:         knownCreated(e.created),
     size:            e.size,
   };
 }

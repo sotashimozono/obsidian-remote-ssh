@@ -2,6 +2,13 @@ import { describe, it, expect, vi } from 'vitest';
 import { BackgroundIndexer, type IndexComplete } from '../src/vault/BackgroundIndexer';
 import type { BulkWalker } from '../src/vault/BulkWalker';
 import type { RemoteEntry, VaultModelBuilder } from '../src/vault/VaultModelBuilder';
+import { AdapterManager } from '../src/adapter/AdapterManager';
+import type { QueuedOp } from '../src/offline/OfflineQueue';
+import type { App, PluginManifest } from 'obsidian';
+import type { ConnectionManager } from '../src/ConnectionManager';
+import type { FsChangeListener } from '../src/vault/FsChangeListener';
+import type { PendingEditsBar } from '../src/ui/PendingEditsBar';
+import type { PluginSettings } from '../src/types';
 
 // The reconcile half of the background index (#513): once the vault model can
 // start from a tree snapshot, a complete walk must also update what changed and
@@ -76,6 +83,9 @@ function makeIndexer(opts: {
   failFolder?: string;
   currentStat?: (p: string) => { mtime: number; size: number } | null;
   reconcile?: boolean;
+  skip?: (path: string) => boolean;
+  keep?: (path: string) => boolean;
+  markLoaded?: (path: string) => void;
 }) {
   const walk = vi.fn((path: string, recursive: boolean) => {
     if (opts.failFolder === path) return Promise.reject(new Error('EACCES'));
@@ -90,10 +100,12 @@ function makeIndexer(opts: {
   const indexer = new BackgroundIndexer({
     makeWalker: () => walker,
     makeBuilder: () => opts.model.builder,
-    markLoaded: () => { /* noop */ },
+    markLoaded: opts.markLoaded ?? (() => { /* noop */ }),
     yieldFn: () => Promise.resolve(),
     modelAtStart: opts.reconcile === false ? undefined : () => [...opts.model.model.values()].map((e) => ({ ...e })),
     currentStat: opts.currentStat,
+    skip: opts.skip,
+    keep: opts.keep,
     onComplete: (r) => completions.push(r),
   });
   return { indexer, completions };
@@ -109,7 +121,38 @@ describe('BackgroundIndexer reconcile', () => {
 
     expect(m.modifyOne).toHaveBeenCalledExactlyOnceWith('a.md', { ctime: 2, mtime: 2, size: 12 });
     expect(m.model.get('a.md')).toMatchObject({ mtime: 2, size: 12 });
-    expect(completions).toEqual([{ viaFastPath: true, modified: 1, removed: 0 }]);
+    expect(completions).toEqual([{ viaFastPath: true, modified: 1, removed: 0, complete: true }]);
+  });
+
+  it('fast path: updates a note whose only change is its ctime', async () => {
+    const m = makeModel([{ ...file('a.md', 5, 10), ctime: 5 }]);
+    const { indexer, completions } = makeIndexer({
+      fastPath: true, model: m, remote: [{ ...file('a.md', 5, 10), ctime: 3 }],
+    });
+    await indexer.start();
+
+    expect(m.modifyOne).toHaveBeenCalledExactlyOnceWith('a.md', { ctime: 3, mtime: 5, size: 10 });
+    expect(completions).toEqual([{ viaFastPath: true, modified: 1, removed: 0, complete: true }]);
+  });
+
+  // An older daemon reports no `created`, so the walk's ctime is 0 (unknown).
+  // Comparing it would fire `modify` on every edited note at every reconnect.
+  it('fast path: does not compare a ctime the walk does not know', async () => {
+    const m = makeModel([{ ...file('a.md', 5, 10), ctime: 3 }]);
+    const { indexer } = makeIndexer({
+      fastPath: true, model: m, remote: [{ ...file('a.md', 5, 10), ctime: 0 }],
+    });
+    await indexer.start();
+    expect(m.modifyOne).not.toHaveBeenCalled();
+  });
+
+  it('fast path: keeps the modelled ctime when the walk does not know it', async () => {
+    const m = makeModel([{ ...file('a.md', 5, 10), ctime: 3 }]);
+    const { indexer } = makeIndexer({
+      fastPath: true, model: m, remote: [{ ...file('a.md', 6, 12), ctime: 0 }],
+    });
+    await indexer.start();
+    expect(m.modifyOne).toHaveBeenCalledExactlyOnceWith('a.md', { ctime: 3, mtime: 6, size: 12 });
   });
 
   it('fast path: drops notes and folders the remote no longer has', async () => {
@@ -140,6 +183,100 @@ describe('BackgroundIndexer reconcile', () => {
     expect(m.model.has('fresh.md')).toBe(true);
   });
 
+  describe('skip', () => {
+    // An offline edit still queued: `new.md` was created and `gone.md` removed
+    // locally, but the remote has neither change yet.
+    const skip = (p: string) => p === 'new.md' || p === 'gone.md' || p === 'dir' || p.startsWith('dir/');
+
+    it.each([['fast path', true], ['SFTP fallback', false]] as const)(
+      '%s: never adds, updates or removes a skipped path', async (_label, fastPath) => {
+        const m = makeModel([file('new.md'), file('kept.md', 1, 10), dir('dir'), file('dir/a.md', 1, 1)]);
+        const { indexer } = makeIndexer({
+          fastPath, model: m, skip,
+          remote: [file('kept.md', 2, 12), file('gone.md'), dir('dir'), file('dir/a.md', 9, 9)],
+        });
+        await indexer.start();
+
+        expect(m.model.has('new.md'), 'offline-created note kept').toBe(true);
+        expect(m.model.has('gone.md'), 'offline-removed note not re-added').toBe(false);
+        expect(m.model.get('dir/a.md')).toMatchObject({ mtime: 1 });
+        if (fastPath) expect(m.model.get('kept.md')).toMatchObject({ mtime: 2, size: 12 });
+      });
+
+    it.each([['fast path', true], ['SFTP fallback', false]] as const)(
+      '%s: marks a skipped folder loaded, so expanding it does not re-list it unfiltered', async (_l, fastPath) => {
+        const marked: string[] = [];
+        const { indexer } = makeIndexer({
+          fastPath, model: makeModel([]), skip, markLoaded: (p) => marked.push(p),
+          remote: [dir('dir'), file('dir/a.md')],
+        });
+        await indexer.start();
+
+        expect(marked).toContain('dir');
+      });
+
+  });
+
+  describe('keep', () => {
+    // `a` holds a queued `a/new.md`: the remote does not have that note yet.
+    const skip = (p: string) => p === 'a/new.md';
+    const keep = (p: string) => p === 'a';
+
+    it.each([['fast path', true], ['SFTP fallback', false]] as const)(
+      '%s: never removes a kept folder the remote lacks (it would take the queued note with it)', async (_l, fastPath) => {
+        // `a` itself was created offline; only its queued note names it.
+        const m = makeModel([dir('a'), file('a/new.md')]);
+        const { indexer } = makeIndexer({ fastPath, model: m, skip, keep, remote: [] });
+        await indexer.start();
+
+        expect([...m.model.keys()].sort()).toEqual(['a', 'a/new.md']);
+      });
+
+    it.each([['fast path', true], ['SFTP fallback', false]] as const)(
+      '%s: adds a kept note the model lacks (written offline in an earlier launch)', async (_l, fastPath) => {
+        const m = makeModel([dir('a')]);
+        const { indexer } = makeIndexer({
+          fastPath, model: m, keep: (p) => p === 'a' || p === 'a/new.md', remote: [dir('a'), file('a/new.md')],
+        });
+        await indexer.start();
+
+        expect(m.model.has('a/new.md')).toBe(true);
+      });
+
+    it.each([['fast path', true], ['SFTP fallback', false]] as const)(
+      '%s: never updates the stat of a kept note (the model has the newer edit)', async (_l, fastPath) => {
+        const m = makeModel([file('n.md', 9, 99)]);
+        const { indexer } = makeIndexer({ fastPath, model: m, keep: (p) => p === 'n.md', remote: [file('n.md', 1, 1)] });
+        await indexer.start();
+
+        expect(m.model.get('n.md')).toMatchObject({ mtime: 9, size: 99 });
+      });
+
+    it.each([['fast path', true], ['SFTP fallback', false]] as const)(
+      '%s: still walks and reconciles under a kept folder', async (_l, fastPath) => {
+        const m = makeModel([dir('a'), file('a/new.md'), file('a/old.md'), file('a/gone.md')]);
+        const { indexer } = makeIndexer({
+          fastPath, model: m, skip, keep,
+          remote: [dir('a'), file('a/old.md')],
+        });
+        await indexer.start();
+
+        expect([...m.model.keys()].sort()).toEqual(['a', 'a/new.md', 'a/old.md']);
+      });
+
+    it.each([['fast path', true], ['SFTP fallback', false]] as const)(
+      '%s: still adds a kept folder the model lacks, so the notes under it can land', async (_l, fastPath) => {
+        const m = makeModel([]);
+        const { indexer } = makeIndexer({
+          fastPath, model: m, skip, keep,
+          remote: [dir('a'), file('a/old.md')],
+        });
+        await indexer.start();
+
+        expect([...m.model.keys()].sort()).toEqual(['a', 'a/old.md']);
+      });
+  });
+
   it('skips a stat update when the note changed after the pass started', async () => {
     const m = makeModel([file('a.md', 1, 10)]);
     const { indexer } = makeIndexer({
@@ -165,23 +302,25 @@ describe('BackgroundIndexer reconcile', () => {
     expect(m.modifyOne).not.toHaveBeenCalled();
     expect(m.model.get('a.md')).toMatchObject({ mtime: 5, size: 50 });
     expect(m.model.has('b.md')).toBe(true);
-    expect(completions).toEqual([{ viaFastPath: false, modified: 0, removed: 0 }]);
+    expect(completions).toEqual([{ viaFastPath: false, modified: 0, removed: 0, complete: false }]);
   });
 
   it('does not remove anything when the walk could not list every folder', async () => {
     const m = makeModel([file('a.md'), file('b.md')]);
-    const { indexer } = makeIndexer({
+    const { indexer, completions } = makeIndexer({
       fastPath: true, model: m, remote: [file('a.md')], listErrors: 1,
     });
     await indexer.start();
     expect(m.model.has('b.md')).toBe(true);
+    expect(completions[0].complete).toBe(false);
   });
 
   it('does not remove anything after a truncated walk', async () => {
     const m = makeModel([file('a.md'), file('b.md')]);
-    const { indexer } = makeIndexer({ fastPath: true, model: m, remote: [file('a.md')], truncated: true });
+    const { indexer, completions } = makeIndexer({ fastPath: true, model: m, remote: [file('a.md')], truncated: true });
     await indexer.start();
     expect(m.model.has('b.md')).toBe(true);
+    expect(completions[0].complete).toBe(false);
   });
 
   it('does nothing and reports nothing when cancelled', async () => {
@@ -217,7 +356,7 @@ describe('BackgroundIndexer reconcile', () => {
       onComplete: (r) => completions.push(r),
     }).start();
     expect(m.model.has('b.md')).toBe(true);
-    expect(completions).toEqual([{ viaFastPath: true, modified: 0, removed: 0 }]);
+    expect(completions).toEqual([{ viaFastPath: true, modified: 0, removed: 0, complete: false }]);
   });
 
   describe('SFTP fallback (stats are 0)', () => {
@@ -229,7 +368,17 @@ describe('BackgroundIndexer reconcile', () => {
       await indexer.start();
       expect(m.modifyOne).not.toHaveBeenCalled();
       expect(m.model.has('d/gone.md')).toBe(false);
-      expect(completions).toEqual([{ viaFastPath: false, modified: 0, removed: 1 }]);
+      // Removals ran, but no stats were compared: not a full reconcile.
+      expect(completions).toEqual([{ viaFastPath: false, modified: 0, removed: 1, complete: false }]);
+    });
+
+    it('is not complete when a folder walk threw', async () => {
+      const m = makeModel([dir('d'), file('d/a.md')]);
+      const { indexer, completions } = makeIndexer({
+        fastPath: false, model: m, remote: [dir('d'), file('d/a.md')], failFolder: 'd',
+      });
+      await indexer.start();
+      expect(completions[0].complete).toBe(false);
     });
 
     it('removes nothing when a folder walk threw', async () => {
@@ -255,5 +404,74 @@ describe('BackgroundIndexer reconcile', () => {
       expect(m.removeOne).not.toHaveBeenCalled();
       expect(m.model.has('d/x.md')).toBe(true);
     });
+  });
+});
+
+// The real filter AdapterManager builds from the offline queue, through the
+// real indexer: the cases above use hand-written predicates.
+describe('with the offline queue\'s filter', () => {
+  function filterFor(ops: QueuedOp[]) {
+    const mgr = new AdapterManager(
+      {} as App,
+      { id: 'remote-ssh' } as unknown as PluginManifest,
+      { rpcConnection: null, activeRemoteBasePath: null } as unknown as ConnectionManager,
+      { subscribe: vi.fn(), unsubscribe: vi.fn() } as unknown as FsChangeListener,
+      { startPolling: vi.fn() } as unknown as PendingEditsBar,
+      () => ({}) as unknown as PluginSettings,
+    );
+    (mgr as unknown as { offlineQueue: unknown }).offlineQueue = {
+      pending: () => ops.map((op, id) => ({ id, ts: 0, op })),
+    };
+    return mgr.pendingOfflineFilter()!;
+  }
+
+  it('a folder renamed offline stays renamed: the new path kept, the old one not re-added', async () => {
+    // The model has the rename; the remote doesn't yet.
+    const m = makeModel([dir('archive'), file('archive/a.md')]);
+    const { indexer } = makeIndexer({
+      fastPath: true, model: m, remote: [dir('notes'), file('notes/a.md')],
+      ...filterFor([{ kind: 'rename', oldPath: 'notes', newPath: 'archive' }]),
+    });
+
+    await indexer.start();
+
+    expect([...m.model.keys()].sort()).toEqual(['archive', 'archive/a.md']);
+  });
+
+  it('rename A to B, then a new A: B is kept, and the new A is not downgraded to the remote\'s old one', async () => {
+    // A is both a rename source (skip) and a write (keep): skip wins, so the
+    // walk leaves it alone either way.
+    const m = makeModel([file('B.md', 1), file('A.md', 5, 9)]);
+    const { indexer } = makeIndexer({
+      fastPath: true, model: m, remote: [file('A.md', 1)],
+      ...filterFor([
+        { kind: 'rename', oldPath: 'A.md', newPath: 'B.md' },
+        { kind: 'write', path: 'A.md', contentBase64: '' },
+      ]),
+    });
+
+    await indexer.start();
+
+    expect([...m.model.keys()].sort()).toEqual(['A.md', 'B.md']);
+    expect(m.model.get('A.md')).toMatchObject({ mtime: 5, size: 9 });
+    expect(m.modifyOne).not.toHaveBeenCalled();
+    expect(m.removeOne).not.toHaveBeenCalled();
+  });
+
+  it('…and where the model lacks the new A, the remote\'s old A is not added either', async () => {
+    // Queued in an earlier launch, so this model never saw the write. Adding
+    // the remote's A would show the renamed-away content until the replay.
+    const m = makeModel([file('B.md', 1)]);
+    const { indexer } = makeIndexer({
+      fastPath: true, model: m, remote: [file('A.md', 1)],
+      ...filterFor([
+        { kind: 'rename', oldPath: 'A.md', newPath: 'B.md' },
+        { kind: 'write', path: 'A.md', contentBase64: '' },
+      ]),
+    });
+
+    await indexer.start();
+
+    expect([...m.model.keys()]).toEqual(['B.md']);
   });
 });

@@ -1,7 +1,7 @@
 import type { ListedFiles } from 'obsidian';
 import { logger } from '../util/logger';
 import type { RemoteEntry } from './VaultModelBuilder';
-import type { WalkParams, WalkResult, ServerInfo } from '../proto/types';
+import { knownCreated, type WalkParams, type WalkResult, type ServerInfo } from '../proto/types';
 import { errorMessage } from "../util/errorMessage";
 
 /**
@@ -234,7 +234,7 @@ export class BulkWalker {
         all.push({
           path:        e.path,
           isDirectory: e.type === 'folder',
-          ctime:       e.mtime, // daemon has no separate ctime; mtime is the closest signal
+          ctime:       knownCreated(e.created) ?? 0, // 0: unknown, see RemoteEntry.ctime
           mtime:       e.mtime,
           size:        e.size,
         });

@@ -9,6 +9,13 @@ import { AuthResolver } from '../src/ssh/AuthResolver';
 import { SecretStore } from '../src/ssh/SecretStore';
 import { HostKeyStore } from '../src/ssh/HostKeyStore';
 import type { JumpHostConfig } from '../src/types';
+import { loadDiskCertificate, type DiskCertificateAgent } from '../src/ssh/DiskCertificate';
+
+// The real loader unless a test hands back an agent with `mockReturnValueOnce`.
+vi.mock('../src/ssh/DiskCertificate', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../src/ssh/DiskCertificate')>();
+  return { ...real, loadDiskCertificate: vi.fn(real.loadDiskCertificate) };
+});
 
 /**
  * Minimal fake of ssh2.Client. Exposes the surface
@@ -251,6 +258,29 @@ describe('createJumpTunnel: auth handling', () => {
       );
       const cfg = fake.connectConfig as { privateKey: Buffer };
       expect(cfg.privateKey.toString('utf8')).toBe('FAKE-KEY-CONTENTS');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // ssh2 tries the bare key first, so a bastion that trusts only the bare key
+  // still lets the jump through when a certificate sits next to it.
+  it('offers a usable sibling certificate and keeps the bare key alongside it', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jump-key-'));
+    const keyPath = path.join(tmp, 'id_test');
+    fs.writeFileSync(keyPath, 'FAKE-KEY-CONTENTS', 'utf8');
+    const certAgent = {} as DiskCertificateAgent;
+    vi.mocked(loadDiskCertificate).mockReturnValueOnce(certAgent);
+    try {
+      await createJumpTunnel(
+        { ...baseJump, authMethod: 'privateKey', privateKeyPath: keyPath },
+        'target.example.com', 22, authResolver,
+        { clientFactory: () => fake },
+      );
+      const cfg = fake.connectConfig as { agent: unknown; privateKey: Buffer };
+      expect(cfg.agent).toBe(certAgent);
+      expect(cfg.privateKey.toString('utf8')).toBe('FAKE-KEY-CONTENTS');
+      expect(loadDiskCertificate).toHaveBeenLastCalledWith(keyPath, cfg.privateKey);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -18,7 +18,7 @@ import * as fs from 'fs';
 import * as nodePath from 'path';
 import type { RemoteBinding } from '../ConnectionManager';
 import type { RemoteFsClient } from './RemoteFsClient';
-import type { WriterReflector } from './WriterReflector';
+import type { WriterReflector, WrittenStat } from './WriterReflector';
 import type { LocalOpRegistry } from './LocalOpRegistry';
 import type { ReadCache } from '../cache/ReadCache';
 import { ReconnectWait } from '../util/ReconnectWait';
@@ -32,7 +32,7 @@ import type { OfflineQueue, QueuedOp } from '../offline/OfflineQueue';
 import type { TransferTracker } from '../util/TransferTracker';
 import { logger } from '../util/logger';
 import { perfTracer } from '../util/PerfTracer';
-import { isPreconditionFailed } from '../proto/rpcError';
+import { isFileNotFound, isPreconditionFailed } from '../proto/rpcError';
 import { errorMessage } from "../util/errorMessage";
 
 export type { ThreeWayPanes, TextConflictDecision } from '../conflict/ConflictResolver';
@@ -158,7 +158,8 @@ export class SftpDataAdapter {
    *  - read / readBinary serve a cached value at once; on a miss they wait
    *    for the session (bounded — see ReconnectWait) and only then throw
    *  - list / stat / exists throw immediately, with no cache fallback
-   *  - every write-side method throws a clear "reconnecting" notice
+   *  - every write-side method goes to the offline queue, replayed on
+   *    recovery; without a queue it throws a clear "reconnecting" error
    *
    * Flipped on at the reconnect loop's start and off at recovered / failed /
    * cancelled. Only NEW calls are gated; calls already in flight hit the dead
@@ -196,11 +197,12 @@ export class SftpDataAdapter {
   }
 
   /**
-   * Echo-dedup registry (#341, RPC). When set, every applied local
-   * mutation records its path(s) here so the RPC `FsChangeListener`
-   * drops the daemon's `fs.watch` echo of our own op instead of
-   * firing a second `vault.trigger`. Null on the SFTP transport
-   * (no daemon, no echo) — recording is then a harmless no-op.
+   * Echo-dedup registry (#341). When set, every applied local mutation
+   * records its path(s) here so the RPC `FsChangeListener` drops the
+   * daemon's `fs.watch` echo of our own op instead of firing a second
+   * `vault.trigger`. Wired on both transports by
+   * `AdapterManager.wireLiveUpdates`; SFTP has no echo, so its entries are
+   * never consumed. Null until wired, and recording is then a no-op.
    */
   private localOpRegistry: LocalOpRegistry | null = null;
 
@@ -262,9 +264,8 @@ export class SftpDataAdapter {
       const s = await this.client.stat(this.toRemote(normalizedPath));
       return {
         type: s.isDirectory ? 'folder' : 'file',
-        // SFTP only exposes mtime; reuse it as ctime so callers get a
-        // monotonically reasonable value rather than 0.
-        ctime: s.mtime,
+        // SFTP has no creation time; fall back to mtime.
+        ctime: s.created ?? s.mtime,
         mtime: s.mtime,
         size: s.size,
       };
@@ -390,41 +391,128 @@ export class SftpDataAdapter {
 
   // ─── DataAdapter (write-side) ────────────────────────────────────────────
 
-  async write(normalizedPath: string, data: string, _options?: DataWriteOptions): Promise<void> {
+  /**
+   * Tail of each path's write chain; see `serialized`. An entry leaves the
+   * map once its chain drains.
+   */
+  private readonly writeChains = new Map<string, Promise<void>>();
+
+  /**
+   * Run a write to one path once the previous write to it has settled.
+   *
+   * Native adapters queue writes, so they never overlap; plugins rely on
+   * that, e.g. settings that save as you type fire `saveData` per keystroke
+   * without awaiting the last. Overlapping here, each write would assert the
+   * mtime cached from before the previous one landed, and the server would
+   * reject it as a conflict. Per path, not global: writes to different files
+   * have no ordering to keep. A failed write doesn't block the next.
+   */
+  private serialized<T>(normalizedPath: string, run: () => Promise<T>): Promise<T> {
+    const prev = this.writeChains.get(normalizedPath) ?? Promise.resolve();
+    const result = prev.then(run);
+    const tail = result.then(() => undefined, () => undefined);
+    this.writeChains.set(normalizedPath, tail);
+    void tail.then(() => {
+      if (this.writeChains.get(normalizedPath) === tail) this.writeChains.delete(normalizedPath);
+    });
+    return result;
+  }
+
+  /**
+   * Wait for the writes already queued to these paths, or to anything under
+   * them. Path mutations (remove, rmdir, rename, copy) call it first: a write
+   * still waiting behind an earlier one would otherwise land after the
+   * mutation, bringing a renamed or deleted file back at its old path, or
+   * copying the file before it. Writes issued after the call are new writes
+   * and land after the mutation, as they should.
+   */
+  private async writesSettled(...paths: string[]): Promise<void> {
+    const pending: Promise<void>[] = [];
+    for (const [path, tail] of this.writeChains) {
+      if (paths.some(p => path === p || path.startsWith(p + '/'))) pending.push(tail);
+    }
+    await Promise.all(pending);
+  }
+
+  async write(normalizedPath: string, data: string, options?: DataWriteOptions): Promise<void> {
+    await this.serialized(normalizedPath, () => this.writeText(normalizedPath, data, options));
+  }
+
+  async writeBinary(normalizedPath: string, data: ArrayBuffer, options?: DataWriteOptions): Promise<void> {
+    return this.serialized(normalizedPath, () => this.writeBinaryNow(normalizedPath, data, options));
+  }
+
+  async append(normalizedPath: string, data: string, options?: DataWriteOptions): Promise<void> {
+    return this.serialized(normalizedPath, () => this.appendNow(normalizedPath, data, options));
+  }
+
+  async appendBinary(normalizedPath: string, data: ArrayBuffer, options?: DataWriteOptions): Promise<void> {
+    return this.serialized(normalizedPath, () => this.appendBinaryNow(normalizedPath, data, options));
+  }
+
+  /**
+   * Read, transform, and write back a plaintext file. Serialized with this
+   * window's other writes to the path, but not atomic across writers
+   * elsewhere — same caveat as the underlying SFTP write (which goes
+   * through a tmp+rename inside SftpClient).
+   */
+  async process(
+    normalizedPath: string,
+    fn: (data: string) => string,
+    options?: DataWriteOptions,
+  ): Promise<string> {
+    return this.serialized(normalizedPath, () => this.processNow(normalizedPath, fn, options));
+  }
+
+  // The `*Now` bodies run inside `serialized`; they call each other, never
+  // the public methods, which would wait on the chain they are part of.
+
+  /**
+   * `write`, returning the text that landed: a conflict merge may have
+   * replaced `data`, and `process` must hand Vault what is on the remote,
+   * since Vault caches the text `process` returns.
+   */
+  private async writeText(normalizedPath: string, data: string, options?: DataWriteOptions): Promise<string> {
     const __t1 = perfTracer.begin('S.adp');
     try {
       if (this.reconnecting) {
-        await this.queueOrThrowText(normalizedPath, data);
-        return;
+        await this.queueOrThrowText(normalizedPath, data, options);
+        return data;
       }
-      await this.writeBuffer(normalizedPath, Buffer.from(data, 'utf8'), true);
+      const buf = Buffer.from(data, 'utf8');
+      const { stat: written, landed: landedBuf, merged } = await this.writeBuffer(normalizedPath, buf, true);
       // After a successful text write, the file we just wrote IS the
-      // new ancestor for any later edit cycle.
+      // new ancestor for any later edit cycle — as merged, if it was.
+      const landedText = merged ? landedBuf.toString('utf8') : data;
       if (this.ancestorTracker) {
-        const cached = this.readCache.peek(this.toRemote(normalizedPath));
-        this.ancestorTracker.remember(normalizedPath, data, cached?.mtime ?? 0);
+        this.ancestorTracker.remember(normalizedPath, landedText, written?.mtime ?? 0);
       }
-      this.applied([normalizedPath], r => r.reflectWrite(normalizedPath));
+      this.settleTextCache(normalizedPath, merged, options);
+      this.applied([normalizedPath], r => r.reflectWrite(normalizedPath, written));
+      return landedText;
     } finally {
       perfTracer.end(__t1, { op: 'write', path: normalizedPath, bytes: data.length });
     }
   }
 
-  async writeBinary(normalizedPath: string, data: ArrayBuffer, _options?: DataWriteOptions): Promise<void> {
+  private async writeBinaryNow(normalizedPath: string, data: ArrayBuffer, options?: DataWriteOptions): Promise<void> {
     const __t1 = perfTracer.begin('S.adp');
     try {
       if (this.reconnecting) {
-        await this.queueOrThrowBinary(normalizedPath, Buffer.from(data));
+        await this.queueOrThrowBinary(normalizedPath, Buffer.from(data), options);
         return;
       }
-      await this.writeBuffer(normalizedPath, Buffer.from(data), false);
-      this.applied([normalizedPath], r => r.reflectWrite(normalizedPath));
+      const buf = Buffer.from(data);
+      // Binary conflicts can't merge (keep mine or throw), so what landed is `data`.
+      const { stat: written } = await this.writeBuffer(normalizedPath, buf, false);
+      this.callImmediate(options);
+      this.applied([normalizedPath], r => r.reflectWrite(normalizedPath, written));
     } finally {
       perfTracer.end(__t1, { op: 'writeBinary', path: normalizedPath, bytes: data.byteLength });
     }
   }
 
-  async append(normalizedPath: string, data: string, options?: DataWriteOptions): Promise<void> {
+  private async appendNow(normalizedPath: string, data: string, options?: DataWriteOptions): Promise<void> {
     const __t1 = perfTracer.begin('S.adp');
     try {
       if (this.reconnecting) {
@@ -433,53 +521,40 @@ export class SftpDataAdapter {
         // before giving up. Then splice and queue as a full write: reading
         // and writing as separate ops would explode the queue size when the
         // editor appends in a tight loop.
-        let existing = '';
-        try { existing = await this.read(normalizedPath); }
-        catch { /* file did not exist; start empty so append acts like create */ }
-        await this.queueOrThrowText(normalizedPath, existing + data);
+        const existing = await existingForAppend(() => this.read(normalizedPath), '');
+        await this.queueOrThrowText(normalizedPath, existing + data, options);
         return;
       }
-      let existing = '';
-      try { existing = await this.read(normalizedPath); }
-      catch { /* file did not exist; start empty so append acts like create */ }
-      await this.write(normalizedPath, existing + data, options);
+      const existing = await existingForAppend(() => this.read(normalizedPath), '');
+      await this.writeText(normalizedPath, existing + data, options);
     } finally {
       perfTracer.end(__t1, { op: 'append', path: normalizedPath, bytes: data.length });
     }
   }
 
-  async appendBinary(normalizedPath: string, data: ArrayBuffer, options?: DataWriteOptions): Promise<void> {
+  private async appendBinaryNow(normalizedPath: string, data: ArrayBuffer, options?: DataWriteOptions): Promise<void> {
     const __t1 = perfTracer.begin('S.adp');
     try {
       if (this.reconnecting) {
-        let existing: Buffer;
-        try { existing = await this.readBuffer(normalizedPath); }
-        catch { existing = Buffer.alloc(0); }
-        const merged = Buffer.concat([existing, Buffer.from(data)]);
-        await this.queueOrThrowBinary(normalizedPath, merged);
+        const existing = await existingForAppend(() => this.readBuffer(normalizedPath), Buffer.alloc(0));
+        const mergedBinary = Buffer.concat([existing, Buffer.from(data)]);
+        await this.queueOrThrowBinary(normalizedPath, mergedBinary, options);
         return;
       }
-      let existing: Buffer;
-      try { existing = await this.readBuffer(normalizedPath); }
-      catch { existing = Buffer.alloc(0); }
-      const merged = Buffer.concat([existing, Buffer.from(data)]);
-      await this.writeBuffer(normalizedPath, merged, false);
+      const existing = await existingForAppend(() => this.readBuffer(normalizedPath), Buffer.alloc(0));
+      const mergedBinary = Buffer.concat([existing, Buffer.from(data)]);
+      const { stat: written } = await this.writeBuffer(normalizedPath, mergedBinary, false);
+      this.callImmediate(options);
       // appendBinary writes through writeBuffer directly (not via
-      // this.write/writeBinary), so it must reflect itself or the
+      // writeText/writeBinaryNow), so it must reflect itself or the
       // writer's model misses binary appends (#341).
-      this.applied([normalizedPath], r => r.reflectWrite(normalizedPath));
-      void options;
+      this.applied([normalizedPath], r => r.reflectWrite(normalizedPath, written));
     } finally {
       perfTracer.end(__t1, { op: 'appendBinary', path: normalizedPath, bytes: data.byteLength });
     }
   }
 
-  /**
-   * Read, transform, and write back a plaintext file. Not atomic across
-   * concurrent writers — same caveat as the underlying SFTP write (which
-   * goes through a tmp+rename inside SftpClient).
-   */
-  async process(
+  private async processNow(
     normalizedPath: string,
     fn: (data: string) => string,
     options?: DataWriteOptions,
@@ -489,13 +564,11 @@ export class SftpDataAdapter {
       if (this.reconnecting) {
         const current = await this.read(normalizedPath);
         const next = fn(current);
-        await this.queueOrThrowText(normalizedPath, next);
+        await this.queueOrThrowText(normalizedPath, next, options);
         return next;
       }
       const current = await this.read(normalizedPath);
-      const next = fn(current);
-      await this.write(normalizedPath, next, options);
-      return next;
+      return await this.writeText(normalizedPath, fn(current), options);
     } finally {
       perfTracer.end(__t1, { op: 'process', path: normalizedPath });
     }
@@ -515,6 +588,7 @@ export class SftpDataAdapter {
   async remove(normalizedPath: string): Promise<void> {
     const __t1 = perfTracer.begin('S.adp');
     try {
+      await this.writesSettled(normalizedPath);
       const remote = this.toRemote(normalizedPath);
       if (this.reconnecting) {
         await this.queueOrThrowMutation({ kind: 'remove', path: normalizedPath });
@@ -534,6 +608,7 @@ export class SftpDataAdapter {
   }
 
   async rmdir(normalizedPath: string, recursive: boolean): Promise<void> {
+    await this.writesSettled(normalizedPath);
     const remote = this.toRemote(normalizedPath);
     if (this.reconnecting) {
       await this.queueOrThrowMutation({ kind: 'rmdir', path: normalizedPath, recursive });
@@ -552,6 +627,7 @@ export class SftpDataAdapter {
   async rename(oldPath: string, newPath: string): Promise<void> {
     const __t1 = perfTracer.begin('S.adp');
     try {
+      await this.writesSettled(oldPath, newPath);
       const oldRemote = this.toRemote(oldPath);
       const newRemote = this.toRemote(newPath);
       if (this.reconnecting) {
@@ -577,6 +653,7 @@ export class SftpDataAdapter {
   }
 
   async copy(oldPath: string, newPath: string): Promise<void> {
+    await this.writesSettled(oldPath, newPath);
     const newRemote = this.toRemote(newPath);
     if (this.reconnecting) {
       await this.queueOrThrowMutation({ kind: 'copy', srcPath: oldPath, dstPath: newPath });
@@ -639,12 +716,12 @@ export class SftpDataAdapter {
       switch (op.kind) {
         case 'write': {
           const data = Buffer.from(op.contentBase64, 'base64');
-          await this.writeBuffer(op.path, data, true, op.expectedMtime);
+          await this.serialized(op.path, () => this.writeBuffer(op.path, data, true, op.expectedMtime));
           return { result: 'ok' };
         }
         case 'writeBinary': {
           const data = Buffer.from(op.contentBase64, 'base64');
-          await this.writeBuffer(op.path, data, false, op.expectedMtime);
+          await this.serialized(op.path, () => this.writeBuffer(op.path, data, false, op.expectedMtime));
           return { result: 'ok' };
         }
         case 'append': {
@@ -701,8 +778,11 @@ export class SftpDataAdapter {
    *
    * The ancestor tracker is deliberately NOT refreshed: it holds what the
    * user actually read. Refreshing it would show them (mine, mine, theirs).
+   *
+   * Vault's text cache is settled here once the op is queued, as for a landed
+   * write; not when there is no queue, as for a failed one.
    */
-  private async queueOrThrowText(normalizedPath: string, data: string): Promise<void> {
+  private async queueOrThrowText(normalizedPath: string, data: string, options?: DataWriteOptions): Promise<void> {
     if (!this.offlineQueue) throw reconnectingError();
     const remote = this.toRemote(normalizedPath);
     const cached = this.readCache.peek(remote);
@@ -715,10 +795,11 @@ export class SftpDataAdapter {
     });
     const synthMtime = Date.now();
     this.readCache.put(remote, buf, synthMtime);
+    this.callImmediate(options);
   }
 
   /** Binary equivalent of `queueOrThrowText`; the ancestor tracker is text-only so it's left alone. */
-  private async queueOrThrowBinary(normalizedPath: string, buf: Buffer): Promise<void> {
+  private async queueOrThrowBinary(normalizedPath: string, buf: Buffer, options?: DataWriteOptions): Promise<void> {
     if (!this.offlineQueue) throw reconnectingError();
     const remote = this.toRemote(normalizedPath);
     const cached = this.readCache.peek(remote);
@@ -730,6 +811,7 @@ export class SftpDataAdapter {
     });
     const synthMtime = Date.now();
     this.readCache.put(remote, buf, synthMtime);
+    this.callImmediate(options);
   }
 
   /**
@@ -906,7 +988,9 @@ export class SftpDataAdapter {
 
   /**
    * Atomic-on-the-server write (tmp+rename): ensure the parent exists, write,
-   * then refresh the read cache with the freshly-read mtime.
+   * then refresh the read cache with the freshly-read mtime. Returns that
+   * stat (undefined if it failed), the bytes that landed, and whether a
+   * conflict merge made those differ from `data`.
    *
    * A recent ReadCache entry supplies `expectedMtime`, so the server rejects
    * the write if another client got there first. On rejection:
@@ -920,8 +1004,8 @@ export class SftpDataAdapter {
    *      have no ancestor (e.g. write-without-prior-read).
    *   3. Else, rethrow the precondition error.
    *
-   * `data` is reassigned in the merge branch so the cache update afterwards
-   * reflects what actually landed.
+   * `writtenData` is reassigned in the merge branch so the cache update
+   * afterwards reflects what actually landed.
    *
    * `expectedMtimeOverride` is for the offline-queue replayer: it feeds the
    * mtime captured at ENQUEUE time, not whatever the cache holds now — which
@@ -932,7 +1016,7 @@ export class SftpDataAdapter {
     data: Buffer,
     isText: boolean,
     expectedMtimeOverride?: number,
-  ): Promise<void> {
+  ): Promise<{ stat: WrittenStat | undefined; landed: Buffer; merged: boolean }> {
     const remote = this.toRemote(normalizedPath);
     const parent = parentDirRemote(remote);
     if (parent && parent !== remote) {
@@ -942,6 +1026,7 @@ export class SftpDataAdapter {
     const cached = this.readCache.peek(remote);
     const expectedMtime = expectedMtimeOverride ?? cached?.mtime;
     let writtenData = data;
+    let merged = false;
     const txId = this.transferTracker?.begin('up', normalizedPath, data.length) ?? null;
     try {
       try {
@@ -953,6 +1038,7 @@ export class SftpDataAdapter {
         writtenData = await this.conflictResolver.resolve(
           normalizedPath, remote, writtenData, isText, e,
         );
+        merged = !writtenData.equals(data);
       }
     } finally {
       this.transferTracker?.end(txId);
@@ -962,15 +1048,56 @@ export class SftpDataAdapter {
     // disk too, so the next Obsidian start reads the real settings (#342/#429).
     this.writeThroughConfig(normalizedPath, writtenData);
 
-    let mtime = 0;
+    let written: WrittenStat | undefined;
     try {
       const s = await this.client.stat(remote);
-      mtime = s.mtime;
+      written = { ctime: s.created, mtime: s.mtime, size: s.size };
     } catch (e) {
       logger.warn(`stat-after-write failed for "${remote}": ${errorMessage(e)}`);
     }
-    this.readCache.put(remote, writtenData, mtime);
+    this.readCache.put(remote, writtenData, written?.mtime ?? 0);
     this.dirCache.invalidate(parent);
+    // `merged`: a conflict merge landed other bytes than `data`. By content,
+    // not identity, so a resolver that hands back a copy doesn't count.
+    return { stat: written, landed: writtenData, merged };
+  }
+
+  /**
+   * Bring Obsidian's cached copy of the file's text up to date after a write
+   * landed. It must happen before the reflected `modify`: an open editor
+   * reloads on that event through cachedRead while the file is still saving,
+   * so a stale cache hands it the old text, and its next save overwrites this
+   * write (Templater's output was lost this way when a hook edited the note
+   * right after).
+   *
+   * Vault passes an `immediate` hook (absent from the public typings) that
+   * sets or drops its cached text; native adapters call it once the write
+   * lands. A conflict merge put other text on the remote than Vault would
+   * cache, so the cache is dropped instead and the reload reads the merged
+   * text through `read`.
+   */
+  private settleTextCache(normalizedPath: string, merged: boolean, options?: DataWriteOptions): void {
+    if (merged) {
+      this.reflect(r => r.forgetText(normalizedPath));
+    } else {
+      this.callImmediate(options);
+    }
+  }
+
+  /**
+   * Call Vault's `immediate` hook (see `settleTextCache`), swallowing and
+   * logging any throw: the write has landed, so as with `reflect`, a fault
+   * here must not reach the caller as a write failure.
+   */
+  private callImmediate(options?: DataWriteOptions): void {
+    const immediate = (options as { immediate?: () => void } | undefined)?.immediate;
+    if (!immediate) return;
+    try {
+      immediate();
+    } catch (e) {
+      const kind = e instanceof Error ? e.name : typeof e;
+      logger.warn(`SftpDataAdapter: immediate hook failed [${kind}]: ${errorMessage(e)}`);
+    }
   }
 
 
@@ -1029,6 +1156,21 @@ function parentDirRemote(p: string): string {
   if (i < 0) return '';
   if (i === 0) return '/';
   return p.slice(0, i);
+}
+
+/**
+ * The current content an append extends: `empty` when the file doesn't exist,
+ * so the append creates it. Any other read failure is thrown. Treating it as
+ * empty would replace the whole file with just the appended bytes, and while
+ * reconnecting, an uncached read fails that way for a file that does exist.
+ */
+async function existingForAppend<T>(read: () => Promise<T>, empty: T): Promise<T> {
+  try {
+    return await read();
+  } catch (e) {
+    if (isFileNotFound(e)) return empty;
+    throw e;
+  }
 }
 
 /**
