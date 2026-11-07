@@ -1357,8 +1357,8 @@ export default class RemoteSshPlugin extends Plugin {
       // Spawn SUCCEEDED. The new window can take several seconds to
       // surface while Obsidian keeps THIS one focused — hold the guard
       // ~15s so an impatient double/triple-click can't fire a second
-      // spawn into that gap. `activeWindow.setTimeout` (not bare
-      // setTimeout) for Obsidian popout-window compatibility.
+      // spawn into that gap. `window.setTimeout`, not a bare global, for
+      // Obsidian popout-window compatibility.
       window.setTimeout(() => { this.shadowSpawnInFlight = false; }, 15_000);
     } catch (e) {
       // Spawn FAILED — nothing is opening. Clear the guard NOW so the

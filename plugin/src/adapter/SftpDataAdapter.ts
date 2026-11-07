@@ -825,9 +825,10 @@ export class SftpDataAdapter {
   }
 
   /**
-   * Fetch or revalidate. A cached entry is reused when the remote stat agrees;
-   * otherwise the file is read and then stat'd so the next comparison has a
-   * real mtime. That trailing stat is best-effort and never blocks the read.
+   * Fetch or revalidate. A cached entry is reused when a fresh stat agrees on
+   * mtime and size; when it doesn't, that stat's mtime goes with the re-read.
+   * On a cache miss the file is read and then stat'd, best-effort: a failed
+   * stat is logged and caches mtime 0, and never fails the read.
    */
   private async readBuffer(normalizedPath: string): Promise<Buffer> {
     const remote = this.toRemote(normalizedPath);
