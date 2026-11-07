@@ -7,6 +7,15 @@ vi.mock('fs', () => ({ readFileSync: vi.fn(), existsSync: vi.fn(() => false) }))
 
 import * as fs from 'fs';
 
+// The real loader, so the unusable-certificate test exercises it; a test can
+// still hand back an agent with `mockReturnValueOnce`.
+vi.mock('../src/ssh/DiskCertificate', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../src/ssh/DiskCertificate')>();
+  return { ...real, loadDiskCertificate: vi.fn(real.loadDiskCertificate) };
+});
+
+import { loadDiskCertificate, type DiskCertificateAgent } from '../src/ssh/DiskCertificate';
+
 function makeStore(initial: Record<string, string> = {}): SecretStore {
   const data = new Map(Object.entries(initial));
   return {
@@ -178,6 +187,31 @@ describe('AuthResolver.buildAuthConfig — privateKey', () => {
     const cfg = r.buildAuthConfig(profile);
     expect(cfg).toMatchObject({ privateKey: expect.any(Buffer) });
     expect(cfg.agent).toBeUndefined();
+  });
+});
+
+describe('AuthResolver.buildAuthConfig — usable disk certificate', () => {
+  // The bare key stays in the config next to the certificate agent: ssh2 tries
+  // it first, so a server that trusts only the bare key still logs in.
+  it.each([
+    ['without', undefined, undefined],
+    ['with', 'pp-ref', 'hunter2'],
+  ] as const)('keeps the bare key alongside the certificate agent, %s a passphrase', (_l, passphraseRef, passphrase) => {
+    const key = Buffer.from('---BEGIN KEY---');
+    vi.mocked(fs.readFileSync).mockReturnValueOnce(key);
+    const certAgent = {} as DiskCertificateAgent;
+    vi.mocked(loadDiskCertificate).mockReturnValueOnce(certAgent);
+    const r = new AuthResolver(makeStore(passphraseRef ? { [passphraseRef]: passphrase! } : {}));
+    const profile: SshProfile = {
+      ...baseProfile, authMethod: 'privateKey', privateKeyPath: '/keys/id_ed25519', passphraseRef,
+    };
+
+    const cfg = r.buildAuthConfig(profile);
+
+    expect(cfg).toEqual(passphrase
+      ? { agent: certAgent, privateKey: key, passphrase }
+      : { agent: certAgent, privateKey: key });
+    expect(loadDiskCertificate).toHaveBeenLastCalledWith('/keys/id_ed25519', key, passphrase);
   });
 });
 

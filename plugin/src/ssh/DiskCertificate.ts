@@ -10,7 +10,7 @@ import {
 } from './CertificateAgent';
 import { isUsableIdentity, sshString } from './AgentIdentities';
 import { logger } from '../util/logger';
-import { errorMessage } from '../util/errorMessage';
+import { asError, errorMessage } from '../util/errorMessage';
 
 /**
  * On-disk OpenSSH certificate authentication (companion to #536).
@@ -189,7 +189,7 @@ export class DiskCertificateAgent extends BaseAgent<ParsedKey> {
     try {
       raw = this.privateKey.sign(data, hashAlgorithm(base));
     } catch (e) {
-      callback(e instanceof Error ? e : new Error(String(e)));
+      callback(asError(e));
       return;
     }
     if (raw instanceof Error) {
@@ -200,7 +200,7 @@ export class DiskCertificateAgent extends BaseAgent<ParsedKey> {
     try {
       callback(null, Buffer.concat([sshString(base), sshString(sshSignatureBody(raw, base))]));
     } catch (e) {
-      callback(e instanceof Error ? e : new Error(String(e)));
+      callback(asError(e));
     }
   }
 }
