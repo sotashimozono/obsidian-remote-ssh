@@ -78,7 +78,8 @@ function makeFakeClient(initial: {
   });
 
   const readBinary = vi.fn(async (p: string): Promise<Buffer> => {
-    if (!(p in files)) throw new Error(`No such file: ${p}`);
+    // ssh2's shape for a missing file: SFTP status NO_SUCH_FILE in `code`.
+    if (!(p in files)) throw Object.assign(new Error(`No such file: ${p}`), { code: 2 });
     return files[p].data;
   });
 
@@ -426,6 +427,33 @@ describe('SftpDataAdapter (read-side)', () => {
 
     it('creates the file when it does not exist yet', async () => {
       const fake = makeFakeClient({ dirs: { '/v': [] } });
+      const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+      await adapter.append('new.md', 'hello');
+      expect(fake.files['/v/new.md'].data.toString('utf8')).toBe('hello');
+    });
+
+    // Treating a failed read as an empty file would replace the file with
+    // just the appended bytes.
+    it.each(['append', 'appendBinary'] as const)(
+      '%s fails, and leaves the file alone, when reading it fails for any reason but not-found', async (method) => {
+        const fake = makeFakeClient({
+          files: { '/v/log.md': { data: Buffer.from('first\n'), mtime: 1 } },
+        });
+        fake.spies.readBinary.mockRejectedValueOnce(Object.assign(new Error('Permission denied'), { code: 3 }));
+        const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
+
+        const call = method === 'append'
+          ? adapter.append('log.md', 'second\n')
+          : adapter.appendBinary('log.md', Buffer.from('second\n').buffer);
+        await expect(call).rejects.toThrow('Permission denied');
+
+        expect(fake.spies.writeBinary).not.toHaveBeenCalled();
+        expect(fake.files['/v/log.md'].data.toString('utf8')).toBe('first\n');
+      });
+
+    it('creates the file when the daemon reports it missing (FileNotFound)', async () => {
+      const fake = makeFakeClient({ dirs: { '/v': [] } });
+      fake.spies.readBinary.mockRejectedValueOnce(Object.assign(new Error('no such file: new.md'), { code: -32010 }));
       const adapter = new SftpDataAdapter(fake.client, '/v', readCache, dirCache, 'v');
       await adapter.append('new.md', 'hello');
       expect(fake.files['/v/new.md'].data.toString('utf8')).toBe('hello');
@@ -1325,6 +1353,28 @@ describe('SftpDataAdapter (offline queue while reconnecting)', () => {
     expect(op.kind).toBe('write');
     expect(Buffer.from(op.contentBase64, 'base64').toString('utf8')).toBe('one\ntwo\n');
   });
+
+  // Not cached, so the read that splices the append can't reach the remote:
+  // queueing just the appended bytes would replace the note on replay.
+  it.each(['append', 'appendBinary'] as const)(
+    '%s on a file it could not read fails instead of queueing a truncating write', async (method) => {
+      const fake = makeFakeClient({
+        files: { '/v/log.md': { data: Buffer.from('one\n'), mtime: 1 } },
+      });
+      const adapter = new SftpDataAdapter(
+        fake.client, '/v', readCache, dirCache, 'v',
+        null, null, null, new AncestorTracker(), queue, '', null,
+        new ReconnectWait({ timeoutMs: 0 }),
+      );
+      adapter.setReconnecting(true);
+
+      const call = method === 'append'
+        ? adapter.append('log.md', 'two\n')
+        : adapter.appendBinary('log.md', Buffer.from('two\n').buffer);
+      await expect(call).rejects.toThrow(/reconnecting/i);
+
+      expect(queue.pending()).toHaveLength(0);
+    });
 
   it('queues mkdir / remove / rmdir / rename / copy with their right shapes', async () => {
     const fake = makeFakeClient({});
