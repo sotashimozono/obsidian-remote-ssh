@@ -222,10 +222,8 @@ export class BackgroundIndexer {
     const builder = this.deps.makeBuilder();
     for (const depth of [...byDepth.keys()].sort((a, b) => a - b)) {
       if (this.cancelled) return null;
-      // buildChunked sorts folders-before-files within the call and yields
-      // between chunks, so a same-depth file always finds its (same-call,
-      // earlier) parent — and a deeper file finds its parent from the previous
-      // depth's call.
+      // Bucketed by depth, so every entry's parent (one level shallower) was
+      // inserted by an earlier call. buildChunked yields between chunks.
       const result = await builder.buildChunked(byDepth.get(depth)!, this.chunkSize);
       this.files += result.filesAdded;
       this.folders += result.foldersAdded;

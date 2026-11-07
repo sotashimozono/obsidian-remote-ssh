@@ -32,7 +32,7 @@ import type { OfflineQueue, QueuedOp } from '../offline/OfflineQueue';
 import type { TransferTracker } from '../util/TransferTracker';
 import { logger } from '../util/logger';
 import { perfTracer } from '../util/PerfTracer';
-import { isPreconditionFailed } from '../proto/rpcError';
+import { isFileNotFound, isPreconditionFailed } from '../proto/rpcError';
 import { errorMessage } from "../util/errorMessage";
 
 export type { ThreeWayPanes, TextConflictDecision } from '../conflict/ConflictResolver';
@@ -158,7 +158,8 @@ export class SftpDataAdapter {
    *  - read / readBinary serve a cached value at once; on a miss they wait
    *    for the session (bounded — see ReconnectWait) and only then throw
    *  - list / stat / exists throw immediately, with no cache fallback
-   *  - every write-side method throws a clear "reconnecting" notice
+   *  - every write-side method goes to the offline queue, replayed on
+   *    recovery; without a queue it throws a clear "reconnecting" error
    *
    * Flipped on at the reconnect loop's start and off at recovered / failed /
    * cancelled. Only NEW calls are gated; calls already in flight hit the dead
@@ -196,11 +197,12 @@ export class SftpDataAdapter {
   }
 
   /**
-   * Echo-dedup registry (#341, RPC). When set, every applied local
-   * mutation records its path(s) here so the RPC `FsChangeListener`
-   * drops the daemon's `fs.watch` echo of our own op instead of
-   * firing a second `vault.trigger`. Null on the SFTP transport
-   * (no daemon, no echo) — recording is then a harmless no-op.
+   * Echo-dedup registry (#341). When set, every applied local mutation
+   * records its path(s) here so the RPC `FsChangeListener` drops the
+   * daemon's `fs.watch` echo of our own op instead of firing a second
+   * `vault.trigger`. Wired on both transports by
+   * `AdapterManager.wireLiveUpdates`; SFTP has no echo, so its entries are
+   * never consumed. Null until wired, and recording is then a no-op.
    */
   private localOpRegistry: LocalOpRegistry | null = null;
 
@@ -519,15 +521,11 @@ export class SftpDataAdapter {
         // before giving up. Then splice and queue as a full write: reading
         // and writing as separate ops would explode the queue size when the
         // editor appends in a tight loop.
-        let existing = '';
-        try { existing = await this.read(normalizedPath); }
-        catch { /* file did not exist; start empty so append acts like create */ }
+        const existing = await existingForAppend(() => this.read(normalizedPath), '');
         await this.queueOrThrowText(normalizedPath, existing + data, options);
         return;
       }
-      let existing = '';
-      try { existing = await this.read(normalizedPath); }
-      catch { /* file did not exist; start empty so append acts like create */ }
+      const existing = await existingForAppend(() => this.read(normalizedPath), '');
       await this.writeText(normalizedPath, existing + data, options);
     } finally {
       perfTracer.end(__t1, { op: 'append', path: normalizedPath, bytes: data.length });
@@ -538,16 +536,12 @@ export class SftpDataAdapter {
     const __t1 = perfTracer.begin('S.adp');
     try {
       if (this.reconnecting) {
-        let existing: Buffer;
-        try { existing = await this.readBuffer(normalizedPath); }
-        catch { existing = Buffer.alloc(0); }
+        const existing = await existingForAppend(() => this.readBuffer(normalizedPath), Buffer.alloc(0));
         const mergedBinary = Buffer.concat([existing, Buffer.from(data)]);
         await this.queueOrThrowBinary(normalizedPath, mergedBinary, options);
         return;
       }
-      let existing: Buffer;
-      try { existing = await this.readBuffer(normalizedPath); }
-      catch { existing = Buffer.alloc(0); }
+      const existing = await existingForAppend(() => this.readBuffer(normalizedPath), Buffer.alloc(0));
       const mergedBinary = Buffer.concat([existing, Buffer.from(data)]);
       const { stat: written } = await this.writeBuffer(normalizedPath, mergedBinary, false);
       this.callImmediate(options);
@@ -1162,6 +1156,21 @@ function parentDirRemote(p: string): string {
   if (i < 0) return '';
   if (i === 0) return '/';
   return p.slice(0, i);
+}
+
+/**
+ * The current content an append extends: `empty` when the file doesn't exist,
+ * so the append creates it. Any other read failure is thrown. Treating it as
+ * empty would replace the whole file with just the appended bytes, and while
+ * reconnecting, an uncached read fails that way for a file that does exist.
+ */
+async function existingForAppend<T>(read: () => Promise<T>, empty: T): Promise<T> {
+  try {
+    return await read();
+  } catch (e) {
+    if (isFileNotFound(e)) return empty;
+    throw e;
+  }
 }
 
 /**
