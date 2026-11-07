@@ -425,6 +425,9 @@ export default class RemoteSshPlugin extends Plugin {
       // After the connect, never before: installing can await a plugin's
       // onload, and one that reads a note there would wait on the gate.
       // Logged, not thrown: a failed connect's error is the one to surface.
+      // The connect's config sync has already pushed the plugin list, so
+      // plugins enabled here reach other machines on the next connect, when
+      // the 3-way merge picks them up as local additions.
       await coordinator.prepareForAutoConnect().catch((e: unknown) => {
         logger.warn(`runShadowStartup: plugin install failed: ${errorMessage(e)}`);
       });

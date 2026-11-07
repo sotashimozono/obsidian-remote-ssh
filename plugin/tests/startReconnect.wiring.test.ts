@@ -29,6 +29,7 @@ import { App, recordedNotices, clearNotices } from 'obsidian';
 import RemoteSshPlugin from '../src/main';
 import { ShadowStartupCoordinator } from '../src/shadow/ShadowStartupCoordinator';
 import { StartupReadGate } from '../src/adapter/StartupReadGate';
+import { AdapterManager } from '../src/adapter/AdapterManager';
 import type { SshProfile } from '../src/types';
 import type { RemoteBinding } from '../src/ConnectionManager';
 
@@ -440,6 +441,25 @@ describe('RemoteSshPlugin shadow startup and the read gate', () => {
     prepare.mockRejectedValue(new Error('marketplace down'));
 
     await expect(run()).rejects.toThrow('no route');
+  });
+
+  it('releases held reads and takes the gate off when the plugin is disabled mid-startup', async () => {
+    // Disabled before the startup connect finishes: nothing else would open it,
+    // and every note read would stay held with the wrappers still installed.
+    const { plugin, p } = makePlugin();
+    const nativeStat = (path: string) => Promise.resolve(`native ${path}`);
+    const adapter: Record<string, unknown> = { stat: nativeStat };
+    const gate = new StartupReadGate(adapter, { configDir: '.obsidian', layoutReady: () => true });
+    gate.install();
+    const mgr = { restore: vi.fn(), startupGate: gate, openStartupGate: AdapterManager.prototype.openStartupGate };
+    p.adapterMgr = mgr;
+    const held = (adapter.stat as (path: string) => Promise<string>)('Daily/today.md');
+
+    plugin.onunload();
+
+    await expect(held).resolves.toBe('native Daily/today.md');
+    expect(adapter.stat).toBe(nativeStat);
+    expect(mgr.startupGate).toBeNull();
   });
 
   it('opens the startup read gate even when the connect throws', async () => {

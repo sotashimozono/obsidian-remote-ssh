@@ -131,8 +131,9 @@ describe('StartupReadGate', () => {
   });
 
   it('captures a wrapper another plugin installed earlier, and puts it back', async () => {
-    // Plugins wrap adapter members in their own onload; the gate goes on at
-    // layout-ready, after them, so their wrapper is what it must preserve.
+    // Plugins that loaded earlier wrap adapter members in their own onload; the
+    // gate is installed after them, at the end of ours, so their wrapper is
+    // what it must preserve.
     const adapter = new NativeAdapter();
     const theirs = function (this: NativeAdapter, p: string) { this.calls.push(`theirs.exists ${p}`); return Promise.resolve(true); };
     (adapter as unknown as Record<string, unknown>).exists = theirs;
