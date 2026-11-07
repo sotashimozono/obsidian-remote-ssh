@@ -88,6 +88,9 @@ func writeCreatedXattr(abs string, ms int64) error {
 // A var, so a test can fake the filesystem.
 var xattrsUsable = onLocalDisk
 
+// A var, so a test can count the statfs calls.
+var localFS = isLocalFS
+
 // localDevs caches onLocalDisk per device: statfs can itself be a round
 // trip on a network filesystem.
 var localDevs sync.Map // uint64 → bool
@@ -106,7 +109,7 @@ func onLocalDisk(abs string, info os.FileInfo) bool {
 	if v, ok := localDevs.Load(dev); ok {
 		return v.(bool)
 	}
-	local := isLocalFS(abs)
+	local := localFS(abs)
 	localDevs.Store(dev, local)
 	return local
 }

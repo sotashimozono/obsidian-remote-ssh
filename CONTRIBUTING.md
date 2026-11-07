@@ -21,8 +21,8 @@ See [README.md](README.md) for the user-facing story.
 
 Prerequisites:
 
-- **Node.js 20+** for the plugin (`plugin/package.json`)
-- **Go 1.25+** for the daemon (`server/go.mod`'s `go` directive)
+- **Node.js 22.22.2+** for the plugin (`plugin/package.json` `engines`)
+- **Go 1.26+** for the daemon (`server/go.mod`'s `go` directive)
 - **Docker** for the integration test suite (optional for plugin-only changes)
 
 ```bash
@@ -200,7 +200,7 @@ Commit the staged files alongside your code change.
 
 ## Code style
 
-- TypeScript: `strictNullChecks: true`, `isolatedModules: true`. No ESLint config required for now (was scoped out as low-value during early development).
+- TypeScript: `strictNullChecks: true`, `isolatedModules: true`. Lint with `npm run lint` in `plugin/` (ESLint flat config in `plugin/eslint.config.mjs`); CI runs it.
 - Go: `gofmt -w .` (the `gosec` job in `security.yml` will flag obvious issues).
 - Comments: explain **why**, not what. The codebase prefers a few generous block comments at module / class boundaries over per-line noise.
 - New tests should mirror the surface they cover: `src/util/Foo.ts` ↔ `tests/Foo.test.ts`.

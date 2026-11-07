@@ -444,7 +444,7 @@ describe('SftpDataAdapter (read-side)', () => {
 
         const call = method === 'append'
           ? adapter.append('log.md', 'second\n')
-          : adapter.appendBinary('log.md', Buffer.from('second\n').buffer);
+          : adapter.appendBinary('log.md', new TextEncoder().encode('second\n').buffer);
         await expect(call).rejects.toThrow('Permission denied');
 
         expect(fake.spies.writeBinary).not.toHaveBeenCalled();
@@ -1370,10 +1370,32 @@ describe('SftpDataAdapter (offline queue while reconnecting)', () => {
 
       const call = method === 'append'
         ? adapter.append('log.md', 'two\n')
-        : adapter.appendBinary('log.md', Buffer.from('two\n').buffer);
+        : adapter.appendBinary('log.md', new TextEncoder().encode('two\n').buffer);
       await expect(call).rejects.toThrow(/reconnecting/i);
 
       expect(queue.pending()).toHaveLength(0);
+    });
+
+  // The other side of the test above: a file that really doesn't exist is
+  // created, queued as a write of just the appended bytes.
+  it.each(['append', 'appendBinary'] as const)(
+    '%s on a missing file queues a create while reconnecting', async (method) => {
+      const fake = makeFakeClient({});
+      const adapter = makeAdapterWithQueue({ client: fake.client });
+      adapter.setReconnecting(true);
+      // What a read gets once the session is back and the file isn't there.
+      vi.spyOn(adapter as unknown as { readBuffer(p: string): Promise<Buffer> }, 'readBuffer')
+        .mockRejectedValueOnce(Object.assign(new Error('No such file'), { code: 2 }));
+
+      if (method === 'append') await adapter.append('new.md', 'hello');
+      else await adapter.appendBinary('new.md', new TextEncoder().encode('hello').buffer);
+
+      const pending = queue.pending();
+      expect(pending).toHaveLength(1);
+      const op = pending[0].op as { kind: string; path: string; contentBase64: string };
+      expect(op.kind).toBe(method === 'append' ? 'write' : 'writeBinary');
+      expect(op.path).toBe('new.md');
+      expect(Buffer.from(op.contentBase64, 'base64').toString('utf8')).toBe('hello');
     });
 
   it('queues mkdir / remove / rmdir / rename / copy with their right shapes', async () => {
