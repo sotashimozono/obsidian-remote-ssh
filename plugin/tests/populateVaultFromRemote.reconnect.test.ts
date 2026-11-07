@@ -32,7 +32,7 @@ const children = (entries: RemoteEntry[], path: string) =>
 // background indexer and model builder. Only remote I/O and Obsidian UI are fake.
 async function scenario(
   transport: 'rpc' | 'sftp', rootOnly: boolean,
-  opts: { indexRunning?: boolean; indexFinished?: boolean } = {},
+  opts: { indexRunning?: boolean; indexFinished?: boolean; reconnecting?: boolean } = {},
 ) {
   const app = new App();
   const fileMap: Record<string, TFile | TFolder> = {};
@@ -67,7 +67,8 @@ async function scenario(
   internal.adapterMgr = { pendingOfflineFilter: () => null };
   // A previous session's completed index says nothing about this one.
   // connectProfile sets CONNECTED before it populates.
-  Object.assign(internal, { vaultIndexed: true, missedEvents: true, state: 'connected' });
+  Object.assign(internal, { vaultIndexed: true, missedEvents: true,
+    state: opts.reconnecting ? 'reconnecting' : 'connected' });
   internal.conn = { activeProfile: { allowedHiddenDirs: ['.herdr'], walkIgnoreDirs: ['.git'] },
     rpcConnection: transport === 'rpc' ? { rpc: { call: rpcCall }, info: { capabilities: ['fs.walk'] } } : null };
   internal.installLazyExpandHook = vi.fn();
@@ -84,7 +85,9 @@ async function scenario(
   remote = [...remote, entry(newPath)];
   trigger.mockClear();
   await plugin.populateVaultFromRemote('shadow-reconnect');
-  if (!opts.indexFinished) expect(internal).toMatchObject({ vaultIndexed: false, missedEvents: false });
+  if (!opts.indexFinished) {
+    expect(internal).toMatchObject({ vaultIndexed: false, missedEvents: opts.reconnecting === true });
+  }
   if (!rootOnly) {
     // Observe the automatically started pass; invoking start() here could hide
     // a regression where reconnect constructs an indexer but never runs it.
@@ -109,6 +112,15 @@ describe('populate and a pass already running', () => {
     const { internal } = await scenario('rpc', true, { indexFinished: true });
     expect(internal.startBackgroundIndex).not.toHaveBeenCalled();
   });
+});
+
+// The connect's config sync can swallow a drop, so populate may run while the
+// reconnect is under way. Its walk fails fast then, and only the dropped
+// session's marker makes recovery catch up (eager mode has no unfinished index
+// to trigger one).
+it('populate during a reconnect keeps the missed-events marker', async () => {
+  const { internal } = await scenario('rpc', true, { reconnecting: true });
+  expect(internal).toMatchObject({ missedEvents: true });
 });
 
 describe('reconnect with a preexisting file under an already-expanded allowed dot-folder', () => {

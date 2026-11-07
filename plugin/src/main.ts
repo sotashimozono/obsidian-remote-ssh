@@ -1170,9 +1170,11 @@ export default class RemoteSshPlugin extends Plugin {
    */
   async populateVaultFromRemote(label: string = 'remote'): Promise<string> {
     const start = Date.now();
-    // A new session: what an earlier one indexed or missed is moot.
+    // A new session: what an earlier one indexed or missed is moot. Unless
+    // the connect's config sync swallowed a drop and this runs mid-reconnect:
+    // the walk below then fails fast, and recovery must still catch up.
     this.vaultIndexed = false;
-    this.missedEvents = false;
+    if (this.state !== SyncState.RECONNECTING) this.missedEvents = false;
     this.reindexSnapshotFilesWithoutMetadata();
 
     // Phase E1-α.2: prefer the daemon's `fs.walk` (one RPC, real
