@@ -5,5 +5,5 @@ go 1.26.0
 require (
 	github.com/fsnotify/fsnotify v1.10.1
 	golang.org/x/image v0.47.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 )
